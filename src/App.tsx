@@ -157,19 +157,6 @@ const WelcomeScreen = ({ onSelectType }: { onSelectType: (type: ConversationType
 
   return (
     <div className="max-w-3xl mx-auto w-full flex flex-col items-center justify-start pt-12 md:justify-center md:pt-0 min-h-[60vh] px-4">
-      <motion.div 
-        initial={{ opacity: 0, y: 20 }}
-        animate={{ opacity: 1, y: 0 }}
-        className="text-center mb-8 md:mb-12"
-      >
-        <h1 className="text-3xl md:text-5xl font-bold mb-3 md:mb-4 tracking-tight">
-          Welcome to Ideaflux AI 👋
-        </h1>
-        <p className="text-zinc-500 dark:text-zinc-400 text-base md:text-lg">
-          What would you like to create today?
-        </p>
-      </motion.div>
-
       <div className="flex flex-row gap-3 w-full overflow-x-auto pb-4 no-scrollbar md:grid md:grid-cols-3 md:gap-4 md:overflow-visible">
         {suggestions.map((s, i) => (
           <motion.button
@@ -590,9 +577,11 @@ export default function App() {
   useEffect(() => {
     if (isDarkMode) {
       document.documentElement.classList.add('dark');
+      document.documentElement.style.colorScheme = 'dark';
       localStorage.setItem('theme', 'dark');
     } else {
       document.documentElement.classList.remove('dark');
+      document.documentElement.style.colorScheme = 'light';
       localStorage.setItem('theme', 'light');
     }
   }, [isDarkMode]);
@@ -817,7 +806,7 @@ export default function App() {
 
   return (
     <div className={cn("min-h-screen bg-white dark:bg-zinc-950 text-zinc-900 dark:text-zinc-100 flex overflow-hidden", isDarkMode && "dark")}>
-      <Toaster position="top-center" richColors />
+      <Toaster position="top-center" richColors theme={isDarkMode ? 'dark' : 'light'} />
       
       <Sidebar 
         isOpen={isSidebarOpen} 
