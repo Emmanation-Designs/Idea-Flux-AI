@@ -41,7 +41,7 @@ app.post("/api/generate", async (req, res) => {
     });
 
     const responseStream = await ai.models.generateContentStream({
-      model: "gemini-1.5-flash",
+      model: "gemini-3-flash-preview",
       contents,
       config: {
         systemInstruction,
