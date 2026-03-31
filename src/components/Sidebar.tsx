@@ -11,7 +11,6 @@ import {
 import { motion } from 'motion/react';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
-import type { Conversation } from '../types';
 
 function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
@@ -28,7 +27,7 @@ export const Sidebar = ({
 }: { 
   isOpen: boolean; 
   setIsOpen: (open: boolean) => void;
-  conversations: Conversation[];
+  conversations: any[];
   onSelectConversation: (id: string) => void;
   onNewChat: () => void;
   currentConversationId: string | null;

@@ -1,7 +1,7 @@
 import express from "express";
 import path from "path";
 import { createServer as createViteServer } from "vite";
-import { GoogleGenAI } from "@google/genai";
+import OpenAI from "openai";
 import dotenv from "dotenv";
 
 dotenv.config();
@@ -9,13 +9,17 @@ dotenv.config();
 const app = express();
 const PORT = 3000;
 
-const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
 app.use(express.json());
 
 // API routes
 app.post("/api/generate", async (req, res) => {
   const { type, prompt, messages = [] } = req.body;
+
+  if (!process.env.OPENAI_API_KEY) {
+    return res.status(500).json({ error: "OPENAI_API_KEY is not configured" });
+  }
 
   try {
     let systemInstruction = "";
@@ -29,38 +33,31 @@ app.post("/api/generate", async (req, res) => {
       systemInstruction = "You are a helpful AI assistant called Ideaflux AI.";
     }
 
-    const contents = messages.map((m: any) => ({
-      role: m.role === "user" ? "user" : "model",
-      parts: [{ text: m.content }],
-    }));
-
-    // Add the current prompt to the contents
-    contents.push({
-      role: "user",
-      parts: [{ text: prompt }],
-    });
-
-    const responseStream = await ai.models.generateContentStream({
-      model: "gemini-3-flash-preview",
-      contents,
-      config: {
-        systemInstruction,
-      },
+    const stream = await openai.chat.completions.create({
+      model: "gpt-4o",
+      messages: [
+        { role: "system", content: systemInstruction },
+        ...messages.map((m: any) => ({
+          role: m.role,
+          content: m.content,
+        })),
+        { role: "user", content: prompt },
+      ],
+      stream: true,
     });
 
     res.setHeader("Content-Type", "text/plain; charset=utf-8");
     res.setHeader("Transfer-Encoding", "chunked");
 
-    for await (const chunk of responseStream) {
-      if (chunk.text) {
-        res.write(chunk.text);
-      }
+    for await (const chunk of stream) {
+      const content = chunk.choices[0]?.delta?.content || "";
+      res.write(content);
     }
 
     res.end();
-  } catch (error) {
+  } catch (error: any) {
     console.error("Error generating content:", error);
-    res.status(500).json({ error: "Failed to generate content" });
+    res.status(500).json({ error: error.message || "Failed to generate content" });
   }
 });
 
