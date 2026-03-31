@@ -11,7 +11,11 @@ import {
   Zap, 
   ChevronRight,
   User,
-  ExternalLink
+  ExternalLink,
+  Copy,
+  ThumbsUp,
+  ThumbsDown,
+  FileDown
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Toaster, toast } from 'sonner';
@@ -322,6 +326,98 @@ export default function App() {
     toast.success('Logged out successfully');
   };
 
+  const handleRenameConversation = async (id: string, newTitle: string) => {
+    try {
+      const { error } = await supabase
+        .from('conversations')
+        .update({ title: newTitle, updated_at: new Date().toISOString() })
+        .eq('id', id);
+
+      if (error) throw error;
+
+      setConversations(prev => prev.map(c => c.id === id ? { ...c, title: newTitle } : c));
+      if (currentConversation?.id === id) {
+        setCurrentConversation({ ...currentConversation, title: newTitle });
+      }
+      toast.success('Conversation renamed');
+    } catch (error) {
+      console.error("Error renaming:", error);
+      toast.error('Failed to rename conversation');
+    }
+  };
+
+  const handleDeleteConversation = async (id: string) => {
+    if (!confirm('Are you sure you want to delete this conversation?')) return;
+
+    try {
+      const { error } = await supabase
+        .from('conversations')
+        .delete()
+        .eq('id', id);
+
+      if (error) throw error;
+
+      setConversations(prev => prev.filter(c => c.id !== id));
+      if (currentConversation?.id === id) {
+        handleNewChat();
+      }
+      toast.success('Conversation deleted');
+    } catch (error) {
+      console.error("Error deleting:", error);
+      toast.error('Failed to delete conversation');
+    }
+  };
+
+  const handleFeedback = async (messageId: string, feedback: 'like' | 'dislike') => {
+    if (!currentConversation) return;
+
+    const updatedMessages = messages.map(m => {
+      if (m.id === messageId) {
+        // Toggle feedback
+        return { ...m, feedback: m.feedback === feedback ? undefined : feedback };
+      }
+      return m;
+    });
+
+    setMessages(updatedMessages);
+
+    try {
+      const { error } = await supabase
+        .from('conversations')
+        .update({ 
+          messages: updatedMessages,
+          updated_at: new Date().toISOString()
+        })
+        .eq('id', currentConversation.id);
+
+      if (error) throw error;
+      
+      const isRemoving = messages.find(m => m.id === messageId)?.feedback === feedback;
+      if (!isRemoving) {
+        toast.success(feedback === 'like' ? 'Liked' : 'Disliked');
+      }
+    } catch (error) {
+      console.error("Error saving feedback:", error);
+      toast.error('Failed to save feedback');
+    }
+  };
+
+  const handleDownloadMessage = (content: string, id: string) => {
+    const blob = new Blob([content], { type: 'text/plain' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `ideaflux-answer-${id.slice(0, 8)}.txt`;
+    a.click();
+    URL.revokeObjectURL(url);
+    toast.success('Download started');
+  };
+
+  const copyToClipboard = (text: string) => {
+    navigator.clipboard.writeText(text);
+    toast.success('Copied to clipboard');
+  };
+
   if (!user) return (
     <div className={cn(isDarkMode && "dark")}>
       <Auth onAuthSuccess={() => {}} isDarkMode={isDarkMode} />
@@ -345,6 +441,8 @@ export default function App() {
         onNewChat={handleNewChat}
         currentConversationId={currentConversation?.id || null}
         onLogout={handleLogout}
+        onRename={handleRenameConversation}
+        onDelete={handleDeleteConversation}
       />
 
       <main className="flex-1 flex flex-col relative overflow-hidden">
@@ -438,7 +536,7 @@ export default function App() {
                       )}
                     >
                       <div className={cn(
-                        "max-w-[85%] md:max-w-[75%] p-4 rounded-2xl text-sm md:text-base",
+                        "max-w-[85%] md:max-w-[75%] p-4 rounded-2xl text-sm md:text-base group relative",
                         m.role === 'user' 
                           ? "bg-zinc-100 dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 rounded-tr-none" 
                           : "bg-transparent text-zinc-900 dark:text-zinc-100 rounded-tl-none border-l-2 border-zinc-200 dark:border-zinc-800 pl-6"
@@ -446,8 +544,50 @@ export default function App() {
                         <div className="prose dark:prose-invert prose-sm md:prose-base max-w-none">
                           <ReactMarkdown>{m.content}</ReactMarkdown>
                         </div>
-                        <div className="mt-2 text-[10px] opacity-30">
-                          {new Date(m.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                        <div className="mt-2 flex items-center justify-between">
+                          <div className="text-[10px] opacity-30">
+                            {new Date(m.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                          </div>
+                          <div className="flex items-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                            <button 
+                              onClick={() => copyToClipboard(m.content)}
+                              className="p-1.5 hover:bg-zinc-200 dark:hover:bg-zinc-800 rounded-lg text-zinc-500 hover:text-zinc-900 dark:hover:text-white transition-colors"
+                              title="Copy to clipboard"
+                            >
+                              <Copy className="w-3.5 h-3.5" />
+                            </button>
+                            {m.role === 'assistant' && (
+                              <>
+                                <button 
+                                  onClick={() => handleDownloadMessage(m.content, m.id)}
+                                  className="p-1.5 hover:bg-zinc-200 dark:hover:bg-zinc-800 rounded-lg text-zinc-500 hover:text-zinc-900 dark:hover:text-white transition-colors"
+                                  title="Download answer"
+                                >
+                                  <FileDown className="w-3.5 h-3.5" />
+                                </button>
+                                <button 
+                                  onClick={() => handleFeedback(m.id, 'like')}
+                                  className={cn(
+                                    "p-1.5 hover:bg-zinc-200 dark:hover:bg-zinc-800 rounded-lg transition-colors",
+                                    m.feedback === 'like' ? "text-green-600 bg-green-50 dark:bg-green-900/20" : "text-zinc-500 hover:text-zinc-900 dark:hover:text-white"
+                                  )}
+                                  title="Like"
+                                >
+                                  <ThumbsUp className="w-3.5 h-3.5" />
+                                </button>
+                                <button 
+                                  onClick={() => handleFeedback(m.id, 'dislike')}
+                                  className={cn(
+                                    "p-1.5 hover:bg-zinc-200 dark:hover:bg-zinc-800 rounded-lg transition-colors",
+                                    m.feedback === 'dislike' ? "text-red-600 bg-red-50 dark:bg-red-900/20" : "text-zinc-500 hover:text-zinc-900 dark:hover:text-white"
+                                  )}
+                                  title="Dislike"
+                                >
+                                  <ThumbsDown className="w-3.5 h-3.5" />
+                                </button>
+                              </>
+                            )}
+                          </div>
                         </div>
                       </div>
                     </div>

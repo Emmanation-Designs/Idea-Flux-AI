@@ -6,9 +6,14 @@ import {
   Zap, 
   MessageSquare, 
   FileText, 
-  Hash
+  Hash,
+  Trash2,
+  Edit2,
+  Check,
+  X as CloseIcon
 } from 'lucide-react';
 import { motion } from 'motion/react';
+import { useState } from 'react';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 
@@ -23,7 +28,9 @@ export const Sidebar = ({
   onSelectConversation, 
   onNewChat,
   currentConversationId,
-  onLogout
+  onLogout,
+  onRename,
+  onDelete
 }: { 
   isOpen: boolean; 
   setIsOpen: (open: boolean) => void;
@@ -32,7 +39,31 @@ export const Sidebar = ({
   onNewChat: () => void;
   currentConversationId: string | null;
   onLogout: () => void;
+  onRename: (id: string, title: string) => void;
+  onDelete: (id: string) => void;
 }) => {
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editTitle, setEditTitle] = useState('');
+
+  const startEditing = (e: React.MouseEvent, id: string, title: string) => {
+    e.stopPropagation();
+    setEditingId(id);
+    setEditTitle(title);
+  };
+
+  const cancelEditing = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    setEditingId(null);
+  };
+
+  const saveEditing = (e: React.MouseEvent, id: string) => {
+    e.stopPropagation();
+    if (editTitle.trim()) {
+      onRename(id, editTitle.trim());
+    }
+    setEditingId(null);
+  };
+
   return (
     <motion.aside
       initial={false}
@@ -48,7 +79,7 @@ export const Sidebar = ({
           Ideaflux AI
         </h2>
         <button onClick={() => setIsOpen(false)} className="p-1 hover:bg-zinc-200 dark:hover:bg-zinc-800 rounded-md lg:hidden">
-          <X className="w-5 h-5" />
+          <CloseIcon className="w-5 h-5" />
         </button>
       </div>
 
@@ -71,26 +102,70 @@ export const Sidebar = ({
           <div className="px-3 py-4 text-sm text-zinc-400 italic">No history yet</div>
         ) : (
           conversations.map((conv) => (
-            <button
+            <div
               key={conv.id}
-              onClick={() => onSelectConversation(conv.id)}
-              className={cn(
-                "w-full text-left px-3 py-2.5 rounded-lg text-sm transition-colors flex flex-col gap-0.5",
-                currentConversationId === conv.id 
-                  ? "bg-zinc-200 dark:bg-zinc-800 text-zinc-900 dark:text-white" 
-                  : "hover:bg-zinc-100 dark:hover:bg-zinc-900 text-zinc-600 dark:text-zinc-400"
-              )}
+              className="group relative"
             >
-              <div className="font-medium truncate">{conv.title}</div>
-              <div className="flex items-center gap-2 text-[10px] opacity-60">
-                {conv.type === 'idea' && <MessageSquare className="w-2.5 h-2.5" />}
-                {conv.type === 'script' && <FileText className="w-2.5 h-2.5" />}
-                {conv.type === 'hashtag' && <Hash className="w-2.5 h-2.5" />}
-                <span className="capitalize">{conv.type}</span>
-                <span>•</span>
-                <span>{new Date(conv.created_at).toLocaleDateString()}</span>
-              </div>
-            </button>
+              <button
+                onClick={() => !editingId && onSelectConversation(conv.id)}
+                className={cn(
+                  "w-full text-left px-3 py-2.5 rounded-lg text-sm transition-colors flex flex-col gap-0.5 pr-16",
+                  currentConversationId === conv.id 
+                    ? "bg-zinc-200 dark:bg-zinc-800 text-zinc-900 dark:text-white" 
+                    : "hover:bg-zinc-100 dark:hover:bg-zinc-900 text-zinc-600 dark:text-zinc-400"
+                )}
+              >
+                {editingId === conv.id ? (
+                  <div className="flex items-center gap-1 w-full" onClick={e => e.stopPropagation()}>
+                    <input
+                      autoFocus
+                      value={editTitle}
+                      onChange={e => setEditTitle(e.target.value)}
+                      className="bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 rounded px-1 py-0.5 w-full text-xs outline-none focus:ring-1 focus:ring-zinc-400"
+                      onKeyDown={e => {
+                        if (e.key === 'Enter') saveEditing(e as any, conv.id);
+                        if (e.key === 'Escape') cancelEditing(e as any);
+                      }}
+                    />
+                    <button onClick={e => saveEditing(e, conv.id)} className="p-1 hover:text-green-500">
+                      <Check className="w-3 h-3" />
+                    </button>
+                    <button onClick={cancelEditing} className="p-1 hover:text-red-500">
+                      <CloseIcon className="w-3 h-3" />
+                    </button>
+                  </div>
+                ) : (
+                  <>
+                    <div className="font-medium truncate">{conv.title}</div>
+                    <div className="flex items-center gap-2 text-[10px] opacity-60">
+                      {conv.type === 'idea' && <MessageSquare className="w-2.5 h-2.5" />}
+                      {conv.type === 'script' && <FileText className="w-2.5 h-2.5" />}
+                      {conv.type === 'hashtag' && <Hash className="w-2.5 h-2.5" />}
+                      <span className="capitalize">{conv.type}</span>
+                      <span>•</span>
+                      <span>{new Date(conv.created_at).toLocaleDateString()}</span>
+                    </div>
+                  </>
+                )}
+              </button>
+              
+              {!editingId && (
+                <div className="absolute right-2 top-1/2 -translate-y-1/2 flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                  <button 
+                    onClick={(e) => startEditing(e, conv.id, conv.title)}
+                    className="p-1.5 hover:bg-zinc-300 dark:hover:bg-zinc-700 rounded-md text-zinc-500 hover:text-zinc-900 dark:hover:text-white"
+                  >
+                    <Edit2 className="w-3 h-3" />
+                  </button>
+                  <button 
+                    onClick={(e) => { e.stopPropagation(); onDelete(conv.id); }}
+                    className="p-1.5 hover:bg-zinc-300 dark:hover:bg-zinc-700 rounded-md text-zinc-500 hover:text-red-500"
+                  >
+                    <Trash2 className="w-3 h-3" />
+                  </button>
+                </div>
+              )}
+            </div>
           ))
         )}
       </div>
