@@ -132,40 +132,14 @@ export default function App() {
     if (!user) return;
     
     try {
-      const [ideasRes, scriptsRes] = await Promise.all([
-        supabase.from('ideas').select('*').eq('user_id', user.id).order('created_at', { ascending: false }),
-        supabase.from('scripts').select('*').eq('user_id', user.id).order('created_at', { ascending: false })
-      ]);
+      const { data, error } = await supabase
+        .from('conversations')
+        .select('*')
+        .eq('user_id', user.id)
+        .order('created_at', { ascending: false });
 
-      const ideas = (ideasRes.data || []).map(item => ({
-        id: item.id,
-        title: `${item.topic} Ideas`,
-        type: 'idea',
-        created_at: item.created_at,
-        messages: [
-          { id: '1', role: 'user', content: `Generate ideas for ${item.topic} on ${item.platform}`, created_at: item.created_at },
-          { id: '2', role: 'assistant', content: Array.isArray(item.ideas) ? item.ideas.join('\n') : item.ideas, created_at: item.created_at }
-        ],
-        table: 'ideas',
-        metadata: { topic: item.topic, platform: item.platform, tone: item.tone }
-      }));
-
-      const scripts = (scriptsRes.data || []).map(item => ({
-        id: item.id,
-        title: `${item.topic} Script`,
-        type: 'script',
-        created_at: item.created_at,
-        updated_at: item.updated_at,
-        messages: item.conversation || [],
-        table: 'scripts',
-        metadata: { topic: item.topic, platform: item.platform, length: item.length }
-      }));
-
-      const combined = [...ideas, ...scripts].sort((a, b) => 
-        new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
-      );
-
-      setConversations(combined);
+      if (error) throw error;
+      setConversations(data || []);
     } catch (error) {
       console.error("Error fetching history:", error);
     }
@@ -214,51 +188,25 @@ export default function App() {
   const startConversation = async (type: ConversationType, title: string, initialPrompt: string, metadata: any = {}) => {
     if (!user) return;
 
-    let data: any = null;
-    let error: any = null;
+    const newConversation = {
+      user_id: user.id,
+      title: title,
+      type: type,
+      messages: [],
+      metadata: metadata,
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString()
+    };
 
-    if (type === 'idea' || type === 'hashtag') {
-      const newIdea = {
-        user_id: user.id,
-        topic: metadata.topic || title,
-        platform: metadata.platform || 'General',
-        tone: metadata.tone || 'Professional',
-        ideas: [],
-        created_at: new Date().toISOString()
-      };
-      const res = await supabase.from('ideas').insert(newIdea).select().single();
-      data = res.data;
-      error = res.error;
-      if (data) {
-        data.table = 'ideas';
-        data.messages = [];
-        data.type = type;
-        data.title = title;
-      }
-    } else {
-      const newScript = {
-        user_id: user.id,
-        topic: metadata.topic || title,
-        platform: metadata.platform || 'General',
-        length: metadata.length || 'Short',
-        conversation: [],
-        final_script: '',
-        created_at: new Date().toISOString(),
-        updated_at: new Date().toISOString()
-      };
-      const res = await supabase.from('scripts').insert(newScript).select().single();
-      data = res.data;
-      error = res.error;
-      if (data) {
-        data.table = 'scripts';
-        data.messages = [];
-        data.type = type;
-        data.title = title;
-      }
-    }
+    const { data, error } = await supabase
+      .from('conversations')
+      .insert(newConversation)
+      .select()
+      .single();
 
     if (error) {
-      toast.error('Failed to create history entry');
+      console.error("Supabase insert error:", error);
+      toast.error(`Failed to create history entry: ${error.message || 'Unknown error'}`);
       return;
     }
 
@@ -330,38 +278,17 @@ export default function App() {
       setStreamingMessage('');
 
       // Update Supabase
-      if (conv.table === 'ideas') {
-        // If it's an idea, we might want to move it to scripts if it becomes a chat
-        // But for now, let's just update the ideas field if it's the first response
-        if (finalMessages.length <= 2) {
-          await supabase
-            .from('ideas')
-            .update({ 
-              ideas: fullContent.split('\n').filter(line => line.trim())
-            })
-            .eq('id', conv.id);
-        } else {
-          // Move to scripts or handle as ongoing? 
-          // User said: "For ongoing chats, save the conversation history to the 'scripts' table"
-          // This is complex. Let's just update scripts if it's already a script, 
-          // or if it's an idea that's continuing, maybe we should have started it as a script?
-          // For now, let's just update the current table.
-          await supabase
-            .from('ideas')
-            .update({ 
-              ideas: finalMessages.filter(m => m.role === 'assistant').map(m => m.content)
-            })
-            .eq('id', conv.id);
-        }
-      } else {
-        await supabase
-          .from('scripts')
-          .update({ 
-            conversation: finalMessages,
-            final_script: fullContent,
-            updated_at: new Date().toISOString()
-          })
-          .eq('id', conv.id);
+      const { error: updateError } = await supabase
+        .from('conversations')
+        .update({ 
+          messages: finalMessages,
+          updated_at: new Date().toISOString()
+        })
+        .eq('id', conv.id);
+      
+      if (updateError) {
+        console.error("Supabase update error:", updateError);
+        toast.error(`Failed to save chat: ${updateError.message}`);
       }
       
       // Update usage

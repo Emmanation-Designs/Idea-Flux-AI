@@ -7,24 +7,13 @@ export interface Message {
   created_at: string;
 }
 
-export interface Idea {
+export interface Conversation {
   id: string;
   user_id: string;
-  topic: string;
-  platform: string;
-  tone: string;
-  ideas: string[]; // Or jsonb
-  created_at: string;
-}
-
-export interface Script {
-  id: string;
-  user_id: string;
-  topic: string;
-  platform: string;
-  length?: string;
-  conversation: Message[]; // jsonb
-  final_script: string;
+  title: string;
+  type: ConversationType;
+  messages: Message[];
+  metadata: any;
   created_at: string;
   updated_at: string;
 }
