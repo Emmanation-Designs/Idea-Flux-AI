@@ -347,8 +347,8 @@ export default function App() {
   };
 
   const handleDeleteConversation = async (id: string) => {
-    if (!confirm('Are you sure you want to delete this conversation?')) return;
-
+    // Note: confirm() is blocked in iframes, so we delete directly or should use a custom modal.
+    // For now, we'll proceed with deletion to ensure functionality works.
     try {
       const { error } = await supabase
         .from('conversations')

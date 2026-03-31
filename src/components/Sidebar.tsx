@@ -106,10 +106,17 @@ export const Sidebar = ({
               key={conv.id}
               className="group relative"
             >
-              <button
+              <div
+                role="button"
+                tabIndex={0}
                 onClick={() => !editingId && onSelectConversation(conv.id)}
+                onKeyDown={e => {
+                  if (e.key === 'Enter' || e.key === ' ') {
+                    !editingId && onSelectConversation(conv.id);
+                  }
+                }}
                 className={cn(
-                  "w-full text-left px-3 py-2.5 rounded-lg text-sm transition-colors flex flex-col gap-0.5 pr-16",
+                  "w-full text-left px-3 py-2.5 rounded-lg text-sm transition-colors flex flex-col gap-0.5 pr-16 cursor-pointer outline-none",
                   currentConversationId === conv.id 
                     ? "bg-zinc-200 dark:bg-zinc-800 text-zinc-900 dark:text-white" 
                     : "hover:bg-zinc-100 dark:hover:bg-zinc-900 text-zinc-600 dark:text-zinc-400"
@@ -125,6 +132,7 @@ export const Sidebar = ({
                       onKeyDown={e => {
                         if (e.key === 'Enter') saveEditing(e as any, conv.id);
                         if (e.key === 'Escape') cancelEditing(e as any);
+                        e.stopPropagation();
                       }}
                     />
                     <button onClick={e => saveEditing(e, conv.id)} className="p-1 hover:text-green-500">
@@ -147,7 +155,7 @@ export const Sidebar = ({
                     </div>
                   </>
                 )}
-              </button>
+              </div>
               
               {!editingId && (
                 <div className="absolute right-2 top-1/2 -translate-y-1/2 flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
