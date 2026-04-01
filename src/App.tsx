@@ -44,7 +44,6 @@ import { Settings } from './components/Settings';
 import { VoiceMode } from './components/VoiceMode';
 import { Auth } from './components/Auth';
 import { LegalModal } from './components/Legal';
-import { Footer } from './components/Footer';
 
 // --- Utils ---
 function cn(...inputs: ClassValue[]) {
@@ -936,8 +935,6 @@ export default function App() {
             </div>
           </div>
         )}
-
-        <Footer onShowLegal={setShowLegal} />
       </main>
 
       {/* Modals */}
@@ -950,6 +947,7 @@ export default function App() {
             onVoiceOptionChange={setVoiceOption}
             autoPlayVoice={autoPlayVoice}
             onToggleAutoPlay={() => setAutoPlayVoice(!autoPlayVoice)}
+            onShowLegal={setShowLegal}
           />
         )}
         {showContextForm && (

@@ -12,20 +12,21 @@ export const LegalModal = ({
     about: {
       title: 'About Ideaflux AI',
       body: (
-        <div className="space-y-4 text-sm opacity-80">
-          <p>
+        <div className="space-y-6 text-sm">
+          <p className="opacity-80">
             Ideaflux AI is a smart AI companion designed specifically for content creators. 
             Whether you're a YouTuber, TikToker, or social media manager, Ideaflux AI helps you 
             generate viral ideas, high-retention scripts, and optimized hashtags in seconds.
           </p>
-          <div>
-            <h4 className="font-bold text-zinc-900 dark:text-white mb-1">Company Information</h4>
-            <p>Company Name: Ingenium Virtual Assistant Limited</p>
-            <p>Website: <a href="https://Ingeniumvirtualassistant.com" target="_blank" className="underline">Ingeniumvirtualassistant.com</a></p>
-            <p>Owner: Ingenium Virtual Assistant Limited</p>
+          <div className="space-y-2">
+            <h4 className="font-bold text-zinc-900 dark:text-white text-base">Ownership</h4>
+            <p className="font-medium">Owned by: Ingenium Virtual Assistant Limited</p>
+            <p>Website: <a href="https://Ingeniumvirtualassistant.com" target="_blank" className="text-zinc-900 dark:text-white underline font-medium">Ingeniumvirtualassistant.com</a></p>
           </div>
-          <div className="pt-4 border-t border-zinc-200 dark:border-zinc-800 text-[10px]">
-            <p>Built by Emmanuel Nwaije (<a href="https://EmmanationDesigns.com" target="_blank" className="underline">EmmanationDesigns.com</a>)</p>
+          <div className="pt-6 border-t border-zinc-200 dark:border-zinc-800">
+            <p className="text-[11px] opacity-60">
+              Developed by: Emmanuel Nwaije (Emmanation Designs)
+            </p>
           </div>
         </div>
       )

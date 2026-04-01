@@ -21,7 +21,8 @@ export const Settings = ({
   voiceOption,
   onVoiceOptionChange,
   autoPlayVoice,
-  onToggleAutoPlay
+  onToggleAutoPlay,
+  onShowLegal
 }: { 
   profile: Profile | null; 
   onClose: () => void;
@@ -29,6 +30,7 @@ export const Settings = ({
   onVoiceOptionChange: (voice: 'alloy' | 'nova' | 'echo') => void;
   autoPlayVoice: boolean;
   onToggleAutoPlay: () => void;
+  onShowLegal: (type: 'about' | 'privacy' | 'terms') => void;
 }) => {
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
@@ -150,6 +152,11 @@ export const Settings = ({
               </div>
               <ChevronRight className="w-4 h-4" />
             </a>
+          </div>
+          <div className="pt-4 border-t border-zinc-200 dark:border-zinc-800 flex flex-wrap gap-x-4 gap-y-2">
+            <button onClick={() => onShowLegal('about')} className="text-xs text-zinc-500 hover:text-zinc-900 dark:hover:text-white transition-colors">About Ideaflux AI</button>
+            <button onClick={() => onShowLegal('privacy')} className="text-xs text-zinc-500 hover:text-zinc-900 dark:hover:text-white transition-colors">Privacy Policy</button>
+            <button onClick={() => onShowLegal('terms')} className="text-xs text-zinc-500 hover:text-zinc-900 dark:hover:text-white transition-colors">Terms of Service</button>
           </div>
         </div>
       </motion.div>
