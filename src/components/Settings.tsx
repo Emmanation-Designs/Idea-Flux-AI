@@ -2,7 +2,9 @@ import {
   Settings as SettingsIcon, 
   X, 
   ExternalLink, 
-  ChevronRight
+  ChevronRight,
+  Volume2,
+  VolumeX
 } from 'lucide-react';
 import { motion } from 'motion/react';
 import { clsx, type ClassValue } from 'clsx';
@@ -15,10 +17,18 @@ function cn(...inputs: ClassValue[]) {
 
 export const Settings = ({ 
   profile, 
-  onClose 
+  onClose,
+  voiceOption,
+  onVoiceOptionChange,
+  autoPlayVoice,
+  onToggleAutoPlay
 }: { 
   profile: Profile | null; 
-  onClose: () => void 
+  onClose: () => void;
+  voiceOption: 'alloy' | 'nova' | 'echo';
+  onVoiceOptionChange: (voice: 'alloy' | 'nova' | 'echo') => void;
+  autoPlayVoice: boolean;
+  onToggleAutoPlay: () => void;
 }) => {
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
@@ -78,6 +88,48 @@ export const Settings = ({
                 Apply
               </button>
             </div>
+          </div>
+
+          <div className="space-y-4 pt-4 border-t border-zinc-200 dark:border-zinc-800">
+            <h3 className="text-sm font-bold opacity-70">Voice Settings</h3>
+            
+            <div className="grid grid-cols-3 gap-2">
+              {(['alloy', 'nova', 'echo'] as const).map((v) => (
+                <button
+                  key={v}
+                  onClick={() => onVoiceOptionChange(v)}
+                  className={cn(
+                    "px-3 py-2 rounded-xl text-xs font-medium transition-all border",
+                    voiceOption === v 
+                      ? "bg-zinc-900 dark:bg-white text-white dark:text-zinc-900 border-transparent" 
+                      : "bg-transparent border-zinc-200 dark:border-zinc-800 hover:border-zinc-400 dark:hover:border-zinc-600"
+                  )}
+                >
+                  {v.charAt(0).toUpperCase() + v.slice(1)}
+                  <span className="block text-[10px] opacity-50 font-normal">
+                    {v === 'echo' ? 'Male' : 'Female'}
+                  </span>
+                </button>
+              ))}
+            </div>
+
+            <button 
+              onClick={onToggleAutoPlay}
+              className="flex items-center justify-between w-full p-3 bg-zinc-50 dark:bg-zinc-950 rounded-xl border border-zinc-200 dark:border-zinc-800"
+            >
+              <span className="text-sm font-medium">Auto-play AI Voice</span>
+              <div className={cn(
+                "w-10 h-5 rounded-full transition-colors relative",
+                autoPlayVoice ? "bg-zinc-900 dark:bg-white" : "bg-zinc-200 dark:bg-zinc-800"
+              )}>
+                <div className={cn(
+                  "absolute top-1 w-3 h-3 rounded-full transition-all",
+                  autoPlayVoice 
+                    ? "right-1 bg-white dark:bg-zinc-900" 
+                    : "left-1 bg-zinc-400 dark:bg-zinc-600"
+                )} />
+              </div>
+            </button>
           </div>
 
           <div className="pt-4 border-t border-zinc-200 dark:border-zinc-800">

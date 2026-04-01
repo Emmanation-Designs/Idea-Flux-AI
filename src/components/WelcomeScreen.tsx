@@ -2,7 +2,8 @@ import {
   MessageSquare, 
   FileText, 
   Hash,
-  Zap
+  Zap,
+  Waves
 } from 'lucide-react';
 import { motion } from 'motion/react';
 import { clsx, type ClassValue } from 'clsx';
@@ -47,10 +48,18 @@ export const WelcomeScreen = ({ onSelectType }: { onSelectType: (type: Conversat
       color: 'text-orange-500',
       bg: 'bg-orange-50 dark:bg-orange-950/20'
     },
+    { 
+      id: 'voice', 
+      title: 'Voice Chat', 
+      desc: 'Real-time AI conversation', 
+      icon: Waves,
+      color: 'text-pink-500',
+      bg: 'bg-pink-50 dark:bg-pink-950/20'
+    },
   ];
 
   return (
-    <div className="flex-1 flex flex-col items-center justify-center p-4 md:p-12 w-full max-w-4xl mx-auto overflow-hidden">
+    <div className="flex-1 flex flex-col items-center justify-center p-4 md:p-12 w-full max-w-5xl mx-auto overflow-hidden">
       <motion.div 
         initial={{ opacity: 0, y: -20 }}
         animate={{ opacity: 1, y: 0 }}
@@ -65,7 +74,7 @@ export const WelcomeScreen = ({ onSelectType }: { onSelectType: (type: Conversat
         </p>
       </motion.div>
 
-      <div className="flex md:grid md:grid-cols-4 gap-4 md:gap-6 w-full overflow-x-auto md:overflow-x-visible pb-8 md:pb-0 snap-x snap-mandatory md:snap-none no-scrollbar px-4 md:px-0">
+      <div className="flex md:grid md:grid-cols-5 gap-4 md:gap-6 w-full overflow-x-auto md:overflow-x-visible pb-8 md:pb-0 snap-x snap-mandatory md:snap-none no-scrollbar px-4 md:px-0">
         {suggestions.map((s, i) => (
           <motion.button
             key={s.id}

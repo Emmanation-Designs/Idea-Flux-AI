@@ -25,7 +25,8 @@ import {
   Pause,
   Image as ImageIcon,
   Edit2,
-  Trash2
+  Trash2,
+  Waves
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Toaster, toast } from 'sonner';
@@ -40,6 +41,7 @@ import { Sidebar } from './components/Sidebar';
 import { WelcomeScreen } from './components/WelcomeScreen';
 import { ContextForm } from './components/ContextForm';
 import { Settings } from './components/Settings';
+import { VoiceMode } from './components/VoiceMode';
 import { Auth } from './components/Auth';
 import { LegalModal } from './components/Legal';
 import { Footer } from './components/Footer';
@@ -75,6 +77,12 @@ export default function App() {
   const [currentAudio, setCurrentAudio] = useState<HTMLAudioElement | null>(null);
   const [shouldPlayVoice, setShouldPlayVoice] = useState(false);
   const [autoPlayVoice, setAutoPlayVoice] = useState(false);
+  
+  const [showVoiceMode, setShowVoiceMode] = useState(false);
+  const [isMuted, setIsMuted] = useState(false);
+  const [isSpeakerOn, setIsSpeakerOn] = useState(true);
+  const [currentTranscript, setCurrentTranscript] = useState('');
+  const [currentResponse, setCurrentResponse] = useState('');
   
   const [activeMessageId, setActiveMessageId] = useState<string | null>(null);
   
@@ -134,6 +142,8 @@ export default function App() {
         const transcript = event.results[0][0].transcript;
         setIsListening(false);
         if (transcript) {
+          setCurrentTranscript(transcript);
+          setCurrentResponse('');
           setShouldPlayVoice(true);
           sendMessage(transcript);
         }
@@ -151,14 +161,38 @@ export default function App() {
     }
   }, []);
 
+  useEffect(() => {
+    if (currentResponse && currentTranscript) {
+      // Keep transcript for a moment then clear
+      const timer = setTimeout(() => setCurrentTranscript(''), 2000);
+      return () => clearTimeout(timer);
+    }
+  }, [currentResponse]);
+
   const toggleListening = () => {
     if (isListening) {
       recognitionRef.current?.stop();
     } else {
+      if (isMuted) {
+        setIsMuted(false);
+      }
       recognitionRef.current?.start();
       setIsListening(true);
     }
   };
+
+  useEffect(() => {
+    if (isMuted && isListening) {
+      recognitionRef.current?.stop();
+      setIsListening(false);
+    }
+  }, [isMuted]);
+
+  useEffect(() => {
+    if (currentAudio) {
+      currentAudio.muted = !isSpeakerOn;
+    }
+  }, [isSpeakerOn, currentAudio]);
 
   const playVoice = async (text: string) => {
     try {
@@ -405,6 +439,9 @@ export default function App() {
           const chunk = decoder.decode(value);
           fullContent += chunk;
           setStreamingMessage(prev => prev + chunk);
+          if (showVoiceMode) {
+            setCurrentResponse(prev => prev + chunk);
+          }
         }
       }
 
@@ -662,7 +699,7 @@ export default function App() {
                         </p>
                       </div>
                       
-                      <div className="absolute right-2 bottom-2 flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                      <div className="absolute right-2 bottom-2 flex items-center gap-1 md:opacity-0 md:group-hover:opacity-100 opacity-100 transition-opacity">
                         <button 
                           onClick={() => {
                             const newTitle = prompt('Rename conversation:', conv.title);
@@ -687,7 +724,14 @@ export default function App() {
           ) : (
             <>
               {messages.length === 0 && !streamingMessage ? (
-                <WelcomeScreen onSelectType={(type) => setShowContextForm(type)} />
+                <WelcomeScreen onSelectType={(type) => {
+                  if (type === 'voice') {
+                    setShowVoiceMode(true);
+                    toggleListening();
+                  } else {
+                    setShowContextForm(type);
+                  }
+                }} />
               ) : (
                 <div className="max-w-4xl mx-auto w-full p-4 md:p-8 space-y-8 pb-32">
                   {messages.map((m) => (
@@ -851,13 +895,14 @@ export default function App() {
                 />
                 <div className="absolute right-3 bottom-3 flex items-center gap-2">
                   <button 
-                    onClick={toggleListening}
-                    className={cn(
-                      "p-2 rounded-xl transition-all",
-                      isListening ? "bg-red-500 text-white" : "bg-zinc-200 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-400 hover:bg-zinc-300 dark:hover:bg-zinc-700"
-                    )}
+                    onClick={() => {
+                      setShowVoiceMode(true);
+                      toggleListening();
+                    }}
+                    className="p-2 bg-zinc-200 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-400 rounded-xl hover:bg-zinc-300 dark:hover:bg-zinc-700 transition-all"
+                    title="Voice Chat"
                   >
-                    {isListening ? <MicOff className="w-5 h-5" /> : <Mic className="w-5 h-5" />}
+                    <Waves className="w-5 h-5" />
                   </button>
                   <button 
                     onClick={() => sendMessage(input)}
@@ -869,30 +914,15 @@ export default function App() {
                 </div>
               </div>
 
-              <div className="flex items-center justify-between px-2">
-                <div className="flex items-center gap-4">
-                  <select 
-                    value={voiceOption}
-                    onChange={(e) => setVoiceOption(e.target.value as any)}
-                    className="bg-transparent text-xs font-medium opacity-50 hover:opacity-100 outline-none cursor-pointer"
-                  >
-                    <option value="alloy">Female (Alloy)</option>
-                    <option value="nova">Female (Nova)</option>
-                    <option value="echo">Male (Echo)</option>
-                  </select>
-                  
-                  <button 
-                    onClick={() => setAutoPlayVoice(!autoPlayVoice)}
-                    className={cn(
-                      "flex items-center gap-1.5 text-xs font-medium transition-opacity",
-                      autoPlayVoice ? "opacity-100 text-zinc-900 dark:text-white" : "opacity-30 hover:opacity-50"
-                    )}
-                  >
-                    {autoPlayVoice ? <Volume2 className="w-3.5 h-3.5" /> : <VolumeX className="w-3.5 h-3.5" />}
-                    Voice Mode
-                  </button>
-                </div>
-                
+              <div className="flex items-center justify-end px-2 gap-4">
+                {isLoading && !streamingMessage && (
+                  <div className="flex items-center gap-1.5 text-[10px] font-medium opacity-50">
+                    <div className="w-1 h-1 bg-zinc-500 rounded-full animate-bounce" />
+                    <div className="w-1 h-1 bg-zinc-500 rounded-full animate-bounce [animation-delay:0.2s]" />
+                    <div className="w-1 h-1 bg-zinc-500 rounded-full animate-bounce [animation-delay:0.4s]" />
+                    Thinking...
+                  </div>
+                )}
                 {currentAudio && (
                   <button 
                     onClick={togglePlayback}
@@ -916,6 +946,10 @@ export default function App() {
           <Settings 
             profile={profile} 
             onClose={() => setShowSettings(false)} 
+            voiceOption={voiceOption}
+            onVoiceOptionChange={setVoiceOption}
+            autoPlayVoice={autoPlayVoice}
+            onToggleAutoPlay={() => setAutoPlayVoice(!autoPlayVoice)}
           />
         )}
         {showContextForm && (
@@ -931,6 +965,30 @@ export default function App() {
             onClose={() => setShowLegal(null)} 
           />
         )}
+        <VoiceMode 
+          isOpen={showVoiceMode}
+          onClose={() => {
+            setShowVoiceMode(false);
+            if (currentAudio) currentAudio.pause();
+            if (isListening) recognitionRef.current?.stop();
+            setIsPlaying(false);
+            setIsListening(false);
+            setCurrentTranscript('');
+            setCurrentResponse('');
+          }}
+          isListening={isListening}
+          isPlaying={isPlaying}
+          isLoading={isLoading}
+          onToggleListening={toggleListening}
+          transcript={currentTranscript}
+          response={currentResponse}
+          isMuted={isMuted}
+          onToggleMute={() => setIsMuted(!isMuted)}
+          isSpeakerOn={isSpeakerOn}
+          onToggleSpeaker={() => setIsSpeakerOn(!isSpeakerOn)}
+          voiceOption={voiceOption}
+          onVoiceOptionChange={setVoiceOption}
+        />
       </AnimatePresence>
 
       <Toaster position="top-center" theme={isDarkMode ? 'dark' : 'light'} />
