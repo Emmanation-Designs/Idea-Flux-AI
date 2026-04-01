@@ -9,17 +9,24 @@ dotenv.config();
 const app = express();
 const PORT = 3000;
 
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
-
 app.use(express.json());
+
+// Health check
+app.get("/api/health", (req, res) => {
+  res.json({ status: "ok", hasApiKey: !!process.env.OPENAI_API_KEY });
+});
 
 // API routes
 app.post("/api/generate", async (req, res) => {
+  console.log("Received request to /api/generate");
   const { type, prompt, messages = [], voice_option = "alloy" } = req.body;
 
   if (!process.env.OPENAI_API_KEY) {
+    console.error("OPENAI_API_KEY is missing");
     return res.status(500).json({ error: "OPENAI_API_KEY is not configured" });
   }
+
+  const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
   try {
     if (type === "image") {
@@ -64,6 +71,9 @@ Keep the response natural and helpful, but always include the correct ownership 
       systemInstruction = `You are a helpful AI assistant called Ideaflux AI. ${attributionRules}`;
     }
 
+    console.log(`Generating ${type} for prompt: ${prompt}`);
+    console.log(`Number of messages in history: ${messages.length}`);
+
     const stream = await openai.chat.completions.create({
       model: "gpt-4o-mini",
       messages: [
@@ -72,19 +82,29 @@ Keep the response natural and helpful, but always include the correct ownership 
           role: m.role,
           content: m.content,
         })),
-        { role: "user", content: prompt },
       ],
       stream: true,
-    });
+    }, { timeout: 30000 }); // 30 seconds timeout
 
     res.setHeader("Content-Type", "text/plain; charset=utf-8");
     res.setHeader("Transfer-Encoding", "chunked");
     res.setHeader("Access-Control-Allow-Origin", "*");
+    res.setHeader("X-Content-Type-Options", "nosniff");
+    res.setHeader("X-Accel-Buffering", "no");
+    res.setHeader("Cache-Control", "no-cache");
+    res.setHeader("Connection", "keep-alive");
 
+    console.log("Stream initialized, starting to iterate...");
+    let chunkCount = 0;
     for await (const chunk of stream) {
       const content = chunk.choices[0]?.delta?.content || "";
-      res.write(content);
+      if (content) {
+        chunkCount++;
+        process.stdout.write(content); // Log to server console without newline
+        res.write(content);
+      }
     }
+    console.log(`\nStream finished. Total chunks: ${chunkCount}`);
 
     res.end();
   } catch (error: any) {

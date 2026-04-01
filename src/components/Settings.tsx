@@ -26,8 +26,8 @@ export const Settings = ({
 }: { 
   profile: Profile | null; 
   onClose: () => void;
-  voiceOption: 'alloy' | 'nova' | 'echo';
-  onVoiceOptionChange: (voice: 'alloy' | 'nova' | 'echo') => void;
+  voiceOption: 'alloy' | 'echo';
+  onVoiceOptionChange: (voice: 'alloy' | 'echo') => void;
   autoPlayVoice: boolean;
   onToggleAutoPlay: () => void;
   onShowLegal: (type: 'about' | 'privacy' | 'terms') => void;
@@ -95,8 +95,8 @@ export const Settings = ({
           <div className="space-y-4 pt-4 border-t border-zinc-200 dark:border-zinc-800">
             <h3 className="text-sm font-bold opacity-70">Voice Settings</h3>
             
-            <div className="grid grid-cols-3 gap-2">
-              {(['alloy', 'nova', 'echo'] as const).map((v) => (
+            <div className="grid grid-cols-2 gap-2">
+              {(['alloy', 'echo'] as const).map((v) => (
                 <button
                   key={v}
                   onClick={() => onVoiceOptionChange(v)}
@@ -107,10 +107,7 @@ export const Settings = ({
                       : "bg-transparent border-zinc-200 dark:border-zinc-800 hover:border-zinc-400 dark:hover:border-zinc-600"
                   )}
                 >
-                  {v.charAt(0).toUpperCase() + v.slice(1)}
-                  <span className="block text-[10px] opacity-50 font-normal">
-                    {v === 'echo' ? 'Male' : 'Female'}
-                  </span>
+                  {v === 'alloy' ? 'Female (Alloy)' : 'Male (Echo)'}
                 </button>
               ))}
             </div>

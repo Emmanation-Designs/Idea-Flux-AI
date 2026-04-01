@@ -46,8 +46,8 @@ export const VoiceMode = ({
   onToggleMute: () => void;
   isSpeakerOn: boolean;
   onToggleSpeaker: () => void;
-  voiceOption: 'alloy' | 'nova' | 'echo';
-  onVoiceOptionChange: (voice: 'alloy' | 'nova' | 'echo') => void;
+  voiceOption: 'alloy' | 'echo';
+  onVoiceOptionChange: (voice: 'alloy' | 'echo') => void;
 }) => {
   const [pulseScale, setPulseScale] = useState(1);
   const [showVoiceSettings, setShowVoiceSettings] = useState(false);
@@ -117,7 +117,7 @@ export const VoiceMode = ({
               >
                 <h3 className="text-xs font-bold uppercase tracking-wider opacity-50 mb-3">Select Voice</h3>
                 <div className="space-y-2">
-                  {(['alloy', 'nova', 'echo'] as const).map((v) => (
+                  {(['alloy', 'echo'] as const).map((v) => (
                     <button
                       key={v}
                       onClick={() => {
@@ -129,8 +129,8 @@ export const VoiceMode = ({
                         voiceOption === v ? "bg-white text-black" : "hover:bg-white/5 text-white/70"
                       )}
                     >
-                      <span>{v.charAt(0).toUpperCase() + v.slice(1)}</span>
-                      <span className="text-[10px] opacity-50">{v === 'echo' ? 'Male' : 'Female'}</span>
+                      <span>{v === 'alloy' ? 'Female (Alloy)' : 'Male (Echo)'}</span>
+                      {voiceOption === v && <div className="w-1.5 h-1.5 rounded-full bg-current" />}
                     </button>
                   ))}
                 </div>

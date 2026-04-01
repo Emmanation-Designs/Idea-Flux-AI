@@ -71,9 +71,10 @@ export default function App() {
   const [streamingMessage, setStreamingMessage] = useState('');
   const [view, setView] = useState<'chat' | 'history'>('chat');
   const [isListening, setIsListening] = useState(false);
-  const [voiceOption, setVoiceOption] = useState<'alloy' | 'nova' | 'echo'>('alloy');
+  const [voiceOption, setVoiceOption] = useState<'alloy' | 'echo'>('alloy');
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentAudio, setCurrentAudio] = useState<HTMLAudioElement | null>(null);
+  const [currentlyPlayingMessageId, setCurrentlyPlayingMessageId] = useState<string | null>(null);
   const [shouldPlayVoice, setShouldPlayVoice] = useState(false);
   const [autoPlayVoice, setAutoPlayVoice] = useState(false);
   
@@ -136,11 +137,23 @@ export default function App() {
       recognitionRef.current = new SpeechRecognition();
       recognitionRef.current.continuous = false;
       recognitionRef.current.interimResults = false;
+      recognitionRef.current.lang = 'en-US';
+
+      recognitionRef.current.onstart = () => {
+        setIsListening(true);
+        console.log("Speech recognition started");
+      };
 
       recognitionRef.current.onresult = (event: any) => {
         const transcript = event.results[0][0].transcript;
-        setIsListening(false);
+        console.log("Speech recognition result:", transcript);
         if (transcript) {
+          try {
+            recognitionRef.current.stop();
+          } catch (e) {
+            console.warn("Error stopping recognition:", e);
+          }
+          setIsListening(false);
           setCurrentTranscript(transcript);
           setCurrentResponse('');
           setShouldPlayVoice(true);
@@ -151,12 +164,26 @@ export default function App() {
       recognitionRef.current.onerror = (event: any) => {
         console.error("Speech recognition error:", event.error);
         setIsListening(false);
-        toast.error("Speech recognition failed. Please try again.");
+        
+        if (event.error === 'no-speech') {
+          console.log("No speech detected.");
+        } else if (event.error === 'not-allowed') {
+          toast.error("Microphone access denied. Please check your browser settings.");
+        } else if (event.error === 'network') {
+          toast.error("Network error during speech recognition. Please check your connection.");
+        } else if (event.error === 'service-not-allowed') {
+          toast.error("Speech recognition service not allowed.");
+        } else {
+          toast.error(`Speech recognition failed: ${event.error}. Please try again.`);
+        }
       };
 
       recognitionRef.current.onend = () => {
+        console.log("Speech recognition ended");
         setIsListening(false);
       };
+    } else {
+      console.warn("SpeechRecognition API not supported in this browser.");
     }
   }, []);
 
@@ -170,13 +197,24 @@ export default function App() {
 
   const toggleListening = () => {
     if (isListening) {
-      recognitionRef.current?.stop();
+      try {
+        recognitionRef.current?.stop();
+      } catch (e) {
+        console.warn("Error stopping recognition:", e);
+      }
+      setIsListening(false);
     } else {
       if (isMuted) {
         setIsMuted(false);
       }
-      recognitionRef.current?.start();
-      setIsListening(true);
+      try {
+        recognitionRef.current?.start();
+        setIsListening(true);
+      } catch (e) {
+        console.error("Error starting recognition:", e);
+        toast.error("Failed to start microphone. Please try again.");
+        setIsListening(false);
+      }
     }
   };
 
@@ -193,8 +231,22 @@ export default function App() {
     }
   }, [isSpeakerOn, currentAudio]);
 
-  const playVoice = async (text: string) => {
+  const playVoice = async (text: string, messageId?: string) => {
+    if (!text) return;
+    
+    // If clicking the same message that is playing, toggle playback
+    if (messageId && currentlyPlayingMessageId === messageId && currentAudio) {
+      togglePlayback();
+      return;
+    }
+
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 30000);
+
     try {
+      setIsPlaying(true);
+      if (messageId) setCurrentlyPlayingMessageId(messageId);
+
       const response = await fetch('/api/generate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -202,8 +254,10 @@ export default function App() {
           type: 'voice',
           prompt: text,
           voice_option: voiceOption
-        })
+        }),
+        signal: controller.signal
       });
+      clearTimeout(timeoutId);
 
       if (!response.ok) throw new Error('Failed to generate voice');
       const { audio } = await response.json();
@@ -214,19 +268,38 @@ export default function App() {
       
       if (currentAudio) {
         currentAudio.pause();
+        currentAudio.onended = null;
       }
       
       setCurrentAudio(audioObj);
-      setIsPlaying(true);
-      audioObj.play();
+      audioObj.play().catch(err => {
+        console.error("Audio play error:", err);
+        setIsPlaying(false);
+        setCurrentlyPlayingMessageId(null);
+      });
       
       audioObj.onended = () => {
         setIsPlaying(false);
         setCurrentAudio(null);
+        setCurrentlyPlayingMessageId(null);
       };
-    } catch (error) {
+
+      audioObj.onerror = () => {
+        setIsPlaying(false);
+        setCurrentAudio(null);
+        setCurrentlyPlayingMessageId(null);
+        toast.error("Failed to play audio.");
+      };
+    } catch (error: any) {
+      clearTimeout(timeoutId);
       console.error("Voice error:", error);
-      toast.error("Failed to play voice response.");
+      setIsPlaying(false);
+      setCurrentlyPlayingMessageId(null);
+      if (error.name === 'AbortError') {
+        toast.error("Voice generation timed out.");
+      } else {
+        toast.error("Failed to play voice response.");
+      }
     }
   };
 
@@ -384,7 +457,11 @@ export default function App() {
     setIsLoading(true);
     setStreamingMessage('');
 
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 60000);
+
     try {
+      console.log("Sending message to /api/generate:", { type: conv.type, prompt: content });
       const response = await fetch('/api/generate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -393,10 +470,15 @@ export default function App() {
           prompt: content,
           messages: updatedMessages,
           voice_option: voiceOption
-        })
+        }),
+        signal: controller.signal
       });
 
-      if (!response.ok) throw new Error('Failed to generate');
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        console.error("API Error:", response.status, errorData);
+        throw new Error(errorData.error || 'Failed to generate');
+      }
 
       if (conv.type === 'image') {
         const { image_url } = await response.json();
@@ -427,6 +509,7 @@ export default function App() {
         return;
       }
 
+      console.log("API response OK, starting to read stream...");
       const reader = response.body?.getReader();
       const decoder = new TextDecoder();
       let fullContent = '';
@@ -434,15 +517,22 @@ export default function App() {
       if (reader) {
         while (true) {
           const { done, value } = await reader.read();
-          if (done) break;
+          if (done) {
+            console.log("Stream reader done.");
+            break;
+          }
           const chunk = decoder.decode(value);
+          console.log("Received chunk:", chunk.length, "chars");
           fullContent += chunk;
           setStreamingMessage(prev => prev + chunk);
           if (showVoiceMode) {
             setCurrentResponse(prev => prev + chunk);
           }
         }
+      } else {
+        console.warn("No reader available in response body.");
       }
+      clearTimeout(timeoutId);
 
       const assistantMessage: Message = {
         id: crypto.randomUUID(),
@@ -787,6 +877,16 @@ export default function App() {
                             {m.role === 'assistant' && (
                               <>
                                 <button 
+                                  onClick={(e) => { e.stopPropagation(); playVoice(m.content, m.id); }}
+                                  className={cn(
+                                    "p-1.5 hover:bg-zinc-200 dark:hover:bg-zinc-800 rounded-lg transition-colors",
+                                    currentlyPlayingMessageId === m.id ? "text-blue-600 bg-blue-50 dark:bg-blue-900/20" : "text-zinc-500 hover:text-zinc-900 dark:hover:text-white"
+                                  )}
+                                  title={currentlyPlayingMessageId === m.id && isPlaying ? "Pause voice" : "Listen to response"}
+                                >
+                                  {currentlyPlayingMessageId === m.id && isPlaying ? <Pause className="w-3.5 h-3.5" /> : <Volume2 className="w-3.5 h-3.5" />}
+                                </button>
+                                <button 
                                   onClick={(e) => { e.stopPropagation(); handleDownloadMessage(m.content, m.id); }}
                                   className="p-1.5 hover:bg-zinc-200 dark:hover:bg-zinc-800 rounded-lg text-zinc-500 hover:text-zinc-900 dark:hover:text-white transition-colors"
                                   title="Download answer"
@@ -871,6 +971,29 @@ export default function App() {
         {view === 'chat' && (
           <div className="absolute bottom-0 left-0 right-0 p-4 bg-gradient-to-t from-white dark:from-zinc-950 via-white/80 dark:via-zinc-950/80 to-transparent pt-12">
             <div className="max-w-3xl mx-auto space-y-4">
+              {/* Voice Selection */}
+              {showVoiceMode && (
+                <div className="flex items-center justify-center gap-4 mb-2">
+                  <button
+                    onClick={() => setVoiceOption('alloy')}
+                    className={cn(
+                      "px-3 py-1 rounded-full text-xs font-medium transition-all",
+                      voiceOption === 'alloy' ? "bg-zinc-900 dark:bg-white text-white dark:text-black" : "bg-zinc-100 dark:bg-zinc-800 text-zinc-500"
+                    )}
+                  >
+                    Female (Alloy)
+                  </button>
+                  <button
+                    onClick={() => setVoiceOption('echo')}
+                    className={cn(
+                      "px-3 py-1 rounded-full text-xs font-medium transition-all",
+                      voiceOption === 'echo' ? "bg-zinc-900 dark:bg-white text-white dark:text-black" : "bg-zinc-100 dark:bg-zinc-800 text-zinc-500"
+                    )}
+                  >
+                    Male (Echo)
+                  </button>
+                </div>
+              )}
               {isListening && (
                 <div className="flex items-center justify-center gap-2 text-zinc-500 animate-pulse mb-2">
                   <Mic className="w-4 h-4" />
