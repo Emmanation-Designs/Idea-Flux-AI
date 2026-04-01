@@ -15,7 +15,8 @@ import {
   Copy,
   ThumbsUp,
   ThumbsDown,
-  FileDown
+  FileDown,
+  MessageSquare
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Toaster, toast } from 'sonner';
@@ -432,7 +433,7 @@ export default function App() {
   );
 
   return (
-    <div className={cn("flex h-screen bg-white dark:bg-zinc-950 text-zinc-900 dark:text-zinc-100 font-sans", isDarkMode && "dark")}>
+    <div className={cn("flex h-[100dvh] bg-white dark:bg-zinc-950 text-zinc-900 dark:text-zinc-100 font-sans overflow-hidden", isDarkMode && "dark")}>
       <Sidebar 
         isOpen={isSidebarOpen}
         setIsOpen={setIsSidebarOpen}
