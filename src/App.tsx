@@ -16,7 +16,16 @@ import {
   ThumbsUp,
   ThumbsDown,
   FileDown,
-  MessageSquare
+  MessageSquare,
+  Mic,
+  MicOff,
+  Volume2,
+  VolumeX,
+  Play,
+  Pause,
+  Image as ImageIcon,
+  Edit2,
+  Trash2
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Toaster, toast } from 'sonner';
@@ -60,8 +69,17 @@ export default function App() {
   const [showLegal, setShowLegal] = useState<'about' | 'privacy' | 'terms' | null>(null);
   const [streamingMessage, setStreamingMessage] = useState('');
   const [view, setView] = useState<'chat' | 'history'>('chat');
+  const [isListening, setIsListening] = useState(false);
+  const [voiceOption, setVoiceOption] = useState<'alloy' | 'nova' | 'echo'>('alloy');
+  const [isPlaying, setIsPlaying] = useState(false);
+  const [currentAudio, setCurrentAudio] = useState<HTMLAudioElement | null>(null);
+  const [shouldPlayVoice, setShouldPlayVoice] = useState(false);
+  const [autoPlayVoice, setAutoPlayVoice] = useState(false);
+  
+  const [activeMessageId, setActiveMessageId] = useState<string | null>(null);
   
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const recognitionRef = useRef<any>(null);
 
   useEffect(() => {
     // Auth Listener
@@ -103,6 +121,92 @@ export default function App() {
   useEffect(() => {
     scrollToBottom();
   }, [messages, streamingMessage]);
+
+  useEffect(() => {
+    // Initialize SpeechRecognition
+    const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    if (SpeechRecognition) {
+      recognitionRef.current = new SpeechRecognition();
+      recognitionRef.current.continuous = false;
+      recognitionRef.current.interimResults = false;
+
+      recognitionRef.current.onresult = (event: any) => {
+        const transcript = event.results[0][0].transcript;
+        setIsListening(false);
+        if (transcript) {
+          setShouldPlayVoice(true);
+          sendMessage(transcript);
+        }
+      };
+
+      recognitionRef.current.onerror = (event: any) => {
+        console.error("Speech recognition error:", event.error);
+        setIsListening(false);
+        toast.error("Speech recognition failed. Please try again.");
+      };
+
+      recognitionRef.current.onend = () => {
+        setIsListening(false);
+      };
+    }
+  }, []);
+
+  const toggleListening = () => {
+    if (isListening) {
+      recognitionRef.current?.stop();
+    } else {
+      recognitionRef.current?.start();
+      setIsListening(true);
+    }
+  };
+
+  const playVoice = async (text: string) => {
+    try {
+      const response = await fetch('/api/generate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          type: 'voice',
+          prompt: text,
+          voice_option: voiceOption
+        })
+      });
+
+      if (!response.ok) throw new Error('Failed to generate voice');
+      const { audio } = await response.json();
+      
+      const audioBlob = new Blob([Uint8Array.from(atob(audio), c => c.charCodeAt(0))], { type: 'audio/mp3' });
+      const audioUrl = URL.createObjectURL(audioBlob);
+      const audioObj = new Audio(audioUrl);
+      
+      if (currentAudio) {
+        currentAudio.pause();
+      }
+      
+      setCurrentAudio(audioObj);
+      setIsPlaying(true);
+      audioObj.play();
+      
+      audioObj.onended = () => {
+        setIsPlaying(false);
+        setCurrentAudio(null);
+      };
+    } catch (error) {
+      console.error("Voice error:", error);
+      toast.error("Failed to play voice response.");
+    }
+  };
+
+  const togglePlayback = () => {
+    if (currentAudio) {
+      if (isPlaying) {
+        currentAudio.pause();
+      } else {
+        currentAudio.play();
+      }
+      setIsPlaying(!isPlaying);
+    }
+  };
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -185,6 +289,9 @@ export default function App() {
     } else if (type === 'hashtag') {
       prompt = `Generate ${data.count || 15} trending hashtags for ${data.topic} on ${data.platform}.`;
       title = `${data.topic} Hashtags`;
+    } else if (type === 'image') {
+      prompt = `Generate a ${data.style} image of: ${data.prompt}`;
+      title = `${data.prompt.slice(0, 20)}... Image`;
     }
 
     await startConversation(type, title, prompt, data);
@@ -251,11 +358,41 @@ export default function App() {
         body: JSON.stringify({
           type: conv.type || 'script',
           prompt: content,
-          messages: updatedMessages
+          messages: updatedMessages,
+          voice_option: voiceOption
         })
       });
 
       if (!response.ok) throw new Error('Failed to generate');
+
+      if (conv.type === 'image') {
+        const { image_url } = await response.json();
+        const assistantMessage: Message = {
+          id: crypto.randomUUID(),
+          role: 'assistant',
+          content: `Generated image for: ${content}`,
+          image_url,
+          created_at: new Date().toISOString()
+        };
+        
+        const finalMessages = [...updatedMessages, assistantMessage];
+        setMessages(finalMessages);
+        
+        // Save image to Supabase images table
+        await supabase.from('images').insert({
+          user_id: user.id,
+          prompt: content,
+          url: image_url,
+          conversation_id: conv.id
+        });
+
+        await supabase.from('conversations').update({ 
+          messages: finalMessages,
+          updated_at: new Date().toISOString()
+        }).eq('id', conv.id);
+        
+        return;
+      }
 
       const reader = response.body?.getReader();
       const decoder = new TextDecoder();
@@ -281,6 +418,12 @@ export default function App() {
       const finalMessages = [...updatedMessages, assistantMessage];
       setMessages(finalMessages);
       setStreamingMessage('');
+
+      // Auto-play voice if it's a voice conversation or triggered by mic or auto-play is on
+      if (conv.type === 'voice' || shouldPlayVoice || autoPlayVoice) {
+        playVoice(fullContent);
+        setShouldPlayVoice(false);
+      }
 
       // Update Supabase
       const { error: updateError } = await supabase
@@ -504,20 +647,39 @@ export default function App() {
               ) : (
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   {conversations.map(conv => (
-                    <button
+                    <div
                       key={conv.id}
-                      onClick={() => handleSelectConversation(conv.id)}
-                      className="p-4 bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-2xl text-left hover:border-zinc-400 dark:hover:border-zinc-600 transition-all group"
+                      className="p-4 bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-2xl text-left hover:border-zinc-400 dark:hover:border-zinc-600 transition-all group relative"
                     >
-                      <div className="flex items-center justify-between mb-2">
-                        <span className="text-xs font-bold uppercase tracking-wider opacity-50">{conv.type}</span>
-                        <span className="text-[10px] opacity-40">{new Date(conv.created_at).toLocaleDateString()}</span>
+                      <div onClick={() => handleSelectConversation(conv.id)} className="cursor-pointer">
+                        <div className="flex items-center justify-between mb-2">
+                          <span className="text-xs font-bold uppercase tracking-wider opacity-50">{conv.type}</span>
+                          <span className="text-[10px] opacity-40">{new Date(conv.created_at).toLocaleDateString()}</span>
+                        </div>
+                        <h3 className="font-bold mb-2 group-hover:text-zinc-900 dark:group-hover:text-white transition-colors">{conv.title}</h3>
+                        <p className="text-xs opacity-60 line-clamp-2">
+                          {conv.messages?.[0]?.content || 'No messages yet'}
+                        </p>
                       </div>
-                      <h3 className="font-bold mb-2 group-hover:text-zinc-900 dark:group-hover:text-white transition-colors">{conv.title}</h3>
-                      <p className="text-xs opacity-60 line-clamp-2">
-                        {conv.messages?.[0]?.content || 'No messages yet'}
-                      </p>
-                    </button>
+                      
+                      <div className="absolute right-2 bottom-2 flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                        <button 
+                          onClick={() => {
+                            const newTitle = prompt('Rename conversation:', conv.title);
+                            if (newTitle) handleRenameConversation(conv.id, newTitle);
+                          }}
+                          className="p-1.5 bg-zinc-100 dark:bg-zinc-800 hover:bg-zinc-200 dark:hover:bg-zinc-700 rounded-lg text-zinc-500 hover:text-zinc-900 dark:hover:text-white transition-colors"
+                        >
+                          <Edit2 className="w-3.5 h-3.5" />
+                        </button>
+                        <button 
+                          onClick={() => handleDeleteConversation(conv.id)}
+                          className="p-1.5 bg-zinc-100 dark:bg-zinc-800 hover:bg-zinc-200 dark:hover:bg-zinc-700 rounded-lg text-zinc-500 hover:text-red-500 transition-colors"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    </div>
                   ))}
                 </div>
               )}
@@ -531,8 +693,9 @@ export default function App() {
                   {messages.map((m) => (
                     <div 
                       key={m.id} 
+                      onClick={() => setActiveMessageId(activeMessageId === m.id ? null : m.id)}
                       className={cn(
-                        "flex w-full",
+                        "flex w-full cursor-pointer md:cursor-default",
                         m.role === 'user' ? "justify-end" : "justify-start"
                       )}
                     >
@@ -545,13 +708,34 @@ export default function App() {
                         <div className="prose dark:prose-invert prose-sm md:prose-base max-w-none">
                           <ReactMarkdown>{m.content}</ReactMarkdown>
                         </div>
+                        {m.image_url && (
+                          <div className="mt-4 rounded-xl overflow-hidden border border-zinc-200 dark:border-zinc-800">
+                            <img src={m.image_url} alt="Generated" className="w-full h-auto" referrerPolicy="no-referrer" />
+                            <button 
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                const a = document.createElement('a');
+                                a.href = m.image_url!;
+                                a.download = 'generated-image.png';
+                                a.click();
+                              }}
+                              className="w-full py-2 bg-zinc-100 dark:bg-zinc-800 text-xs font-bold flex items-center justify-center gap-2 hover:bg-zinc-200 dark:hover:bg-zinc-700 transition-colors"
+                            >
+                              <Download className="w-3.5 h-3.5" />
+                              Download Image
+                            </button>
+                          </div>
+                        )}
                         <div className="mt-2 flex items-center justify-between">
                           <div className="text-[10px] opacity-30">
                             {new Date(m.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                           </div>
-                          <div className="flex items-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                          <div className={cn(
+                            "flex items-center gap-2 transition-all duration-200",
+                            activeMessageId === m.id ? "opacity-100 translate-y-0" : "opacity-0 md:group-hover:opacity-100 translate-y-1 md:translate-y-0"
+                          )}>
                             <button 
-                              onClick={() => copyToClipboard(m.content)}
+                              onClick={(e) => { e.stopPropagation(); copyToClipboard(m.content); }}
                               className="p-1.5 hover:bg-zinc-200 dark:hover:bg-zinc-800 rounded-lg text-zinc-500 hover:text-zinc-900 dark:hover:text-white transition-colors"
                               title="Copy to clipboard"
                             >
@@ -560,14 +744,14 @@ export default function App() {
                             {m.role === 'assistant' && (
                               <>
                                 <button 
-                                  onClick={() => handleDownloadMessage(m.content, m.id)}
+                                  onClick={(e) => { e.stopPropagation(); handleDownloadMessage(m.content, m.id); }}
                                   className="p-1.5 hover:bg-zinc-200 dark:hover:bg-zinc-800 rounded-lg text-zinc-500 hover:text-zinc-900 dark:hover:text-white transition-colors"
                                   title="Download answer"
                                 >
                                   <FileDown className="w-3.5 h-3.5" />
                                 </button>
                                 <button 
-                                  onClick={() => handleFeedback(m.id, 'like')}
+                                  onClick={(e) => { e.stopPropagation(); handleFeedback(m.id, 'like'); }}
                                   className={cn(
                                     "p-1.5 hover:bg-zinc-200 dark:hover:bg-zinc-800 rounded-lg transition-colors",
                                     m.feedback === 'like' ? "text-green-600 bg-green-50 dark:bg-green-900/20" : "text-zinc-500 hover:text-zinc-900 dark:hover:text-white"
@@ -577,7 +761,7 @@ export default function App() {
                                   <ThumbsUp className="w-3.5 h-3.5" />
                                 </button>
                                 <button 
-                                  onClick={() => handleFeedback(m.id, 'dislike')}
+                                  onClick={(e) => { e.stopPropagation(); handleFeedback(m.id, 'dislike'); }}
                                   className={cn(
                                     "p-1.5 hover:bg-zinc-200 dark:hover:bg-zinc-800 rounded-lg transition-colors",
                                     m.feedback === 'dislike' ? "text-red-600 bg-red-50 dark:bg-red-900/20" : "text-zinc-500 hover:text-zinc-900 dark:hover:text-white"
@@ -608,6 +792,31 @@ export default function App() {
                       </div>
                     </div>
                   )}
+
+                  {isLoading && !streamingMessage && (
+                    <div className="flex justify-start w-full">
+                      <div className="max-w-[85%] md:max-w-[75%] p-4 rounded-2xl text-sm md:text-base bg-transparent text-zinc-900 dark:text-zinc-100 rounded-tl-none border-l-2 border-zinc-200 dark:border-zinc-800 pl-6">
+                        <div className="flex items-center gap-2 text-zinc-500">
+                          <motion.div
+                            animate={{ scale: [1, 1.2, 1] }}
+                            transition={{ repeat: Infinity, duration: 1, delay: 0 }}
+                            className="w-1.5 h-1.5 bg-zinc-400 dark:bg-zinc-600 rounded-full"
+                          />
+                          <motion.div
+                            animate={{ scale: [1, 1.2, 1] }}
+                            transition={{ repeat: Infinity, duration: 1, delay: 0.2 }}
+                            className="w-1.5 h-1.5 bg-zinc-400 dark:bg-zinc-600 rounded-full"
+                          />
+                          <motion.div
+                            animate={{ scale: [1, 1.2, 1] }}
+                            transition={{ repeat: Infinity, duration: 1, delay: 0.4 }}
+                            className="w-1.5 h-1.5 bg-zinc-400 dark:bg-zinc-600 rounded-full"
+                          />
+                          <span className="text-xs font-medium ml-1">Ideaflux is thinking...</span>
+                        </div>
+                      </div>
+                    </div>
+                  )}
                   <div ref={messagesEndRef} />
                 </div>
               )}
@@ -618,27 +827,82 @@ export default function App() {
         {/* Input Area */}
         {view === 'chat' && (
           <div className="absolute bottom-0 left-0 right-0 p-4 bg-gradient-to-t from-white dark:from-zinc-950 via-white/80 dark:via-zinc-950/80 to-transparent pt-12">
-            <div className="max-w-3xl mx-auto relative">
-              <textarea
-                rows={1}
-                value={input}
-                onChange={(e) => setInput(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter' && !e.shiftKey) {
-                    e.preventDefault();
-                    sendMessage(input);
-                  }
-                }}
-                placeholder="Ask Ideaflux AI anything..."
-                className="w-full bg-zinc-100 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-2xl px-4 py-4 pr-14 focus:ring-2 focus:ring-zinc-500 outline-none resize-none transition-all shadow-lg"
-              />
-              <button 
-                onClick={() => sendMessage(input)}
-                disabled={!input.trim() || isLoading}
-                className="absolute right-3 bottom-3 p-2 bg-zinc-900 dark:bg-white text-white dark:text-zinc-900 rounded-xl disabled:opacity-50 transition-opacity"
-              >
-                <Send className="w-5 h-5" />
-              </button>
+            <div className="max-w-3xl mx-auto space-y-4">
+              {isListening && (
+                <div className="flex items-center justify-center gap-2 text-zinc-500 animate-pulse mb-2">
+                  <Mic className="w-4 h-4" />
+                  <span className="text-sm font-medium">Listening...</span>
+                </div>
+              )}
+              
+              <div className="relative">
+                <textarea
+                  rows={1}
+                  value={input}
+                  onChange={(e) => setInput(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' && !e.shiftKey) {
+                      e.preventDefault();
+                      sendMessage(input);
+                    }
+                  }}
+                  placeholder="Ask Ideaflux AI anything..."
+                  className="w-full bg-zinc-100 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-2xl px-4 py-4 pr-24 focus:ring-2 focus:ring-zinc-500 outline-none resize-none transition-all shadow-lg"
+                />
+                <div className="absolute right-3 bottom-3 flex items-center gap-2">
+                  <button 
+                    onClick={toggleListening}
+                    className={cn(
+                      "p-2 rounded-xl transition-all",
+                      isListening ? "bg-red-500 text-white" : "bg-zinc-200 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-400 hover:bg-zinc-300 dark:hover:bg-zinc-700"
+                    )}
+                  >
+                    {isListening ? <MicOff className="w-5 h-5" /> : <Mic className="w-5 h-5" />}
+                  </button>
+                  <button 
+                    onClick={() => sendMessage(input)}
+                    disabled={!input.trim() || isLoading}
+                    className="p-2 bg-zinc-900 dark:bg-white text-white dark:text-zinc-900 rounded-xl disabled:opacity-50 transition-opacity"
+                  >
+                    <Send className="w-5 h-5" />
+                  </button>
+                </div>
+              </div>
+
+              <div className="flex items-center justify-between px-2">
+                <div className="flex items-center gap-4">
+                  <select 
+                    value={voiceOption}
+                    onChange={(e) => setVoiceOption(e.target.value as any)}
+                    className="bg-transparent text-xs font-medium opacity-50 hover:opacity-100 outline-none cursor-pointer"
+                  >
+                    <option value="alloy">Female (Alloy)</option>
+                    <option value="nova">Female (Nova)</option>
+                    <option value="echo">Male (Echo)</option>
+                  </select>
+                  
+                  <button 
+                    onClick={() => setAutoPlayVoice(!autoPlayVoice)}
+                    className={cn(
+                      "flex items-center gap-1.5 text-xs font-medium transition-opacity",
+                      autoPlayVoice ? "opacity-100 text-zinc-900 dark:text-white" : "opacity-30 hover:opacity-50"
+                    )}
+                  >
+                    {autoPlayVoice ? <Volume2 className="w-3.5 h-3.5" /> : <VolumeX className="w-3.5 h-3.5" />}
+                    Voice Mode
+                  </button>
+                </div>
+                
+                {currentAudio && (
+                  <button 
+                    onClick={togglePlayback}
+                    className="flex items-center gap-2 text-xs font-bold text-zinc-900 dark:text-white"
+                  >
+                    {isPlaying ? <Pause className="w-4 h-4" /> : <Play className="w-4 h-4" />}
+                    {isPlaying ? 'Playing AI Voice' : 'Paused'}
+                  </button>
+                )}
+              </div>
             </div>
           </div>
         )}

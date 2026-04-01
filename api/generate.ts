@@ -5,7 +5,7 @@ export default async function handler(req: any, res: any) {
     return res.status(405).json({ error: 'Method not allowed' });
   }
 
-  const { type, prompt, messages = [] } = req.body;
+  const { type, prompt, messages = [], voice_option = "alloy" } = req.body;
 
   if (!process.env.OPENAI_API_KEY) {
     return res.status(500).json({ error: "OPENAI_API_KEY is not configured" });
@@ -14,6 +14,28 @@ export default async function handler(req: any, res: any) {
   const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
   try {
+    if (type === "image") {
+      const response = await openai.images.generate({
+        model: "dall-e-3",
+        prompt: prompt,
+        n: 1,
+        size: "1024x1024",
+      });
+      return res.json({ image_url: response.data[0].url });
+    }
+
+    if (type === "voice") {
+      const mp3 = await openai.audio.speech.create({
+        model: "tts-1",
+        voice: voice_option as any,
+        input: prompt,
+      });
+      const buffer = Buffer.from(await mp3.arrayBuffer());
+      const base64 = buffer.toString("base64");
+      return res.json({ audio: base64 });
+    }
+
+    // Default to text generation
     let systemInstruction = "";
     if (type === "idea") {
       systemInstruction = "You are an expert content strategist. Generate creative, viral-worthy ideas for the specified niche and platform. Be concise but insightful.";

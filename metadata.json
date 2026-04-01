@@ -1,5 +1,5 @@
 {
   "name": "Ideaflux AI",
   "description": "A clean, modern AI-powered idea and script generator inspired by Grok.",
-  "requestFramePermissions": []
+  "requestFramePermissions": ["microphone"]
 }

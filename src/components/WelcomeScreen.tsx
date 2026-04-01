@@ -39,6 +39,14 @@ export const WelcomeScreen = ({ onSelectType }: { onSelectType: (type: Conversat
       color: 'text-emerald-500',
       bg: 'bg-emerald-50 dark:bg-emerald-950/20'
     },
+    { 
+      id: 'image', 
+      title: 'Generate Image', 
+      desc: 'DALL·E 3 AI images', 
+      icon: Zap,
+      color: 'text-orange-500',
+      bg: 'bg-orange-50 dark:bg-orange-950/20'
+    },
   ];
 
   return (
@@ -57,7 +65,7 @@ export const WelcomeScreen = ({ onSelectType }: { onSelectType: (type: Conversat
         </p>
       </motion.div>
 
-      <div className="grid grid-cols-3 gap-2 md:gap-6 w-full">
+      <div className="flex md:grid md:grid-cols-4 gap-4 md:gap-6 w-full overflow-x-auto md:overflow-x-visible pb-8 md:pb-0 snap-x snap-mandatory md:snap-none no-scrollbar px-4 md:px-0">
         {suggestions.map((s, i) => (
           <motion.button
             key={s.id}
@@ -65,15 +73,15 @@ export const WelcomeScreen = ({ onSelectType }: { onSelectType: (type: Conversat
             animate={{ opacity: 1, y: 0 }}
             transition={{ delay: i * 0.1 }}
             onClick={() => onSelectType(s.id as ConversationType)}
-            className="group p-3 md:p-8 bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-2xl md:rounded-3xl text-center md:text-left hover:border-zinc-400 dark:hover:border-zinc-600 transition-all hover:shadow-xl flex flex-col items-center md:items-start"
+            className="flex-shrink-0 w-[160px] md:w-full snap-center group p-5 md:p-8 bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-3xl text-center md:text-left hover:border-zinc-400 dark:hover:border-zinc-600 transition-all hover:shadow-xl flex flex-col items-center md:items-start h-full"
           >
-            <div className={cn("w-10 h-10 md:w-12 md:h-12 rounded-xl md:rounded-2xl flex items-center justify-center mb-3 md:mb-6 transition-transform group-hover:scale-110", s.bg)}>
-              <s.icon className={cn("w-5 h-5 md:w-6 md:h-6", s.color)} />
+            <div className={cn("w-12 h-12 md:w-14 md:h-14 rounded-2xl flex items-center justify-center mb-4 md:mb-6 transition-transform group-hover:scale-110", s.bg)}>
+              <s.icon className={cn("w-6 h-6 md:w-7 md:h-7", s.color)} />
             </div>
-            <h3 className="text-[10px] md:text-xl font-bold mb-1 md:mb-2 group-hover:text-zinc-900 dark:group-hover:text-white transition-colors line-clamp-1">
+            <h3 className="text-sm md:text-xl font-bold mb-1 md:mb-2 group-hover:text-zinc-900 dark:group-hover:text-white transition-colors line-clamp-1">
               {s.title.replace('Create ', '')}
             </h3>
-            <p className="hidden md:block text-sm text-zinc-500 dark:text-zinc-400 leading-relaxed">{s.desc}</p>
+            <p className="text-[10px] md:text-sm text-zinc-500 dark:text-zinc-400 leading-relaxed line-clamp-2">{s.desc}</p>
           </motion.button>
         ))}
       </div>

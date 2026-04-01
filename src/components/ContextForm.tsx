@@ -2,7 +2,8 @@ import { useState } from 'react';
 import { 
   MessageSquare, 
   FileText, 
-  Hash
+  Hash,
+  Zap
 } from 'lucide-react';
 import { motion } from 'motion/react';
 import type { ConversationType } from '../types';
@@ -34,6 +35,7 @@ export const ContextForm = ({
           {type === 'idea' && <MessageSquare className="w-5 h-5 text-blue-500" />}
           {type === 'script' && <FileText className="w-5 h-5 text-purple-500" />}
           {type === 'hashtag' && <Hash className="w-5 h-5 text-emerald-500" />}
+          {type === 'image' && <Zap className="w-5 h-5 text-orange-500" />}
           Configure your {type}
         </h2>
 
@@ -144,6 +146,34 @@ export const ContextForm = ({
                   className="w-full bg-zinc-50 dark:bg-zinc-950 border border-zinc-200 dark:border-zinc-800 rounded-xl px-4 py-2.5 focus:ring-2 focus:ring-zinc-500 outline-none"
                   onChange={e => setFormData({...formData, count: e.target.value})}
                 />
+              </div>
+            </>
+          )}
+
+          {type === 'image' && (
+            <>
+              <div>
+                <label className="block text-sm font-medium mb-1.5 opacity-70">Describe the image you want</label>
+                <textarea 
+                  required
+                  rows={3}
+                  className="w-full bg-zinc-50 dark:bg-zinc-950 border border-zinc-200 dark:border-zinc-800 rounded-xl px-4 py-2.5 focus:ring-2 focus:ring-zinc-500 outline-none resize-none"
+                  placeholder="e.g. A futuristic city with neon lights and flying cars"
+                  onChange={e => setFormData({...formData, prompt: e.target.value})}
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium mb-1.5 opacity-70">Style</label>
+                <select 
+                  className="w-full bg-zinc-50 dark:bg-zinc-950 border border-zinc-200 dark:border-zinc-800 rounded-xl px-4 py-2.5 focus:ring-2 focus:ring-zinc-500 outline-none"
+                  onChange={e => setFormData({...formData, style: e.target.value})}
+                >
+                  <option value="Realistic">Realistic</option>
+                  <option value="Cartoon">Cartoon</option>
+                  <option value="Artistic">Artistic</option>
+                  <option value="Cyberpunk">Cyberpunk</option>
+                  <option value="Minimalist">Minimalist</option>
+                </select>
               </div>
             </>
           )}

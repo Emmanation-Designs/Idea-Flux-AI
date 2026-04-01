@@ -1,4 +1,4 @@
-export type ConversationType = 'idea' | 'script' | 'hashtag' | 'general';
+export type ConversationType = 'idea' | 'script' | 'hashtag' | 'image' | 'voice' | 'general';
 
 export interface Message {
   id: string;
@@ -6,6 +6,8 @@ export interface Message {
   content: string;
   created_at: string;
   feedback?: 'like' | 'dislike';
+  image_url?: string;
+  audio_url?: string;
 }
 
 export interface Conversation {

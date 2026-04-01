@@ -158,7 +158,10 @@ export const Sidebar = ({
               </div>
               
               {!editingId && (
-                <div className="absolute right-2 top-1/2 -translate-y-1/2 flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                <div className={cn(
+                  "absolute right-2 top-1/2 -translate-y-1/2 flex items-center gap-1 transition-opacity",
+                  currentConversationId === conv.id ? "opacity-100" : "opacity-0 group-hover:opacity-100"
+                )}>
                   <button 
                     onClick={(e) => startEditing(e, conv.id, conv.title)}
                     className="p-1.5 hover:bg-zinc-300 dark:hover:bg-zinc-700 rounded-md text-zinc-500 hover:text-zinc-900 dark:hover:text-white"
