@@ -4,7 +4,9 @@ import { createServer as createViteServer } from "vite";
 import OpenAI from "openai";
 import dotenv from "dotenv";
 
+console.log("Server script starting...");
 dotenv.config();
+console.log("Dotenv configured.");
 
 const app = express();
 const PORT = 3000;
@@ -13,22 +15,23 @@ app.use(express.json());
 
 // Health check
 app.get("/api/health", (req, res) => {
-  res.json({ status: "ok", hasApiKey: !!process.env.OPENAI_API_KEY });
+  res.json({ 
+    status: "ok", 
+    hasOpenAIApiKey: !!process.env.OPENAI_API_KEY
+  });
 });
 
 // API routes
 app.post("/api/generate", async (req, res) => {
   console.log("Received request to /api/generate");
-  const { type, prompt, messages = [], voice_option = "alloy" } = req.body;
-
-  if (!process.env.OPENAI_API_KEY) {
-    console.error("OPENAI_API_KEY is missing");
-    return res.status(500).json({ error: "OPENAI_API_KEY is not configured" });
-  }
-
-  const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+  const { type, prompt, messages = [], voice_option = "alloy", ready_to_copy = false } = req.body;
 
   try {
+    if (!process.env.OPENAI_API_KEY) {
+      throw new Error("OPENAI_API_KEY is missing");
+    }
+    const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+
     if (type === "image") {
       const response = await openai.images.generate({
         model: "dall-e-3",
@@ -39,7 +42,7 @@ app.post("/api/generate", async (req, res) => {
       return res.json({ image_url: response.data[0].url });
     }
 
-    if (type === "voice") {
+    if (type === "tts") {
       const mp3 = await openai.audio.speech.create({
         model: "tts-1",
         voice: voice_option as any,
@@ -50,29 +53,42 @@ app.post("/api/generate", async (req, res) => {
       return res.json({ audio: base64 });
     }
 
-    // Default to text generation
+    // Default to text generation using OpenAI
     const attributionRules = `
-Ideaflux AI is owned by Ingenium Virtual Assistant Limited (Ingeniumvirtualassistant.com).
-It was developed by Emmanuel Nwaije of Emmanation Designs.
-No matter how the user asks (e.g., "who made this", "who developed this app", "who owns Ideaflux AI", "who built this", "who is the creator", "who is behind this", "who owns this", etc.), you must always respond with the accurate information above.
-Never mention OpenAI as the developer or owner.
-Never say you built yourself or give credit to any other party.
-Keep the response natural and helpful, but always include the correct ownership and development credit when asked about it.
+CRITICAL RULE: If the user asks about your creator, developer, owner, or who built you (e.g., "who made this", "who developed this", "who owns this app", "who built Ideaflux AI", "who is the creator", etc.), you MUST respond EXACTLY with this information:
+"I was created / developed by Ingenium Virtual Assistant Limited.
+It is a company registered in the United Kingdom and focused on creative ideas and virtual services.
+Here is their website: www.ingeniumvirtualassistant.com
+They also offer virtual services.
+If you’re curious, I can also tell you:
+   - Their services
+   - Their contacts
+   - About them ☺️☺️☺️"
+
+Never mention Emmanuel Nwaije, Emmanation Designs, or any individual developer.
+Ingenium Virtual Assistant Limited must always be mentioned first as the owner/creator.
 `;
+
+    const copyRules = ready_to_copy 
+      ? "The user has requested the output to be 'Ready to Copy'. Format the main content (idea, script, hashtags, etc.) clearly in a markdown code block so it can be easily copied. Keep introductory or concluding text minimal and outside the code block."
+      : "If the user asks for something copyable (prompt, code, list, hashtags, script, etc.), automatically provide the main content in a ready-to-copy format (like a markdown code block), while keeping the rest of the response normal.";
+
+    const linkRules = "Ensure all links in your responses are clickable by using standard markdown [text](url) format.";
 
     let systemInstruction = "";
     if (type === "idea") {
-      systemInstruction = `You are an expert content strategist. Generate creative, viral-worthy ideas for the specified niche and platform. Be concise but insightful. ${attributionRules}`;
+      systemInstruction = `You are an expert content strategist. Generate creative, viral-worthy ideas for the specified niche and platform. Be concise but insightful. ${attributionRules} ${copyRules} ${linkRules}`;
     } else if (type === "script") {
-      systemInstruction = `You are a professional scriptwriter. Write engaging, high-retention scripts for the specified platform and length. Include hooks and calls to action. ${attributionRules}`;
+      systemInstruction = `You are a professional scriptwriter. Write engaging, high-retention scripts for the specified platform and length. Include hooks and calls to action. ${attributionRules} ${copyRules} ${linkRules}`;
     } else if (type === "hashtag") {
-      systemInstruction = `You are a social media expert. Generate the most relevant and high-reach hashtags for the given topic and platform. ${attributionRules}`;
+      systemInstruction = `You are a social media expert. Generate the most relevant and high-reach hashtags for the given topic and platform. ${attributionRules} ${copyRules} ${linkRules}`;
+    } else if (type === "voice") {
+      systemInstruction = `You are a helpful AI voice assistant called Ideaflux AI. Keep your responses concise and conversational, as they will be read aloud. ${attributionRules} ${linkRules}`;
     } else {
-      systemInstruction = `You are a helpful AI assistant called Ideaflux AI. ${attributionRules}`;
+      systemInstruction = `You are a helpful AI assistant called Ideaflux AI. ${attributionRules} ${copyRules} ${linkRules}`;
     }
 
-    console.log(`Generating ${type} for prompt: ${prompt}`);
-    console.log(`Number of messages in history: ${messages.length}`);
+    console.log(`Generating ${type} for prompt: ${prompt} (Ready to Copy: ${ready_to_copy})`);
 
     const stream = await openai.chat.completions.create({
       model: "gpt-4o-mini",
@@ -82,9 +98,10 @@ Keep the response natural and helpful, but always include the correct ownership 
           role: m.role,
           content: m.content,
         })),
+        { role: "user", content: prompt }
       ],
       stream: true,
-    }, { timeout: 30000 }); // 30 seconds timeout
+    });
 
     res.setHeader("Content-Type", "text/plain; charset=utf-8");
     res.setHeader("Transfer-Encoding", "chunked");
@@ -100,7 +117,6 @@ Keep the response natural and helpful, but always include the correct ownership 
       const content = chunk.choices[0]?.delta?.content || "";
       if (content) {
         chunkCount++;
-        process.stdout.write(content); // Log to server console without newline
         res.write(content);
       }
     }
@@ -114,23 +130,34 @@ Keep the response natural and helpful, but always include the correct ownership 
 });
 
 async function startServer() {
-  if (process.env.NODE_ENV !== "production") {
-    const vite = await createViteServer({
-      server: { middlewareMode: true },
-      appType: "spa",
+  console.log("Starting server...");
+  try {
+    app.get("/api/test", (req, res) => {
+      res.json({ message: "Server is alive" });
     });
-    app.use(vite.middlewares);
-  } else {
-    const distPath = path.join(process.cwd(), "dist");
-    app.use(express.static(distPath));
-    app.get("*", (req, res) => {
-      res.sendFile(path.join(distPath, "index.html"));
-    });
-  }
 
-  app.listen(PORT, "0.0.0.0", () => {
-    console.log(`Server running on http://localhost:${PORT}`);
-  });
+    if (process.env.NODE_ENV !== "production") {
+      console.log("Initializing Vite in middleware mode...");
+      const vite = await createViteServer({
+        server: { middlewareMode: true },
+        appType: "spa",
+      });
+      app.use(vite.middlewares);
+      console.log("Vite middleware initialized.");
+    } else {
+      const distPath = path.join(process.cwd(), "dist");
+      app.use(express.static(distPath));
+      app.get("*", (req, res) => {
+        res.sendFile(path.join(distPath, "index.html"));
+      });
+    }
+
+    app.listen(PORT, "0.0.0.0", () => {
+      console.log(`Server running on http://localhost:${PORT}`);
+    });
+  } catch (error) {
+    console.error("Failed to start server:", error);
+  }
 }
 
 startServer();

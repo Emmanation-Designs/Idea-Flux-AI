@@ -6,9 +6,7 @@ import {
   Volume2, 
   VolumeX, 
   PhoneOff,
-  Waves,
   Settings as SettingsIcon,
-  Zap
 } from 'lucide-react';
 import { useState, useEffect } from 'react';
 import { clsx, type ClassValue } from 'clsx';
@@ -49,20 +47,7 @@ export const VoiceMode = ({
   voiceOption: 'alloy' | 'echo';
   onVoiceOptionChange: (voice: 'alloy' | 'echo') => void;
 }) => {
-  const [pulseScale, setPulseScale] = useState(1);
   const [showVoiceSettings, setShowVoiceSettings] = useState(false);
-
-  useEffect(() => {
-    let interval: any;
-    if (isListening || isPlaying || isLoading) {
-      interval = setInterval(() => {
-        setPulseScale(1 + Math.random() * 0.4);
-      }, 150);
-    } else {
-      setPulseScale(1);
-    }
-    return () => clearInterval(interval);
-  }, [isListening, isPlaying, isLoading]);
 
   return (
     <AnimatePresence>
@@ -141,108 +126,70 @@ export const VoiceMode = ({
           {/* Visualizer Area */}
           <div className="flex-1 flex flex-col items-center justify-center gap-12 w-full max-w-2xl text-center relative">
             <div className="relative flex items-center justify-center scale-110 md:scale-125">
-              {/* Outer Glows */}
+              {/* Ambient Glow */}
               <AnimatePresence>
                 {(isListening || isPlaying || isLoading) && (
-                  <>
-                    <motion.div 
-                      initial={{ scale: 0.8, opacity: 0 }}
-                      animate={{ 
-                        scale: pulseScale * 1.8, 
-                        opacity: 0.1,
-                        backgroundColor: isListening ? "#ef4444" : isPlaying ? "#3b82f6" : "#f59e0b"
-                      }}
-                      exit={{ scale: 0.8, opacity: 0 }}
-                      className="absolute w-64 h-64 rounded-full blur-[80px] transition-colors duration-1000"
-                    />
-                    <motion.div 
-                      initial={{ scale: 0.8, opacity: 0 }}
-                      animate={{ 
-                        scale: pulseScale * 1.4, 
-                        opacity: 0.2,
-                        backgroundColor: isListening ? "#f87171" : isPlaying ? "#60a5fa" : "#fbbf24"
-                      }}
-                      exit={{ scale: 0.8, opacity: 0 }}
-                      className="absolute w-48 h-48 rounded-full blur-[40px] transition-colors duration-1000"
-                    />
-                  </>
-                )}
-              </AnimatePresence>
-
-              {/* Central Orb */}
-              <motion.div 
-                animate={{ 
-                  scale: (isListening || isPlaying || isLoading) ? [1, 1.1, 1] : 1,
-                  rotate: (isListening || isPlaying || isLoading) ? [0, 90, 180, 270, 360] : 0,
-                  borderRadius: (isListening || isPlaying || isLoading) ? ["40% 60% 70% 30% / 40% 50% 60% 50%", "60% 40% 30% 70% / 50% 60% 40% 50%", "40% 60% 70% 30% / 40% 50% 60% 50%"] : "50%",
-                  boxShadow: (isListening || isPlaying || isLoading) 
-                    ? `0 0 60px ${isListening ? "rgba(239, 68, 68, 0.4)" : isPlaying ? "rgba(59, 130, 246, 0.4)" : "rgba(245, 158, 11, 0.4)"}, inset 0 0 20px rgba(255, 255, 255, 0.5)` 
-                    : "0 0 20px rgba(255, 255, 255, 0.1)"
-                }}
-                transition={{
-                  duration: (isListening || isPlaying || isLoading) ? 4 : 0.5,
-                  repeat: Infinity,
-                  ease: "linear"
-                }}
-                className={cn(
-                  "w-40 h-40 flex items-center justify-center transition-colors duration-1000 relative z-10",
-                  (isListening || isPlaying || isLoading) ? "bg-white" : "bg-zinc-800"
-                )}
-              >
-                {isListening ? (
-                  <Mic className="w-12 h-12 text-black" />
-                ) : isPlaying ? (
-                  <Waves className="w-12 h-12 text-black" />
-                ) : isLoading ? (
                   <motion.div
-                    animate={{ rotate: 360 }}
-                    transition={{ repeat: Infinity, duration: 2, ease: "linear" }}
-                  >
-                    <Zap className="w-12 h-12 text-black" />
-                  </motion.div>
-                ) : (
-                  <MicOff className="w-12 h-12 text-zinc-500" />
-                )}
-              </motion.div>
-            </div>
-
-            {/* Transcriptions */}
-            <div className="space-y-6 min-h-[120px] flex flex-col justify-center px-4">
-              <AnimatePresence mode="wait">
-                {transcript && (
-                  <motion.p 
-                    key="transcript"
-                    initial={{ opacity: 0, y: 10 }}
-                    animate={{ opacity: 0.5, y: 0 }}
-                    exit={{ opacity: 0, y: -10 }}
-                    className="text-lg md:text-xl font-medium italic text-zinc-300"
-                  >
-                    "{transcript}"
-                  </motion.p>
+                    initial={{ opacity: 0, scale: 0.8 }}
+                    animate={{ 
+                      opacity: [0.1, 0.2, 0.1],
+                      scale: [1, 1.2, 1],
+                    }}
+                    exit={{ opacity: 0, scale: 0.8 }}
+                    transition={{ duration: 3, repeat: Infinity }}
+                    className={cn(
+                      "absolute w-64 h-64 rounded-full blur-[80px]",
+                      isListening ? "bg-red-500" : isPlaying ? "bg-blue-500" : "bg-amber-500"
+                    )}
+                  />
                 )}
               </AnimatePresence>
               
-              <AnimatePresence mode="wait">
-                {response && (
-                  <motion.p 
-                    key="response"
-                    initial={{ opacity: 0, y: 10 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    exit={{ opacity: 0, y: -10 }}
-                    className="text-xl md:text-3xl font-bold leading-tight"
-                  >
-                    {response}
-                  </motion.p>
+              {/* Core Orb */}
+              <motion.div 
+                animate={{ 
+                  scale: isPlaying ? [1, 1.05, 1] : isListening ? [1, 1.02, 1] : 1,
+                  boxShadow: isPlaying 
+                    ? ["0 0 20px rgba(255,255,255,0.1)", "0 0 60px rgba(255,255,255,0.3)", "0 0 20px rgba(255,255,255,0.1)"]
+                    : ["0 0 20px rgba(255,255,255,0.05)", "0 0 20px rgba(255,255,255,0.05)"]
+                }}
+                transition={{ duration: 2, repeat: Infinity }}
+                className={cn(
+                  "relative h-32 w-32 rounded-full flex items-center justify-center transition-all duration-700",
+                  (isListening || isPlaying || isLoading) ? "bg-white" : "bg-white/10 backdrop-blur-sm border border-white/10"
                 )}
-              </AnimatePresence>
+              >
+                {isLoading && (
+                  <motion.div
+                    animate={{ rotate: 360 }}
+                    transition={{ duration: 2, repeat: Infinity, ease: "linear" }}
+                    className="absolute inset-0 rounded-full border-2 border-t-zinc-900 border-transparent"
+                  />
+                )}
+                
+                <div className="relative z-10">
+                  {isPlaying ? (
+                    <Volume2 className="w-8 h-8 text-black" />
+                  ) : isListening ? (
+                    <Mic className="w-8 h-8 text-black" />
+                  ) : isLoading ? (
+                    <div className="w-2 h-2 rounded-full bg-black animate-pulse" />
+                  ) : (
+                    <MicOff className="w-8 h-8 text-white/40" />
+                  )}
+                </div>
+              </motion.div>
+            </div>
 
+            {/* Transcriptions & Subtitles - REMOVED as requested */}
+            <div className="absolute bottom-40 left-0 right-0 px-8 flex flex-col items-center gap-4 pointer-events-none">
               {!transcript && !response && (
                 <motion.p 
                   initial={{ opacity: 0 }}
-                  animate={{ opacity: 1 }}
-                  className="text-zinc-500 text-lg md:text-xl font-medium"
+                  animate={{ opacity: 0.4 }}
+                  className="text-zinc-500 text-sm md:text-base font-medium tracking-widest uppercase"
                 >
-                  {isListening ? "I'm listening..." : isPlaying ? "Ideaflux is speaking..." : isLoading ? "Thinking..." : "Tap the microphone to start"}
+                  {isListening ? "Listening..." : isPlaying ? "Speaking..." : isLoading ? "Thinking..." : "Ready"}
                 </motion.p>
               )}
             </div>

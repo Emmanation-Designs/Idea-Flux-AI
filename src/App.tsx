@@ -31,6 +31,7 @@ import {
 import { motion, AnimatePresence } from 'motion/react';
 import { Toaster, toast } from 'sonner';
 import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 import { supabase } from './lib/supabase';
@@ -83,6 +84,7 @@ export default function App() {
   const [isSpeakerOn, setIsSpeakerOn] = useState(true);
   const [currentTranscript, setCurrentTranscript] = useState('');
   const [currentResponse, setCurrentResponse] = useState('');
+  const transcriptRef = useRef('');
   
   const [activeMessageId, setActiveMessageId] = useState<string | null>(null);
   
@@ -135,57 +137,86 @@ export default function App() {
     const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
     if (SpeechRecognition) {
       recognitionRef.current = new SpeechRecognition();
-      recognitionRef.current.continuous = false;
-      recognitionRef.current.interimResults = false;
+      recognitionRef.current.continuous = false; // Faster end-of-speech detection
+      recognitionRef.current.interimResults = true;
       recognitionRef.current.lang = 'en-US';
 
       recognitionRef.current.onstart = () => {
         setIsListening(true);
+        // Barge-in: Stop AI if user starts talking
+        if (currentAudio) {
+          console.log("Barge-in: Stopping AI audio because user started talking");
+          currentAudio.pause();
+          setIsPlaying(false);
+          setCurrentlyPlayingMessageId(null);
+        }
         console.log("Speech recognition started");
       };
 
       recognitionRef.current.onresult = (event: any) => {
-        const transcript = event.results[0][0].transcript;
-        console.log("Speech recognition result:", transcript);
-        if (transcript) {
-          try {
-            recognitionRef.current.stop();
-          } catch (e) {
-            console.warn("Error stopping recognition:", e);
+        let interimTranscript = '';
+        let finalTranscript = '';
+
+        for (let i = event.resultIndex; i < event.results.length; ++i) {
+          if (event.results[i].isFinal) {
+            finalTranscript += event.results[i][0].transcript;
+          } else {
+            interimTranscript += event.results[i][0].transcript;
           }
-          setIsListening(false);
-          setCurrentTranscript(transcript);
-          setCurrentResponse('');
-          setShouldPlayVoice(true);
-          sendMessage(transcript);
+        }
+
+        if (finalTranscript) {
+          console.log("Speech recognition final result:", finalTranscript);
+          transcriptRef.current += finalTranscript;
+          setCurrentTranscript(transcriptRef.current);
+        }
+        
+        if (interimTranscript) {
+          setStreamingMessage(interimTranscript);
         }
       };
 
       recognitionRef.current.onerror = (event: any) => {
-        console.error("Speech recognition error:", event.error);
+        if (event.error !== 'no-speech') {
+          console.error("Speech recognition error:", event.error);
+        }
         setIsListening(false);
         
         if (event.error === 'no-speech') {
-          console.log("No speech detected.");
+          // Restart if in voice mode and not busy
+          if (showVoiceMode && !isPlaying && !isLoading) {
+            setTimeout(() => {
+              try { recognitionRef.current?.start(); } catch(e) {}
+            }, 100);
+          }
         } else if (event.error === 'not-allowed') {
-          toast.error("Microphone access denied. Please check your browser settings.");
-        } else if (event.error === 'network') {
-          toast.error("Network error during speech recognition. Please check your connection.");
-        } else if (event.error === 'service-not-allowed') {
-          toast.error("Speech recognition service not allowed.");
-        } else {
-          toast.error(`Speech recognition failed: ${event.error}. Please try again.`);
+          toast.error("Microphone access denied.");
         }
       };
 
       recognitionRef.current.onend = () => {
-        console.log("Speech recognition ended");
         setIsListening(false);
+        setStreamingMessage('');
+        
+        // Auto-send if we have content
+        if (transcriptRef.current.trim() && showVoiceMode) {
+          const textToSend = transcriptRef.current;
+          transcriptRef.current = '';
+          setCurrentTranscript('');
+          setCurrentResponse('');
+          setShouldPlayVoice(true);
+          sendMessage(textToSend);
+        } else if (showVoiceMode && !isPlaying && !isLoading && !isMuted) {
+          // Restart listening if we stopped without content and aren't busy
+          setTimeout(() => {
+            try { recognitionRef.current?.start(); } catch(e) {}
+          }, 100);
+        }
       };
     } else {
       console.warn("SpeechRecognition API not supported in this browser.");
     }
-  }, []);
+  }, [showVoiceMode, isPlaying, isLoading, isMuted, currentAudio]);
 
   useEffect(() => {
     if (currentResponse && currentTranscript) {
@@ -194,6 +225,30 @@ export default function App() {
       return () => clearTimeout(timer);
     }
   }, [currentResponse]);
+
+  // Handle auto-sending when recognition ends
+  useEffect(() => {
+    if (!isListening && transcriptRef.current.trim() && showVoiceMode) {
+      const textToSend = transcriptRef.current;
+      console.log("Auto-sending transcript after recognition ended:", textToSend);
+      
+      // Reset for next turn
+      transcriptRef.current = '';
+      setCurrentTranscript('');
+      setCurrentResponse('');
+      setShouldPlayVoice(true);
+      
+      sendMessage(textToSend);
+    }
+  }, [isListening, showVoiceMode]);
+
+  useEffect(() => {
+    if (showVoiceMode && !isListening && !isPlaying && !isLoading && !isMuted) {
+      setTimeout(() => {
+        try { recognitionRef.current?.start(); } catch(e) {}
+      }, 500);
+    }
+  }, [showVoiceMode]);
 
   const toggleListening = () => {
     if (isListening) {
@@ -208,6 +263,9 @@ export default function App() {
         setIsMuted(false);
       }
       try {
+        transcriptRef.current = '';
+        setCurrentTranscript('');
+        setStreamingMessage('');
         recognitionRef.current?.start();
         setIsListening(true);
       } catch (e) {
@@ -244,14 +302,16 @@ export default function App() {
     const timeoutId = setTimeout(() => controller.abort(), 30000);
 
     try {
+      console.log("playVoice called with text length:", text.length);
       setIsPlaying(true);
       if (messageId) setCurrentlyPlayingMessageId(messageId);
 
+      console.log("Fetching TTS from server...");
       const response = await fetch('/api/generate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          type: 'voice',
+          type: 'tts',
           prompt: text,
           voice_option: voiceOption
         }),
@@ -259,29 +319,55 @@ export default function App() {
       });
       clearTimeout(timeoutId);
 
-      if (!response.ok) throw new Error('Failed to generate voice');
-      const { audio } = await response.json();
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        console.error("TTS API Error:", response.status, errorData);
+        throw new Error('Failed to generate voice');
+      }
       
+      const { audio } = await response.json();
+      console.log("TTS audio received, length:", audio?.length);
+      
+      if (!audio) {
+        throw new Error("No audio data received from server");
+      }
+
       const audioBlob = new Blob([Uint8Array.from(atob(audio), c => c.charCodeAt(0))], { type: 'audio/mp3' });
       const audioUrl = URL.createObjectURL(audioBlob);
       const audioObj = new Audio(audioUrl);
       
+      // Set initial muted state based on speaker toggle
+      audioObj.muted = !isSpeakerOn;
+      
       if (currentAudio) {
+        console.log("Stopping previous audio");
         currentAudio.pause();
         currentAudio.onended = null;
       }
       
       setCurrentAudio(audioObj);
-      audioObj.play().catch(err => {
+      console.log("Starting audio playback...");
+      audioObj.play().then(() => {
+        console.log("Audio playback started successfully");
+      }).catch(err => {
         console.error("Audio play error:", err);
         setIsPlaying(false);
         setCurrentlyPlayingMessageId(null);
+        toast.error("Click anywhere to enable audio playback.");
       });
       
       audioObj.onended = () => {
         setIsPlaying(false);
         setCurrentAudio(null);
         setCurrentlyPlayingMessageId(null);
+        
+        // Auto-restart listening after AI finishes speaking if in voice mode
+        if (showVoiceMode && !isMuted) {
+          console.log("AI finished speaking, restarting listening...");
+          setTimeout(() => {
+            try { recognitionRef.current?.start(); } catch(e) {}
+          }, 300);
+        }
       };
 
       audioObj.onerror = () => {
@@ -405,44 +491,68 @@ export default function App() {
 
   const startConversation = async (type: ConversationType, title: string, initialPrompt: string, metadata: any = {}) => {
     if (!user) return;
+    setIsLoading(true);
 
-    const newConversation = {
-      user_id: user.id,
-      title: title,
-      type: type,
-      messages: [],
-      metadata: metadata,
-      created_at: new Date().toISOString(),
-      updated_at: new Date().toISOString()
-    };
+    try {
+      const newConversation = {
+        user_id: user.id,
+        title: title,
+        type: type,
+        messages: [],
+        metadata: metadata,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString()
+      };
 
-    const { data, error } = await supabase
-      .from('conversations')
-      .insert(newConversation)
-      .select()
-      .single();
+      const { data, error } = await supabase
+        .from('conversations')
+        .insert(newConversation)
+        .select()
+        .single();
 
-    if (error) {
-      console.error("Supabase insert error:", error);
-      toast.error(`Failed to create history entry: ${error.message || 'Unknown error'}`);
-      return;
+      if (error) {
+        console.error("Supabase insert error:", error);
+        toast.error(`Failed to create history entry: ${error.message || 'Unknown error'}`);
+        setIsLoading(false);
+        return;
+      }
+
+      setCurrentConversation(data);
+      setConversations(prev => {
+        if (prev.some(c => c.id === data.id)) return prev;
+        return [data, ...prev];
+      });
+      await sendMessage(initialPrompt, data);
+    } catch (err) {
+      console.error("Error in startConversation:", err);
+      setIsLoading(false);
     }
-
-    setCurrentConversation(data);
-    setConversations([data, ...conversations]);
-    await sendMessage(initialPrompt, data);
   };
 
   const sendMessage = async (content: string, convOverride?: any) => {
     let conv = convOverride || currentConversation;
     
     if (!conv && content.trim()) {
-      // If no conversation exists, start a new 'script' one by default for ongoing chat
-      await startConversation('script', content.slice(0, 30) || 'New Chat', content);
+      console.log("No conversation found, starting new one...");
+      // If no conversation exists, start a new one
+      // Use 'voice' type if we are in voice mode
+      const type = showVoiceMode ? 'voice' : 'script';
+      await startConversation(type, content.slice(0, 30) || 'New Chat', content);
       return;
     }
 
-    if (!conv || !content.trim() || isLoading) return;
+    if (!conv) {
+      console.warn("sendMessage called without conversation and no content to start one.");
+      return;
+    }
+    if (!content.trim()) {
+      console.warn("sendMessage called with empty content.");
+      return;
+    }
+    if (isLoading && !convOverride) {
+      console.warn("sendMessage called while isLoading is true, ignoring.");
+      return;
+    }
 
     const userMessage: Message = {
       id: crypto.randomUUID(),
@@ -469,7 +579,8 @@ export default function App() {
           type: conv.type || 'script',
           prompt: content,
           messages: updatedMessages,
-          voice_option: voiceOption
+          voice_option: voiceOption,
+          ready_to_copy: conv.metadata?.ready_to_copy || false
         }),
         signal: controller.signal
       });
@@ -772,9 +883,9 @@ export default function App() {
                 <div className="text-center py-20 opacity-50">No chats yet. Start a new one!</div>
               ) : (
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  {conversations.map(conv => (
+                  {conversations.map((conv, idx) => (
                     <div
-                      key={conv.id}
+                      key={`${conv.id}-${idx}`}
                       className="p-4 bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-2xl text-left hover:border-zinc-400 dark:hover:border-zinc-600 transition-all group relative"
                     >
                       <div onClick={() => handleSelectConversation(conv.id)} className="cursor-pointer">
@@ -823,9 +934,9 @@ export default function App() {
                 }} />
               ) : (
                 <div className="max-w-4xl mx-auto w-full p-4 md:p-8 space-y-8 pb-32">
-                  {messages.map((m) => (
+                  {messages.map((m, idx) => (
                     <div 
-                      key={m.id} 
+                      key={`${m.id}-${idx}`} 
                       onClick={() => setActiveMessageId(activeMessageId === m.id ? null : m.id)}
                       className={cn(
                         "flex w-full cursor-pointer md:cursor-default",
@@ -839,7 +950,7 @@ export default function App() {
                           : "bg-transparent text-zinc-900 dark:text-zinc-100 rounded-tl-none border-l-2 border-zinc-200 dark:border-zinc-800 pl-6"
                       )}>
                         <div className="prose dark:prose-invert prose-sm md:prose-base max-w-none">
-                          <ReactMarkdown>{m.content}</ReactMarkdown>
+                          <ReactMarkdown remarkPlugins={[remarkGfm]}>{m.content}</ReactMarkdown>
                         </div>
                         {m.image_url && (
                           <div className="mt-4 rounded-xl overflow-hidden border border-zinc-200 dark:border-zinc-800">
@@ -925,7 +1036,7 @@ export default function App() {
                     <div className="flex justify-start w-full">
                       <div className="max-w-[85%] md:max-w-[75%] p-4 rounded-2xl text-sm md:text-base bg-transparent text-zinc-900 dark:text-zinc-100 rounded-tl-none border-l-2 border-zinc-200 dark:border-zinc-800 pl-6">
                         <div className="prose dark:prose-invert prose-sm md:prose-base max-w-none">
-                          <ReactMarkdown>{streamingMessage}</ReactMarkdown>
+                          <ReactMarkdown remarkPlugins={[remarkGfm]}>{streamingMessage}</ReactMarkdown>
                         </div>
                         <motion.div 
                           animate={{ opacity: [0.4, 1, 0.4] }}
@@ -1090,18 +1201,24 @@ export default function App() {
           isOpen={showVoiceMode}
           onClose={() => {
             setShowVoiceMode(false);
-            if (currentAudio) currentAudio.pause();
-            if (isListening) recognitionRef.current?.stop();
+            if (currentAudio) {
+              currentAudio.pause();
+              setCurrentAudio(null);
+            }
+            try {
+              recognitionRef.current?.stop();
+            } catch(e) {}
             setIsPlaying(false);
             setIsListening(false);
             setCurrentTranscript('');
             setCurrentResponse('');
+            transcriptRef.current = '';
           }}
           isListening={isListening}
           isPlaying={isPlaying}
           isLoading={isLoading}
           onToggleListening={toggleListening}
-          transcript={currentTranscript}
+          transcript={streamingMessage || currentTranscript}
           response={currentResponse}
           isMuted={isMuted}
           onToggleMute={() => setIsMuted(!isMuted)}

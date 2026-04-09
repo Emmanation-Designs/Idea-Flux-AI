@@ -85,7 +85,7 @@ export const ContextForm = ({
                 <input 
                   required
                   className="w-full bg-zinc-50 dark:bg-zinc-950 border border-zinc-200 dark:border-zinc-800 rounded-xl px-4 py-2.5 focus:ring-2 focus:ring-zinc-500 outline-none"
-                  placeholder="e.g. How to use Gemini AI"
+                  placeholder="e.g. How to use AI in marketing"
                   onChange={e => setFormData({...formData, topic: e.target.value})}
                 />
               </div>
@@ -177,6 +177,25 @@ export const ContextForm = ({
               </div>
             </>
           )}
+
+          <div className="pt-4 border-t border-zinc-200 dark:border-zinc-800">
+            <label className="flex items-center gap-3 cursor-pointer group">
+              <div className="relative flex items-center">
+                <input 
+                  type="checkbox"
+                  className="peer sr-only"
+                  checked={formData.ready_to_copy || false}
+                  onChange={e => setFormData({...formData, ready_to_copy: e.target.checked})}
+                />
+                <div className="w-10 h-5 bg-zinc-200 dark:bg-zinc-800 rounded-full peer-checked:bg-zinc-900 dark:peer-checked:bg-white transition-colors" />
+                <div className="absolute left-1 top-1 w-3 h-3 bg-zinc-400 dark:bg-zinc-600 rounded-full transition-all peer-checked:left-6 peer-checked:bg-white dark:peer-checked:bg-zinc-900" />
+              </div>
+              <div className="text-sm">
+                <div className="font-bold opacity-90 group-hover:opacity-100 transition-opacity">I want it ready to copy</div>
+                <div className="text-[10px] opacity-50">Format output in a copyable block</div>
+              </div>
+            </label>
+          </div>
 
           <div className="flex gap-3 pt-4">
             <button 

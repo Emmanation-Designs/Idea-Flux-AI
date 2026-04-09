@@ -15,7 +15,7 @@ Ideaflux AI is a modern, clean AI companion for content creators, styled like Gr
 
 - **Frontend**: React (Vite), Tailwind CSS, Lucide React, Framer Motion.
 - **Backend**: Express.js (Node.js).
-- **AI**: Google Gemini API (via `@google/genai`).
+- **AI**: OpenAI API (via `openai` SDK).
 - **Database/Auth**: Supabase.
 
 ## Getting Started
@@ -24,7 +24,7 @@ Ideaflux AI is a modern, clean AI companion for content creators, styled like Gr
 
 - Node.js (v18+)
 - Supabase Account
-- Google Gemini API Key
+- OpenAI API Key
 
 ### Setup
 

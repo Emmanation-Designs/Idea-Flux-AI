@@ -101,9 +101,9 @@ export const Sidebar = ({
         {conversations.length === 0 ? (
           <div className="px-3 py-4 text-sm text-zinc-400 italic">No history yet</div>
         ) : (
-          conversations.map((conv) => (
+          conversations.map((conv, idx) => (
             <div
-              key={conv.id}
+              key={`${conv.id}-${idx}`}
               className="group relative"
             >
               <div

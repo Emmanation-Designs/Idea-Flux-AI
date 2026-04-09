@@ -21,12 +21,9 @@ export const LegalModal = ({
           <div className="space-y-2">
             <h4 className="font-bold text-zinc-900 dark:text-white text-base">Ownership</h4>
             <p className="font-medium">Owned by: Ingenium Virtual Assistant Limited</p>
-            <p>Website: <a href="https://Ingeniumvirtualassistant.com" target="_blank" className="text-zinc-900 dark:text-white underline font-medium">Ingeniumvirtualassistant.com</a></p>
-          </div>
-          <div className="pt-6 border-t border-zinc-200 dark:border-zinc-800">
-            <p className="text-[11px] opacity-60">
-              Developed by: Emmanuel Nwaije (Emmanation Designs)
-            </p>
+            <p className="opacity-80">Registered in the United Kingdom</p>
+            <p className="opacity-80">Focused on creative ideas and virtual services</p>
+            <p>Website: <a href="https://www.ingeniumvirtualassistant.com" target="_blank" rel="noopener noreferrer" className="text-zinc-900 dark:text-white underline font-medium">www.ingeniumvirtualassistant.com</a></p>
           </div>
         </div>
       )
