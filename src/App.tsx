@@ -29,6 +29,7 @@ import {
   Waves
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
+import { GoogleGenAI, Modality } from "@google/genai";
 import { Toaster, toast } from 'sonner';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -45,11 +46,34 @@ import { Settings } from './components/Settings';
 import { VoiceMode } from './components/VoiceMode';
 import { Auth } from './components/Auth';
 import { LegalModal } from './components/Legal';
+import { CodeBlock } from './components/CodeBlock';
 
 // --- Utils ---
 function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }
+
+const encodeWAV = (samples: Int16Array, sampleRate: number = 24000) => {
+  const buffer = new ArrayBuffer(44 + samples.length * 2);
+  const view = new DataView(buffer);
+  view.setUint32(0, 0x52494646, false);
+  view.setUint32(4, 36 + samples.length * 2, true);
+  view.setUint32(8, 0x57415645, false);
+  view.setUint32(12, 0x666d7420, false);
+  view.setUint32(16, 16, true);
+  view.setUint16(20, 1, true);
+  view.setUint16(22, 1, true);
+  view.setUint32(24, sampleRate, true);
+  view.setUint32(28, sampleRate * 2, true);
+  view.setUint16(32, 2, true);
+  view.setUint16(34, 16, true);
+  view.setUint32(36, 0x64617461, false);
+  view.setUint32(40, samples.length * 2, true);
+  for (let i = 0; i < samples.length; i++) {
+    view.setInt16(44 + i * 2, samples[i], true);
+  }
+  return buffer;
+};
 
 // --- Main App ---
 
@@ -90,6 +114,20 @@ export default function App() {
   
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const recognitionRef = useRef<any>(null);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const voiceAbortControllerRef = useRef<AbortController | null>(null);
+
+  const aiRef = useRef<any>(null);
+  if (!aiRef.current) {
+    aiRef.current = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+  }
+
+  useEffect(() => {
+    if (textareaRef.current) {
+      textareaRef.current.style.height = 'auto';
+      textareaRef.current.style.height = `${Math.min(textareaRef.current.scrollHeight, 200)}px`;
+    }
+  }, [input]);
 
   useEffect(() => {
     // Auth Listener
@@ -298,62 +336,71 @@ export default function App() {
       return;
     }
 
+    // Stop any current audio and abort any pending fetch
+    if (currentAudio) {
+      currentAudio.pause();
+      currentAudio.onended = null;
+      setCurrentAudio(null);
+    }
+    if (voiceAbortControllerRef.current) {
+      voiceAbortControllerRef.current.abort("New voice request");
+    }
+
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 30000);
+    voiceAbortControllerRef.current = controller;
+    const timeoutId = setTimeout(() => controller.abort("Timeout"), 30000);
 
     try {
-      console.log("playVoice called with text length:", text.length);
       setIsPlaying(true);
       if (messageId) setCurrentlyPlayingMessageId(messageId);
 
-      console.log("Fetching TTS from server...");
-      const response = await fetch('/api/generate', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          type: 'tts',
-          prompt: text,
-          voice_option: voiceOption
-        }),
-        signal: controller.signal
+      // Use Gemini TTS for much faster response (direct frontend call)
+      const geminiVoice = voiceOption === 'alloy' ? 'Kore' : 'Puck';
+      
+      const result = await aiRef.current.models.generateContent({
+        model: "gemini-2.5-flash-preview-tts",
+        contents: [{ parts: [{ text: text }] }],
+        config: {
+          responseModalities: [Modality.AUDIO],
+          speechConfig: {
+            voiceConfig: {
+              prebuiltVoiceConfig: { voiceName: geminiVoice },
+            },
+          },
+        },
       });
+
       clearTimeout(timeoutId);
-
-      if (!response.ok) {
-        const errorData = await response.json().catch(() => ({}));
-        console.error("TTS API Error:", response.status, errorData);
-        throw new Error('Failed to generate voice');
-      }
       
-      const { audio } = await response.json();
-      console.log("TTS audio received, length:", audio?.length);
-      
-      if (!audio) {
-        throw new Error("No audio data received from server");
-      }
+      const base64Audio = result.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
+      if (!base64Audio) throw new Error("No audio data from Gemini");
 
-      const audioBlob = new Blob([Uint8Array.from(atob(audio), c => c.charCodeAt(0))], { type: 'audio/mp3' });
+      // Decode base64 to Int16Array (Gemini TTS returns raw PCM 16-bit 24kHz)
+      const binary = atob(base64Audio);
+      const bytes = new Uint8Array(binary.length);
+      for (let i = 0; i < binary.length; i++) {
+        bytes[i] = binary.charCodeAt(i);
+      }
+      const samples = new Int16Array(bytes.buffer);
+      
+      // Encode to WAV so Audio object can play it
+      const wavBuffer = encodeWAV(samples, 24000);
+      const audioBlob = new Blob([wavBuffer], { type: 'audio/wav' });
       const audioUrl = URL.createObjectURL(audioBlob);
       const audioObj = new Audio(audioUrl);
       
-      // Set initial muted state based on speaker toggle
       audioObj.muted = !isSpeakerOn;
       
-      if (currentAudio) {
-        console.log("Stopping previous audio");
-        currentAudio.pause();
-        currentAudio.onended = null;
+      // Double check if we should still play this (in case another request started)
+      if (voiceAbortControllerRef.current !== controller) {
+        return;
       }
-      
+
       setCurrentAudio(audioObj);
-      console.log("Starting audio playback...");
-      audioObj.play().then(() => {
-        console.log("Audio playback started successfully");
-      }).catch(err => {
+      audioObj.play().catch(err => {
         console.error("Audio play error:", err);
         setIsPlaying(false);
         setCurrentlyPlayingMessageId(null);
-        toast.error("Click anywhere to enable audio playback.");
       });
       
       audioObj.onended = () => {
@@ -361,9 +408,7 @@ export default function App() {
         setCurrentAudio(null);
         setCurrentlyPlayingMessageId(null);
         
-        // Auto-restart listening after AI finishes speaking if in voice mode
         if (showVoiceMode && !isMuted) {
-          console.log("AI finished speaking, restarting listening...");
           setTimeout(() => {
             try { recognitionRef.current?.start(); } catch(e) {}
           }, 300);
@@ -374,18 +419,46 @@ export default function App() {
         setIsPlaying(false);
         setCurrentAudio(null);
         setCurrentlyPlayingMessageId(null);
-        toast.error("Failed to play audio.");
       };
     } catch (error: any) {
       clearTimeout(timeoutId);
+      if (error.name === 'AbortError') return;
+      
       console.error("Voice error:", error);
       setIsPlaying(false);
       setCurrentlyPlayingMessageId(null);
-      if (error.name === 'AbortError') {
-        toast.error("Voice generation timed out.");
-      } else {
-        toast.error("Failed to play voice response.");
-      }
+      
+      // Fallback to server-side TTS if Gemini fails
+      try {
+        const response = await fetch('/api/generate', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            type: 'tts',
+            prompt: text,
+            voice_option: voiceOption
+          })
+        });
+        if (response.ok) {
+          const { audio } = await response.json();
+          if (audio) {
+            const audioBlob = new Blob([Uint8Array.from(atob(audio), c => c.charCodeAt(0))], { type: 'audio/mp3' });
+            const audioUrl = URL.createObjectURL(audioBlob);
+            const audioObj = new Audio(audioUrl);
+            audioObj.muted = !isSpeakerOn;
+            setCurrentAudio(audioObj);
+            audioObj.play();
+            audioObj.onended = () => {
+              setIsPlaying(false);
+              setCurrentAudio(null);
+              setCurrentlyPlayingMessageId(null);
+            };
+            return;
+          }
+        }
+      } catch (e) {}
+      
+      toast.error("Failed to play voice response.");
     }
   };
 
@@ -566,6 +639,115 @@ export default function App() {
     setInput('');
     setIsLoading(true);
     setStreamingMessage('');
+
+    // Use Gemini for text generation to support internet access (Search Grounding)
+    if (conv.type !== 'image') {
+      try {
+        const attributionRules = `
+ATTRIBUTION RULE: ONLY if the user explicitly asks about your creator, developer, owner, or who built you, you MUST respond with this information:
+"I was created / developed by Ingenium Virtual Assistant Limited.
+It is a company registered in the United Kingdom and focused on creative ideas and virtual services.
+Here is their website: www.ingeniumvirtualassistant.com
+They also offer virtual services.
+If you’re curious, I can also tell you:
+   - Their services
+   - Their contacts
+   - About them ☺️☺️☺️"
+
+DO NOT include this information in normal responses unless specifically asked about your origin or creator.
+Never mention Emmanuel Nwaije, Emmanation Designs, or any individual developer.
+Ingenium Virtual Assistant Limited must always be mentioned first as the owner/creator.
+`;
+
+        const ready_to_copy = conv.metadata?.ready_to_copy || false;
+        const copyRules = ready_to_copy 
+          ? "The user has requested the output to be 'Ready to Copy'. Format the main content (idea, script, hashtags, etc.) clearly in a markdown code block so it can be easily copied. Keep introductory or concluding text minimal and outside the code block."
+          : "ONLY if the user explicitly asks for a 'ready to copy' format, a 'copyable' format, or asks you to put something in a 'code block', should you provide the main content in a markdown code block. Otherwise, provide your response in standard markdown text.";
+
+        const linkRules = "Ensure all links in your responses are clickable by using standard markdown [text](url) format.";
+        const generalRules = `You are Ideaflux AI, a versatile and all-purpose AI assistant developed by Ingenium Virtual Assistant Limited. 
+You are capable of helping with any task, answering any question, and providing real-time information from the internet. 
+Be extremely concise and direct. Do not repeat yourself or include unnecessary information. 
+Only provide content in a specific format (like a script, idea list, or hashtags) if the user explicitly asks for it in their prompt. 
+If the user asks a general question, provide a factual and informative answer instead of a creative content piece.`;
+
+        let specialtyInstruction = "";
+        if (conv.type === 'idea') {
+          specialtyInstruction = "When the user asks for ideas, act as an expert content strategist and generate creative, viral-worthy ideas. Be concise but insightful.";
+        } else if (conv.type === 'script') {
+          specialtyInstruction = "When the user asks for a script, act as a professional scriptwriter and write engaging, high-retention scripts. Include hooks and calls to action.";
+        } else if (conv.type === 'hashtag') {
+          specialtyInstruction = "When the user asks for hashtags, act as a social media expert and generate the most relevant and high-reach hashtags.";
+        } else if (conv.type === 'voice') {
+          specialtyInstruction = "You are currently in voice mode. Keep your responses extremely short, concise and conversational (max 2-3 sentences), as they will be read aloud. Avoid long lists or complex formatting.";
+        }
+
+        const systemInstruction = `${generalRules} ${attributionRules} ${copyRules} ${linkRules} ${specialtyInstruction}`;
+
+        const responseStream = await aiRef.current.models.generateContentStream({
+          model: "gemini-3-flash-preview",
+          contents: [
+            ...updatedMessages.map(m => ({
+              role: m.role === 'assistant' ? 'model' : 'user',
+              parts: [{ text: m.content }]
+            }))
+          ],
+          config: {
+            systemInstruction: systemInstruction,
+            tools: [{ googleSearch: {} }]
+          }
+        });
+
+        let fullContent = '';
+        for await (const chunk of responseStream) {
+          const text = chunk.text;
+          if (text) {
+            fullContent += text;
+            setStreamingMessage(prev => prev + text);
+            if (showVoiceMode) {
+              setCurrentResponse(prev => prev + text);
+            }
+          }
+        }
+
+        const assistantMessage: Message = {
+          id: crypto.randomUUID(),
+          role: 'assistant',
+          content: fullContent,
+          created_at: new Date().toISOString()
+        };
+
+        const finalMessages = [...updatedMessages, assistantMessage];
+        setMessages(finalMessages);
+        setStreamingMessage('');
+
+        // Auto-play voice if it's a voice conversation or triggered by mic or auto-play is on
+        if (conv.type === 'voice' || shouldPlayVoice || autoPlayVoice) {
+          playVoice(fullContent);
+          setShouldPlayVoice(false);
+        }
+
+        // Update Supabase
+        await supabase.from('conversations').update({ 
+          messages: finalMessages,
+          updated_at: new Date().toISOString()
+        }).eq('id', conv.id);
+        
+        // Update usage
+        if (profile) {
+          const newCount = (profile.usage_count || 0) + 1;
+          await supabase.from('profiles').update({ usage_count: newCount }).eq('id', user.id);
+          setProfile({ ...profile, usage_count: newCount });
+        }
+
+        setIsLoading(false);
+        return;
+      } catch (error) {
+        console.error("Gemini Error:", error);
+        toast.error('Gemini failed. Falling back to OpenAI...');
+        // Fall through to OpenAI if Gemini fails
+      }
+    }
 
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 60000);
@@ -875,7 +1057,7 @@ export default function App() {
         </header>
 
         {/* Content Area */}
-        <div className="flex-1 overflow-y-auto flex flex-col">
+        <div className="flex-1 overflow-y-auto flex flex-col pb-4">
           {view === 'history' ? (
             <div className="max-w-4xl mx-auto w-full p-6 space-y-4">
               <h2 className="text-2xl font-bold mb-6">Chat History</h2>
@@ -885,7 +1067,7 @@ export default function App() {
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   {conversations.map((conv, idx) => (
                     <div
-                      key={`${conv.id}-${idx}`}
+                      key={`history-${conv.id}-${idx}`}
                       className="p-4 bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-2xl text-left hover:border-zinc-400 dark:hover:border-zinc-600 transition-all group relative"
                     >
                       <div onClick={() => handleSelectConversation(conv.id)} className="cursor-pointer">
@@ -936,7 +1118,7 @@ export default function App() {
                 <div className="max-w-4xl mx-auto w-full p-4 md:p-8 space-y-8 pb-32">
                   {messages.map((m, idx) => (
                     <div 
-                      key={`${m.id}-${idx}`} 
+                      key={`msg-${m.id}-${idx}`} 
                       onClick={() => setActiveMessageId(activeMessageId === m.id ? null : m.id)}
                       className={cn(
                         "flex w-full cursor-pointer md:cursor-default",
@@ -950,7 +1132,20 @@ export default function App() {
                           : "bg-transparent text-zinc-900 dark:text-zinc-100 rounded-tl-none border-l-2 border-zinc-200 dark:border-zinc-800 pl-6"
                       )}>
                         <div className="prose dark:prose-invert prose-sm md:prose-base max-w-none">
-                          <ReactMarkdown remarkPlugins={[remarkGfm]}>{m.content}</ReactMarkdown>
+                          <ReactMarkdown 
+                            remarkPlugins={[remarkGfm]}
+                            components={{
+                              code({ node, inline, className, children, ...props }: any) {
+                                return (
+                                  <CodeBlock inline={inline} className={className}>
+                                    {children}
+                                  </CodeBlock>
+                                );
+                              }
+                            }}
+                          >
+                            {m.content}
+                          </ReactMarkdown>
                         </div>
                         {m.image_url && (
                           <div className="mt-4 rounded-xl overflow-hidden border border-zinc-200 dark:border-zinc-800">
@@ -1036,7 +1231,20 @@ export default function App() {
                     <div className="flex justify-start w-full">
                       <div className="max-w-[85%] md:max-w-[75%] p-4 rounded-2xl text-sm md:text-base bg-transparent text-zinc-900 dark:text-zinc-100 rounded-tl-none border-l-2 border-zinc-200 dark:border-zinc-800 pl-6">
                         <div className="prose dark:prose-invert prose-sm md:prose-base max-w-none">
-                          <ReactMarkdown remarkPlugins={[remarkGfm]}>{streamingMessage}</ReactMarkdown>
+                          <ReactMarkdown 
+                            remarkPlugins={[remarkGfm]}
+                            components={{
+                              code({ node, inline, className, children, ...props }: any) {
+                                return (
+                                  <CodeBlock inline={inline} className={className}>
+                                    {children}
+                                  </CodeBlock>
+                                );
+                              }
+                            }}
+                          >
+                            {streamingMessage}
+                          </ReactMarkdown>
                         </div>
                         <motion.div 
                           animate={{ opacity: [0.4, 1, 0.4] }}
@@ -1080,7 +1288,7 @@ export default function App() {
 
         {/* Input Area */}
         {view === 'chat' && (
-          <div className="absolute bottom-0 left-0 right-0 p-4 bg-gradient-to-t from-white dark:from-zinc-950 via-white/80 dark:via-zinc-950/80 to-transparent pt-12">
+          <div className="relative p-4 bg-white dark:bg-zinc-950 border-t border-zinc-200 dark:border-zinc-800">
             <div className="max-w-3xl mx-auto space-y-4">
               {/* Voice Selection */}
               {showVoiceMode && (
@@ -1114,6 +1322,7 @@ export default function App() {
               
               <div className="relative">
                 <textarea
+                  ref={textareaRef}
                   rows={1}
                   value={input}
                   onChange={(e) => setInput(e.target.value)}
@@ -1124,7 +1333,7 @@ export default function App() {
                     }
                   }}
                   placeholder="Ask Ideaflux AI anything..."
-                  className="w-full bg-zinc-100 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-2xl px-4 py-4 pr-24 focus:ring-2 focus:ring-zinc-500 outline-none resize-none transition-all shadow-lg"
+                  className="w-full bg-zinc-100 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-2xl px-4 py-4 pr-24 focus:ring-2 focus:ring-zinc-500 outline-none resize-none transition-all shadow-lg min-h-[56px] max-h-[200px]"
                 />
                 <div className="absolute right-3 bottom-3 flex items-center gap-2">
                   <button 

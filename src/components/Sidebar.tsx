@@ -103,7 +103,7 @@ export const Sidebar = ({
         ) : (
           conversations.map((conv, idx) => (
             <div
-              key={`${conv.id}-${idx}`}
+              key={`sidebar-${conv.id}-${idx}`}
               className="group relative"
             >
               <div
