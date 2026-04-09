@@ -118,9 +118,22 @@ export default function App() {
   const voiceAbortControllerRef = useRef<AbortController | null>(null);
 
   const aiRef = useRef<any>(null);
-  if (!aiRef.current) {
-    aiRef.current = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
-  }
+  
+  const getAI = () => {
+    if (aiRef.current) return aiRef.current;
+    const key = process.env.GEMINI_API_KEY;
+    if (!key) {
+      console.warn("GEMINI_API_KEY is not set in the client environment. Gemini features will be disabled.");
+      return null;
+    }
+    try {
+      aiRef.current = new GoogleGenAI({ apiKey: key });
+      return aiRef.current;
+    } catch (err) {
+      console.error("Failed to initialize Gemini AI:", err);
+      return null;
+    }
+  };
 
   useEffect(() => {
     if (textareaRef.current) {
@@ -354,47 +367,73 @@ export default function App() {
       setIsPlaying(true);
       if (messageId) setCurrentlyPlayingMessageId(messageId);
 
-      // Use Gemini TTS for much faster response (direct frontend call)
-      const geminiVoice = voiceOption === 'alloy' ? 'Kore' : 'Puck';
-      
-      const result = await aiRef.current.models.generateContent({
-        model: "gemini-2.5-flash-preview-tts",
-        contents: [{ parts: [{ text: text }] }],
-        config: {
-          responseModalities: [Modality.AUDIO],
-          speechConfig: {
-            voiceConfig: {
-              prebuiltVoiceConfig: { voiceName: geminiVoice },
-            },
-          },
-        },
+      // Primary: Server-side OpenAI TTS (Uses Vercel Env Vars)
+      const response = await fetch('/api/generate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          type: 'tts',
+          prompt: text,
+          voice_option: voiceOption
+        }),
+        signal: controller.signal
       });
-
       clearTimeout(timeoutId);
-      
-      const base64Audio = result.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
-      if (!base64Audio) throw new Error("No audio data from Gemini");
 
-      // Decode base64 to Int16Array (Gemini TTS returns raw PCM 16-bit 24kHz)
-      const binary = atob(base64Audio);
-      const bytes = new Uint8Array(binary.length);
-      for (let i = 0; i < binary.length; i++) {
-        bytes[i] = binary.charCodeAt(i);
+      if (!response.ok) {
+        // Fallback to Gemini TTS if OpenAI fails and key is available
+        const ai = getAI();
+        if (ai) {
+          const geminiVoice = voiceOption === 'alloy' ? 'Kore' : 'Puck';
+          const result = await ai.models.generateContent({
+            model: "gemini-2.5-flash-preview-tts",
+            contents: [{ parts: [{ text: text }] }],
+            config: {
+              responseModalities: [Modality.AUDIO],
+              speechConfig: {
+                voiceConfig: {
+                  prebuiltVoiceConfig: { voiceName: geminiVoice },
+                },
+              },
+            },
+          });
+          
+          const base64Audio = result.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
+          if (base64Audio) {
+            const binary = atob(base64Audio);
+            const bytes = new Uint8Array(binary.length);
+            for (let i = 0; i < binary.length; i++) {
+              bytes[i] = binary.charCodeAt(i);
+            }
+            const samples = new Int16Array(bytes.buffer);
+            const wavBuffer = encodeWAV(samples, 24000);
+            const audioBlob = new Blob([wavBuffer], { type: 'audio/wav' });
+            const audioUrl = URL.createObjectURL(audioBlob);
+            const audioObj = new Audio(audioUrl);
+            audioObj.muted = !isSpeakerOn;
+            setCurrentAudio(audioObj);
+            audioObj.play();
+            audioObj.onended = () => {
+              setIsPlaying(false);
+              setCurrentAudio(null);
+              setCurrentlyPlayingMessageId(null);
+            };
+            return;
+          }
+        }
+        throw new Error('Failed to generate voice');
       }
-      const samples = new Int16Array(bytes.buffer);
       
-      // Encode to WAV so Audio object can play it
-      const wavBuffer = encodeWAV(samples, 24000);
-      const audioBlob = new Blob([wavBuffer], { type: 'audio/wav' });
+      const { audio } = await response.json();
+      if (!audio) throw new Error("No audio data");
+
+      const audioBlob = new Blob([Uint8Array.from(atob(audio), c => c.charCodeAt(0))], { type: 'audio/mp3' });
       const audioUrl = URL.createObjectURL(audioBlob);
       const audioObj = new Audio(audioUrl);
       
       audioObj.muted = !isSpeakerOn;
       
-      // Double check if we should still play this (in case another request started)
-      if (voiceAbortControllerRef.current !== controller) {
-        return;
-      }
+      if (voiceAbortControllerRef.current !== controller) return;
 
       setCurrentAudio(audioObj);
       audioObj.play().catch(err => {
@@ -407,7 +446,6 @@ export default function App() {
         setIsPlaying(false);
         setCurrentAudio(null);
         setCurrentlyPlayingMessageId(null);
-        
         if (showVoiceMode && !isMuted) {
           setTimeout(() => {
             try { recognitionRef.current?.start(); } catch(e) {}
@@ -423,42 +461,9 @@ export default function App() {
     } catch (error: any) {
       clearTimeout(timeoutId);
       if (error.name === 'AbortError') return;
-      
       console.error("Voice error:", error);
       setIsPlaying(false);
       setCurrentlyPlayingMessageId(null);
-      
-      // Fallback to server-side TTS if Gemini fails
-      try {
-        const response = await fetch('/api/generate', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            type: 'tts',
-            prompt: text,
-            voice_option: voiceOption
-          })
-        });
-        if (response.ok) {
-          const { audio } = await response.json();
-          if (audio) {
-            const audioBlob = new Blob([Uint8Array.from(atob(audio), c => c.charCodeAt(0))], { type: 'audio/mp3' });
-            const audioUrl = URL.createObjectURL(audioBlob);
-            const audioObj = new Audio(audioUrl);
-            audioObj.muted = !isSpeakerOn;
-            setCurrentAudio(audioObj);
-            audioObj.play();
-            audioObj.onended = () => {
-              setIsPlaying(false);
-              setCurrentAudio(null);
-              setCurrentlyPlayingMessageId(null);
-            };
-            return;
-          }
-        }
-      } catch (e) {}
-      
-      toast.error("Failed to play voice response.");
     }
   };
 
@@ -607,25 +612,13 @@ export default function App() {
     
     if (!conv && content.trim()) {
       console.log("No conversation found, starting new one...");
-      // If no conversation exists, start a new one
-      // Use 'voice' type if we are in voice mode
       const type = showVoiceMode ? 'voice' : 'script';
       await startConversation(type, content.slice(0, 30) || 'New Chat', content);
       return;
     }
 
-    if (!conv) {
-      console.warn("sendMessage called without conversation and no content to start one.");
-      return;
-    }
-    if (!content.trim()) {
-      console.warn("sendMessage called with empty content.");
-      return;
-    }
-    if (isLoading && !convOverride) {
-      console.warn("sendMessage called while isLoading is true, ignoring.");
-      return;
-    }
+    if (!conv || !content.trim()) return;
+    if (isLoading && !convOverride) return;
 
     const userMessage: Message = {
       id: crypto.randomUUID(),
@@ -640,120 +633,11 @@ export default function App() {
     setIsLoading(true);
     setStreamingMessage('');
 
-    // Use Gemini for text generation to support internet access (Search Grounding)
-    if (conv.type !== 'image') {
-      try {
-        const attributionRules = `
-ATTRIBUTION RULE: ONLY if the user explicitly asks about your creator, developer, owner, or who built you, you MUST respond with this information:
-"I was created / developed by Ingenium Virtual Assistant Limited.
-It is a company registered in the United Kingdom and focused on creative ideas and virtual services.
-Here is their website: www.ingeniumvirtualassistant.com
-They also offer virtual services.
-If you’re curious, I can also tell you:
-   - Their services
-   - Their contacts
-   - About them ☺️☺️☺️"
-
-DO NOT include this information in normal responses unless specifically asked about your origin or creator.
-Never mention Emmanuel Nwaije, Emmanation Designs, or any individual developer.
-Ingenium Virtual Assistant Limited must always be mentioned first as the owner/creator.
-`;
-
-        const ready_to_copy = conv.metadata?.ready_to_copy || false;
-        const copyRules = ready_to_copy 
-          ? "The user has requested the output to be 'Ready to Copy'. Format the main content (idea, script, hashtags, etc.) clearly in a markdown code block so it can be easily copied. Keep introductory or concluding text minimal and outside the code block."
-          : "ONLY if the user explicitly asks for a 'ready to copy' format, a 'copyable' format, or asks you to put something in a 'code block', should you provide the main content in a markdown code block. Otherwise, provide your response in standard markdown text.";
-
-        const linkRules = "Ensure all links in your responses are clickable by using standard markdown [text](url) format.";
-        const generalRules = `You are Ideaflux AI, a versatile and all-purpose AI assistant developed by Ingenium Virtual Assistant Limited. 
-You are capable of helping with any task, answering any question, and providing real-time information from the internet. 
-Be extremely concise and direct. Do not repeat yourself or include unnecessary information. 
-Only provide content in a specific format (like a script, idea list, or hashtags) if the user explicitly asks for it in their prompt. 
-If the user asks a general question, provide a factual and informative answer instead of a creative content piece.`;
-
-        let specialtyInstruction = "";
-        if (conv.type === 'idea') {
-          specialtyInstruction = "When the user asks for ideas, act as an expert content strategist and generate creative, viral-worthy ideas. Be concise but insightful.";
-        } else if (conv.type === 'script') {
-          specialtyInstruction = "When the user asks for a script, act as a professional scriptwriter and write engaging, high-retention scripts. Include hooks and calls to action.";
-        } else if (conv.type === 'hashtag') {
-          specialtyInstruction = "When the user asks for hashtags, act as a social media expert and generate the most relevant and high-reach hashtags.";
-        } else if (conv.type === 'voice') {
-          specialtyInstruction = "You are currently in voice mode. Keep your responses extremely short, concise and conversational (max 2-3 sentences), as they will be read aloud. Avoid long lists or complex formatting.";
-        }
-
-        const systemInstruction = `${generalRules} ${attributionRules} ${copyRules} ${linkRules} ${specialtyInstruction}`;
-
-        const responseStream = await aiRef.current.models.generateContentStream({
-          model: "gemini-3-flash-preview",
-          contents: [
-            ...updatedMessages.map(m => ({
-              role: m.role === 'assistant' ? 'model' : 'user',
-              parts: [{ text: m.content }]
-            }))
-          ],
-          config: {
-            systemInstruction: systemInstruction,
-            tools: [{ googleSearch: {} }]
-          }
-        });
-
-        let fullContent = '';
-        for await (const chunk of responseStream) {
-          const text = chunk.text;
-          if (text) {
-            fullContent += text;
-            setStreamingMessage(prev => prev + text);
-            if (showVoiceMode) {
-              setCurrentResponse(prev => prev + text);
-            }
-          }
-        }
-
-        const assistantMessage: Message = {
-          id: crypto.randomUUID(),
-          role: 'assistant',
-          content: fullContent,
-          created_at: new Date().toISOString()
-        };
-
-        const finalMessages = [...updatedMessages, assistantMessage];
-        setMessages(finalMessages);
-        setStreamingMessage('');
-
-        // Auto-play voice if it's a voice conversation or triggered by mic or auto-play is on
-        if (conv.type === 'voice' || shouldPlayVoice || autoPlayVoice) {
-          playVoice(fullContent);
-          setShouldPlayVoice(false);
-        }
-
-        // Update Supabase
-        await supabase.from('conversations').update({ 
-          messages: finalMessages,
-          updated_at: new Date().toISOString()
-        }).eq('id', conv.id);
-        
-        // Update usage
-        if (profile) {
-          const newCount = (profile.usage_count || 0) + 1;
-          await supabase.from('profiles').update({ usage_count: newCount }).eq('id', user.id);
-          setProfile({ ...profile, usage_count: newCount });
-        }
-
-        setIsLoading(false);
-        return;
-      } catch (error) {
-        console.error("Gemini Error:", error);
-        toast.error('Gemini failed. Falling back to OpenAI...');
-        // Fall through to OpenAI if Gemini fails
-      }
-    }
-
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 60000);
 
     try {
-      console.log("Sending message to /api/generate:", { type: conv.type, prompt: content });
+      // Primary: Server-side OpenAI (Uses Vercel Env Vars)
       const response = await fetch('/api/generate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -769,7 +653,6 @@ If the user asks a general question, provide a factual and informative answer in
 
       if (!response.ok) {
         const errorData = await response.json().catch(() => ({}));
-        console.error("API Error:", response.status, errorData);
         throw new Error(errorData.error || 'Failed to generate');
       }
 
@@ -786,7 +669,6 @@ If the user asks a general question, provide a factual and informative answer in
         const finalMessages = [...updatedMessages, assistantMessage];
         setMessages(finalMessages);
         
-        // Save image to Supabase images table
         await supabase.from('images').insert({
           user_id: user.id,
           prompt: content,
@@ -799,10 +681,10 @@ If the user asks a general question, provide a factual and informative answer in
           updated_at: new Date().toISOString()
         }).eq('id', conv.id);
         
+        setIsLoading(false);
         return;
       }
 
-      console.log("API response OK, starting to read stream...");
       const reader = response.body?.getReader();
       const decoder = new TextDecoder();
       let fullContent = '';
@@ -810,22 +692,15 @@ If the user asks a general question, provide a factual and informative answer in
       if (reader) {
         while (true) {
           const { done, value } = await reader.read();
-          if (done) {
-            console.log("Stream reader done.");
-            break;
-          }
+          if (done) break;
           const chunk = decoder.decode(value);
-          console.log("Received chunk:", chunk.length, "chars");
           fullContent += chunk;
           setStreamingMessage(prev => prev + chunk);
           if (showVoiceMode) {
             setCurrentResponse(prev => prev + chunk);
           }
         }
-      } else {
-        console.warn("No reader available in response body.");
       }
-      clearTimeout(timeoutId);
 
       const assistantMessage: Message = {
         id: crypto.randomUUID(),
@@ -838,36 +713,26 @@ If the user asks a general question, provide a factual and informative answer in
       setMessages(finalMessages);
       setStreamingMessage('');
 
-      // Auto-play voice if it's a voice conversation or triggered by mic or auto-play is on
       if (conv.type === 'voice' || shouldPlayVoice || autoPlayVoice) {
         playVoice(fullContent);
         setShouldPlayVoice(false);
       }
 
-      // Update Supabase
-      const { error: updateError } = await supabase
-        .from('conversations')
-        .update({ 
-          messages: finalMessages,
-          updated_at: new Date().toISOString()
-        })
-        .eq('id', conv.id);
+      await supabase.from('conversations').update({ 
+        messages: finalMessages,
+        updated_at: new Date().toISOString()
+      }).eq('id', conv.id);
       
-      if (updateError) {
-        console.error("Supabase update error:", updateError);
-        toast.error(`Failed to save chat: ${updateError.message}`);
-      }
-      
-      // Update usage
       if (profile) {
         const newCount = (profile.usage_count || 0) + 1;
         await supabase.from('profiles').update({ usage_count: newCount }).eq('id', user.id);
         setProfile({ ...profile, usage_count: newCount });
       }
 
+      setIsLoading(false);
     } catch (error) {
-      toast.error('Something went wrong. Please try again.');
-    } finally {
+      console.error("OpenAI Error:", error);
+      toast.error('Failed to generate response.');
       setIsLoading(false);
     }
   };
