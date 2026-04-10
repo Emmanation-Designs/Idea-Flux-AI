@@ -29,7 +29,6 @@ import {
   Waves
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
-import { GoogleGenAI, Modality } from "@google/genai";
 import { Toaster, toast } from 'sonner';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -52,28 +51,6 @@ import { CodeBlock } from './components/CodeBlock';
 function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }
-
-const encodeWAV = (samples: Int16Array, sampleRate: number = 24000) => {
-  const buffer = new ArrayBuffer(44 + samples.length * 2);
-  const view = new DataView(buffer);
-  view.setUint32(0, 0x52494646, false);
-  view.setUint32(4, 36 + samples.length * 2, true);
-  view.setUint32(8, 0x57415645, false);
-  view.setUint32(12, 0x666d7420, false);
-  view.setUint32(16, 16, true);
-  view.setUint16(20, 1, true);
-  view.setUint16(22, 1, true);
-  view.setUint32(24, sampleRate, true);
-  view.setUint32(28, sampleRate * 2, true);
-  view.setUint16(32, 2, true);
-  view.setUint16(34, 16, true);
-  view.setUint32(36, 0x64617461, false);
-  view.setUint32(40, samples.length * 2, true);
-  for (let i = 0; i < samples.length; i++) {
-    view.setInt16(44 + i * 2, samples[i], true);
-  }
-  return buffer;
-};
 
 // --- Main App ---
 
@@ -116,24 +93,6 @@ export default function App() {
   const recognitionRef = useRef<any>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const voiceAbortControllerRef = useRef<AbortController | null>(null);
-
-  const aiRef = useRef<any>(null);
-  
-  const getAI = () => {
-    if (aiRef.current) return aiRef.current;
-    const key = process.env.GEMINI_API_KEY;
-    if (!key) {
-      console.warn("GEMINI_API_KEY is not set in the client environment. Gemini features will be disabled.");
-      return null;
-    }
-    try {
-      aiRef.current = new GoogleGenAI({ apiKey: key });
-      return aiRef.current;
-    } catch (err) {
-      console.error("Failed to initialize Gemini AI:", err);
-      return null;
-    }
-  };
 
   useEffect(() => {
     if (textareaRef.current) {
@@ -343,13 +302,11 @@ export default function App() {
   const playVoice = async (text: string, messageId?: string) => {
     if (!text) return;
     
-    // If clicking the same message that is playing, toggle playback
     if (messageId && currentlyPlayingMessageId === messageId && currentAudio) {
       togglePlayback();
       return;
     }
 
-    // Stop any current audio and abort any pending fetch
     if (currentAudio) {
       currentAudio.pause();
       currentAudio.onended = null;
@@ -367,7 +324,6 @@ export default function App() {
       setIsPlaying(true);
       if (messageId) setCurrentlyPlayingMessageId(messageId);
 
-      // Primary: Server-side OpenAI TTS (Uses Vercel Env Vars)
       const response = await fetch('/api/generate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -380,49 +336,7 @@ export default function App() {
       });
       clearTimeout(timeoutId);
 
-      if (!response.ok) {
-        // Fallback to Gemini TTS if OpenAI fails and key is available
-        const ai = getAI();
-        if (ai) {
-          const geminiVoice = voiceOption === 'alloy' ? 'Kore' : 'Puck';
-          const result = await ai.models.generateContent({
-            model: "gemini-2.5-flash-preview-tts",
-            contents: [{ parts: [{ text: text }] }],
-            config: {
-              responseModalities: [Modality.AUDIO],
-              speechConfig: {
-                voiceConfig: {
-                  prebuiltVoiceConfig: { voiceName: geminiVoice },
-                },
-              },
-            },
-          });
-          
-          const base64Audio = result.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
-          if (base64Audio) {
-            const binary = atob(base64Audio);
-            const bytes = new Uint8Array(binary.length);
-            for (let i = 0; i < binary.length; i++) {
-              bytes[i] = binary.charCodeAt(i);
-            }
-            const samples = new Int16Array(bytes.buffer);
-            const wavBuffer = encodeWAV(samples, 24000);
-            const audioBlob = new Blob([wavBuffer], { type: 'audio/wav' });
-            const audioUrl = URL.createObjectURL(audioBlob);
-            const audioObj = new Audio(audioUrl);
-            audioObj.muted = !isSpeakerOn;
-            setCurrentAudio(audioObj);
-            audioObj.play();
-            audioObj.onended = () => {
-              setIsPlaying(false);
-              setCurrentAudio(null);
-              setCurrentlyPlayingMessageId(null);
-            };
-            return;
-          }
-        }
-        throw new Error('Failed to generate voice');
-      }
+      if (!response.ok) throw new Error('Failed to generate voice');
       
       const { audio } = await response.json();
       if (!audio) throw new Error("No audio data");
@@ -636,13 +550,22 @@ export default function App() {
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 60000);
 
+    // Smart Image Intent Detection
+    const lowerContent = content.toLowerCase();
+    const isImageIntent = 
+      conv.type === 'image' || 
+      (/generate|create|make|draw|design|show me|give me|i want|produce/i.test(lowerContent) && 
+       /image|picture|photo|logo|flyer|poster|illustration|drawing|sketch|graphic|realistic/i.test(lowerContent)) ||
+      /logo for|flyer for|poster for/i.test(lowerContent) ||
+      /^realistic |^photorealistic /i.test(lowerContent);
+
     try {
       // Primary: Server-side OpenAI (Uses Vercel Env Vars)
       const response = await fetch('/api/generate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          type: conv.type || 'script',
+          type: isImageIntent ? 'image' : (conv.type || 'script'),
           prompt: content,
           messages: updatedMessages,
           voice_option: voiceOption,
@@ -656,13 +579,14 @@ export default function App() {
         throw new Error(errorData.error || 'Failed to generate');
       }
 
-      if (conv.type === 'image') {
-        const { image_url } = await response.json();
+      if (isImageIntent) {
+        const { image_url, filename } = await response.json();
         const assistantMessage: Message = {
           id: crypto.randomUUID(),
           role: 'assistant',
           content: `Generated image for: ${content}`,
           image_url,
+          filename,
           created_at: new Date().toISOString()
         };
         
@@ -839,6 +763,32 @@ export default function App() {
     a.click();
     URL.revokeObjectURL(url);
     toast.success('Download started');
+  };
+
+  const handleDownloadImage = async (url: string, filename: string) => {
+    try {
+      toast.loading('Preparing download...', { id: 'img-dl' });
+      // Use our proxy to bypass CORS
+      const proxyUrl = `/api/proxy-image?url=${encodeURIComponent(url)}`;
+      const response = await fetch(proxyUrl);
+      if (!response.ok) throw new Error('Proxy fetch failed');
+      
+      const blob = await response.blob();
+      const blobUrl = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = blobUrl;
+      a.download = filename.endsWith('.png') ? filename : `${filename}.png`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(blobUrl);
+      toast.success('Image download started', { id: 'img-dl' });
+    } catch (error) {
+      console.error('Download error:', error);
+      // Last resort fallback
+      window.open(url, '_blank');
+      toast.error('Failed to download directly. Opened in new tab.', { id: 'img-dl' });
+    }
   };
 
   const copyToClipboard = (text: string) => {
@@ -1018,10 +968,7 @@ export default function App() {
                             <button 
                               onClick={(e) => {
                                 e.stopPropagation();
-                                const a = document.createElement('a');
-                                a.href = m.image_url!;
-                                a.download = 'generated-image.png';
-                                a.click();
+                                handleDownloadImage(m.image_url!, m.filename || 'generated-image.png');
                               }}
                               className="w-full py-2 bg-zinc-100 dark:bg-zinc-800 text-xs font-bold flex items-center justify-center gap-2 hover:bg-zinc-200 dark:hover:bg-zinc-700 transition-colors"
                             >

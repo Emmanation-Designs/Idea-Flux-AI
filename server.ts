@@ -22,6 +22,26 @@ app.get("/api/health", (req, res) => {
 });
 
 // API routes
+app.get("/api/proxy-image", async (req, res) => {
+  const imageUrl = req.query.url as string;
+  if (!imageUrl) return res.status(400).send("URL is required");
+
+  try {
+    const response = await fetch(imageUrl);
+    if (!response.ok) throw new Error("Failed to fetch image");
+    
+    const arrayBuffer = await response.arrayBuffer();
+    const buffer = Buffer.from(arrayBuffer);
+    
+    res.setHeader("Content-Type", response.headers.get("Content-Type") || "image/png");
+    res.setHeader("Content-Disposition", `attachment; filename="image.png"`);
+    res.send(buffer);
+  } catch (error) {
+    console.error("Proxy error:", error);
+    res.status(500).send("Failed to proxy image");
+  }
+});
+
 app.post("/api/generate", async (req, res) => {
   console.log("Received request to /api/generate");
   const { type, prompt, messages = [], voice_option = "alloy", ready_to_copy = false } = req.body;
@@ -33,13 +53,35 @@ app.post("/api/generate", async (req, res) => {
     const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
     if (type === "image") {
+      let enhancedPrompt = prompt;
+      let filename = "generated-image.png";
+
+      // Detect if it's a logo or flyer
+      const isLogo = prompt.toLowerCase().includes("logo");
+      const isFlyer = prompt.toLowerCase().includes("flyer") || prompt.toLowerCase().includes("poster");
+
+      if (isLogo) {
+        enhancedPrompt = `${prompt}, clean vector logo, professional, minimalist, high resolution, white background`;
+        filename = `${prompt.toLowerCase().replace(/[^a-z0-9]+/g, '-').slice(0, 30)}-logo.png`;
+      } else if (isFlyer) {
+        enhancedPrompt = `${prompt}, professional graphic design, modern layout, vibrant colors, high resolution, sharp focus`;
+        filename = `${prompt.toLowerCase().replace(/[^a-z0-9]+/g, '-').slice(0, 30)}-flyer.png`;
+      } else {
+        enhancedPrompt = `${prompt}, highly realistic, photorealistic, detailed, sharp focus, natural lighting, 8k resolution, cinematic lighting, masterpiece`;
+        filename = `${prompt.toLowerCase().replace(/[^a-z0-9]+/g, '-').slice(0, 30)}.png`;
+      }
+
       const response = await openai.images.generate({
         model: "dall-e-3",
-        prompt: prompt,
+        prompt: enhancedPrompt,
         n: 1,
         size: "1024x1024",
+        quality: "hd",
       });
-      return res.json({ image_url: response.data[0].url });
+      return res.json({ 
+        image_url: response.data[0].url,
+        filename: filename
+      });
     }
 
     if (type === "tts") {
@@ -74,18 +116,19 @@ Ingenium Virtual Assistant Limited must always be mentioned first as the owner/c
       : "If the user asks for something copyable (prompt, code, list, hashtags, script, etc.), automatically provide the main content in a ready-to-copy format (like a markdown code block), while keeping the rest of the response normal.";
 
     const linkRules = "Ensure all links in your responses are clickable by using standard markdown [text](url) format.";
+    const imageRules = "You ARE capable of generating images, logos, and flyers. If the user asks for one, do not say you are unable to. Simply confirm you are generating it and the system will handle the rest.";
 
     let systemInstruction = "";
     if (type === "idea") {
-      systemInstruction = `You are an expert content strategist. Generate creative, viral-worthy ideas for the specified niche and platform. Be concise but insightful. ${attributionRules} ${copyRules} ${linkRules}`;
+      systemInstruction = `You are an expert content strategist. Generate creative, viral-worthy ideas for the specified niche and platform. Be concise but insightful. ${attributionRules} ${copyRules} ${linkRules} ${imageRules}`;
     } else if (type === "script") {
-      systemInstruction = `You are a professional scriptwriter. Write engaging, high-retention scripts for the specified platform and length. Include hooks and calls to action. ${attributionRules} ${copyRules} ${linkRules}`;
+      systemInstruction = `You are a professional scriptwriter. Write engaging, high-retention scripts for the specified platform and length. Include hooks and calls to action. ${attributionRules} ${copyRules} ${linkRules} ${imageRules}`;
     } else if (type === "hashtag") {
-      systemInstruction = `You are a social media expert. Generate the most relevant and high-reach hashtags for the given topic and platform. ${attributionRules} ${copyRules} ${linkRules}`;
+      systemInstruction = `You are a social media expert. Generate the most relevant and high-reach hashtags for the given topic and platform. ${attributionRules} ${copyRules} ${linkRules} ${imageRules}`;
     } else if (type === "voice") {
-      systemInstruction = `You are a helpful AI voice assistant called Ideaflux AI. Keep your responses concise and conversational, as they will be read aloud. ${attributionRules} ${linkRules}`;
+      systemInstruction = `You are a helpful AI voice assistant called Ideaflux AI. Keep your responses concise and conversational, as they will be read aloud. ${attributionRules} ${linkRules} ${imageRules}`;
     } else {
-      systemInstruction = `You are a helpful AI assistant called Ideaflux AI. ${attributionRules} ${copyRules} ${linkRules}`;
+      systemInstruction = `You are a helpful AI assistant called Ideaflux AI. ${attributionRules} ${copyRules} ${linkRules} ${imageRules}`;
     }
 
     console.log(`Generating ${type} for prompt: ${prompt} (Ready to Copy: ${ready_to_copy})`);

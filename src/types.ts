@@ -8,6 +8,7 @@ export interface Message {
   feedback?: 'like' | 'dislike';
   image_url?: string;
   audio_url?: string;
+  filename?: string;
 }
 
 export interface Conversation {
