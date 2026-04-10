@@ -17,7 +17,8 @@ app.use(express.json());
 app.get("/api/health", (req, res) => {
   res.json({ 
     status: "ok", 
-    hasOpenAIApiKey: !!process.env.OPENAI_API_KEY
+    hasOpenAIApiKey: !!process.env.OPENAI_API_KEY,
+    hasTavilyApiKey: !!process.env.TAVILY_API_KEY
   });
 });
 
@@ -117,24 +118,26 @@ Ingenium Virtual Assistant Limited must always be mentioned first as the owner/c
 
     const linkRules = "Ensure all links in your responses are clickable by using standard markdown [text](url) format.";
     const imageRules = "You ARE capable of generating images, logos, and flyers. If the user asks for one, do not say you are unable to. Simply confirm you are generating it and the system will handle the rest.";
+    
+    const tavilyKey = process.env.TAVILY_API_KEY;
+    const searchMissingRules = !tavilyKey ? "\n\nNOTE: Real-time web search is currently disabled because the TAVILY_API_KEY is missing. If the user asks for real-time info, politely ask them to add the TAVILY_API_KEY in the app settings." : "";
 
     let systemInstruction = "";
     if (type === "idea") {
-      systemInstruction = `You are an expert content strategist. Generate creative, viral-worthy ideas for the specified niche and platform. Be concise but insightful. ${attributionRules} ${copyRules} ${linkRules} ${imageRules}`;
+      systemInstruction = `You are an expert content strategist. Generate creative, viral-worthy ideas for the specified niche and platform. Be concise but insightful. ${attributionRules} ${copyRules} ${linkRules} ${imageRules} ${searchMissingRules}`;
     } else if (type === "script") {
-      systemInstruction = `You are a professional scriptwriter. Write engaging, high-retention scripts for the specified platform and length. Include hooks and calls to action. ${attributionRules} ${copyRules} ${linkRules} ${imageRules}`;
+      systemInstruction = `You are a professional scriptwriter. Write engaging, high-retention scripts for the specified platform and length. Include hooks and calls to action. ${attributionRules} ${copyRules} ${linkRules} ${imageRules} ${searchMissingRules}`;
     } else if (type === "hashtag") {
-      systemInstruction = `You are a social media expert. Generate the most relevant and high-reach hashtags for the given topic and platform. ${attributionRules} ${copyRules} ${linkRules} ${imageRules}`;
+      systemInstruction = `You are a social media expert. Generate the most relevant and high-reach hashtags for the given topic and platform. ${attributionRules} ${copyRules} ${linkRules} ${imageRules} ${searchMissingRules}`;
     } else if (type === "voice") {
-      systemInstruction = `You are a helpful AI voice assistant called Ideaflux AI. Keep your responses concise and conversational, as they will be read aloud. ${attributionRules} ${linkRules} ${imageRules}`;
+      systemInstruction = `You are a helpful AI voice assistant called Ideaflux AI. Keep your responses concise and conversational, as they will be read aloud. ${attributionRules} ${linkRules} ${imageRules} ${searchMissingRules}`;
     } else {
-      systemInstruction = `You are a helpful AI assistant called Ideaflux AI. ${attributionRules} ${copyRules} ${linkRules} ${imageRules}`;
+      systemInstruction = `You are a helpful AI assistant called Ideaflux AI. ${attributionRules} ${copyRules} ${linkRules} ${imageRules} ${searchMissingRules}`;
     }
 
     console.log(`Generating ${type} for prompt: ${prompt} (Ready to Copy: ${ready_to_copy})`);
 
     let searchContext = "";
-    const tavilyKey = process.env.TAVILY_API_KEY;
     
     // Improved Search Detection: Trigger for almost any factual query if key is present
     const lowerPrompt = prompt.toLowerCase();
