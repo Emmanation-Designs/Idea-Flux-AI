@@ -133,10 +133,41 @@ Ingenium Virtual Assistant Limited must always be mentioned first as the owner/c
 
     console.log(`Generating ${type} for prompt: ${prompt} (Ready to Copy: ${ready_to_copy})`);
 
+    let searchContext = "";
+    const tavilyKey = process.env.TAVILY_API_KEY;
+    
+    // Smart Search Detection: If it's a general question and we have a search key
+    const needsSearch = type === "general" || type === "voice" || /price|news|today|current|weather|who is|what is the/i.test(prompt);
+    
+    if (tavilyKey && needsSearch) {
+      try {
+        console.log("Performing web search via Tavily...");
+        const searchResponse = await fetch("https://api.tavily.com/search", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            api_key: tavilyKey,
+            query: prompt,
+            search_depth: "basic",
+            max_results: 3
+          })
+        });
+        
+        if (searchResponse.ok) {
+          const searchData = await searchResponse.json();
+          searchContext = "\n\nCURRENT WEB SEARCH RESULTS:\n" + 
+            searchData.results.map((r: any) => `- ${r.title}: ${r.content} (Source: ${r.url})`).join("\n");
+          console.log("Search results obtained.");
+        }
+      } catch (err) {
+        console.error("Search failed:", err);
+      }
+    }
+
     const stream = await openai.chat.completions.create({
       model: "gpt-4o-mini",
       messages: [
-        { role: "system", content: systemInstruction },
+        { role: "system", content: systemInstruction + searchContext },
         ...messages.map((m: any) => ({
           role: m.role,
           content: m.content,
