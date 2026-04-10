@@ -136,12 +136,16 @@ Ingenium Virtual Assistant Limited must always be mentioned first as the owner/c
     let searchContext = "";
     const tavilyKey = process.env.TAVILY_API_KEY;
     
-    // Smart Search Detection: If it's a general question and we have a search key
-    const needsSearch = type === "general" || type === "voice" || /price|news|today|current|weather|who is|what is the/i.test(prompt);
+    // Improved Search Detection: Trigger for almost any factual query if key is present
+    const lowerPrompt = prompt.toLowerCase();
+    const isCreativeTask = type === "script" || type === "idea" || type === "hashtag";
+    const searchKeywords = /how much|rate|exchange|dollar|price|cost|who|what|where|when|why|how|search|find|lookup|news|today|current|weather/i;
+    
+    const needsSearch = !isCreativeTask || searchKeywords.test(lowerPrompt);
     
     if (tavilyKey && needsSearch) {
       try {
-        console.log("Performing web search via Tavily...");
+        console.log(`Performing web search for: "${prompt}"`);
         const searchResponse = await fetch("https://api.tavily.com/search", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -149,15 +153,17 @@ Ingenium Virtual Assistant Limited must always be mentioned first as the owner/c
             api_key: tavilyKey,
             query: prompt,
             search_depth: "basic",
-            max_results: 3
+            max_results: 5
           })
         });
         
         if (searchResponse.ok) {
           const searchData = await searchResponse.json();
-          searchContext = "\n\nCURRENT WEB SEARCH RESULTS:\n" + 
-            searchData.results.map((r: any) => `- ${r.title}: ${r.content} (Source: ${r.url})`).join("\n");
-          console.log("Search results obtained.");
+          if (searchData.results && searchData.results.length > 0) {
+            searchContext = "\n\nIMPORTANT: USE THE FOLLOWING REAL-TIME WEB SEARCH RESULTS TO ANSWER THE USER. DO NOT SAY YOU DON'T HAVE ACCESS TO REAL-TIME DATA.\n" + 
+              searchData.results.map((r: any) => `- ${r.title}: ${r.content} (Source: ${r.url})`).join("\n");
+            console.log("Search results obtained and injected.");
+          }
         }
       } catch (err) {
         console.error("Search failed:", err);
