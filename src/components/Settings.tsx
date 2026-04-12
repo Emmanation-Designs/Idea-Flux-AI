@@ -1,3 +1,4 @@
+import React from 'react';
 import { 
   Settings as SettingsIcon, 
   X, 
@@ -22,7 +23,8 @@ export const Settings = ({
   onVoiceOptionChange,
   autoPlayVoice,
   onToggleAutoPlay,
-  onShowLegal
+  onShowLegal,
+  onApplyKey
 }: { 
   profile: Profile | null; 
   onClose: () => void;
@@ -31,7 +33,19 @@ export const Settings = ({
   autoPlayVoice: boolean;
   onToggleAutoPlay: () => void;
   onShowLegal: (type: 'about' | 'privacy' | 'terms') => void;
+  onApplyKey: (key: string) => Promise<void>;
 }) => {
+  const [key, setKey] = React.useState('');
+  const [isApplying, setIsApplying] = React.useState(false);
+
+  const handleApply = async () => {
+    if (!key.trim()) return;
+    setIsApplying(true);
+    await onApplyKey(key);
+    setIsApplying(false);
+    setKey('');
+  };
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
       <motion.div 
@@ -63,18 +77,23 @@ export const Settings = ({
             <div className="space-y-1.5">
               <div className="flex justify-between text-xs">
                 <span>Usage</span>
-                <span>{profile?.usage_count || 0} / {profile?.plan === 'pro' ? 'Unlimited' : '15'}</span>
+                <span>{profile?.usage_count || 0} / {profile?.plan === 'pro' ? 'Unlimited' : (profile?.max_usage || 15)}</span>
               </div>
               <div className="w-full h-1.5 bg-zinc-200 dark:bg-zinc-800 rounded-full overflow-hidden">
                 <div 
                   className="h-full bg-zinc-900 dark:bg-white transition-all duration-500" 
-                  style={{ width: profile?.plan === 'pro' ? '0%' : `${Math.min(100, ((profile?.usage_count || 0) / 15) * 100)}%` }}
+                  style={{ width: profile?.plan === 'pro' ? '0%' : `${Math.min(100, ((profile?.usage_count || 0) / (profile?.max_usage || 15)) * 100)}%` }}
                 />
               </div>
             </div>
+            {profile?.plan === 'pro' && profile?.pro_expires_at && (
+              <div className="mt-3 text-[10px] text-amber-600 dark:text-amber-400 text-center font-medium">
+                Pro expires in {Math.ceil((new Date(profile.pro_expires_at).getTime() - new Date().getTime()) / (1000 * 60 * 60 * 24))} days
+              </div>
+            )}
             {profile?.plan === 'free' && (
               <div className="mt-3 text-[10px] text-zinc-500 text-center">
-                Pro Plan – $7 per 30 days
+                Pro Plan – $7 for 30 days
               </div>
             )}
           </div>
@@ -83,13 +102,30 @@ export const Settings = ({
             <label className="block text-sm font-medium mb-1.5 opacity-70">Activation Key</label>
             <div className="flex gap-2">
               <input 
-                className="flex-1 bg-zinc-50 dark:bg-zinc-950 border border-zinc-200 dark:border-zinc-800 rounded-xl px-4 py-2 focus:ring-2 focus:ring-zinc-500 outline-none text-sm"
-                placeholder="Enter key to upgrade"
+                className="flex-1 bg-zinc-50 dark:bg-zinc-950 border border-zinc-200 dark:border-zinc-800 rounded-xl px-4 py-2 focus:ring-2 focus:ring-zinc-500 outline-none text-sm transition-all"
+                placeholder={profile?.plan === 'pro' ? "Pro already active" : "Enter key to upgrade"}
+                value={key}
+                onChange={(e) => setKey(e.target.value)}
+                disabled={isApplying || profile?.plan === 'pro'}
               />
-              <button className="px-4 py-2 bg-zinc-900 dark:bg-white text-white dark:text-zinc-900 rounded-xl text-sm font-bold">
-                Apply
+              <button 
+                onClick={handleApply}
+                disabled={isApplying || !key.trim() || profile?.plan === 'pro'}
+                className="px-4 py-2 bg-zinc-900 dark:bg-white text-white dark:text-zinc-900 rounded-xl text-sm font-bold disabled:opacity-50 hover:opacity-90 transition-all active:scale-95"
+              >
+                {isApplying ? (
+                  <div className="flex items-center gap-2">
+                    <div className="w-3 h-3 border-2 border-current border-t-transparent rounded-full animate-spin" />
+                    <span>Applying</span>
+                  </div>
+                ) : 'Apply'}
               </button>
             </div>
+            {profile?.plan === 'free' && (
+              <p className="mt-2 text-[10px] text-zinc-500">
+                Enter a valid activation key to unlock unlimited generations and DALL·E 3 images.
+              </p>
+            )}
           </div>
 
           <div className="space-y-4 pt-4 border-t border-zinc-200 dark:border-zinc-800">

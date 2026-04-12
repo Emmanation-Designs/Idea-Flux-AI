@@ -46,6 +46,7 @@ import { VoiceMode } from './components/VoiceMode';
 import { Auth } from './components/Auth';
 import { LegalModal } from './components/Legal';
 import { CodeBlock } from './components/CodeBlock';
+import { UpgradeModal } from './components/UpgradeModal';
 
 // --- Utils ---
 function cn(...inputs: ClassValue[]) {
@@ -88,6 +89,9 @@ export default function App() {
   const transcriptRef = useRef('');
   
   const [activeMessageId, setActiveMessageId] = useState<string | null>(null);
+  
+  const [showUpgradeModal, setShowUpgradeModal] = useState(false);
+  const [upgradeReason, setUpgradeReason] = useState<'usage' | 'images'>('usage');
   
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const recognitionRef = useRef<any>(null);
@@ -432,7 +436,16 @@ export default function App() {
         .order('created_at', { ascending: false });
 
       if (error) throw error;
-      setConversations(data || []);
+      
+      // Filter out duplicates by ID and ensure every conversation has an ID
+      const uniqueConversations = (data || []).reduce((acc: any[], curr: any) => {
+        if (curr.id && !acc.find(c => c.id === curr.id)) {
+          acc.push(curr);
+        }
+        return acc;
+      }, []);
+      
+      setConversations(uniqueConversations);
     } catch (error) {
       console.error("Error fetching history:", error);
     }
@@ -450,7 +463,17 @@ export default function App() {
     const conv = conversations.find(c => c.id === id);
     if (conv) {
       setCurrentConversation(conv);
-      setMessages(conv.messages || []);
+      
+      // Filter out duplicate messages by ID and ensure every message has a unique ID
+      const uniqueMessages = (conv.messages || []).reduce((acc: any[], curr: any, idx: number) => {
+        const messageId = curr.id || `msg-legacy-${idx}`;
+        if (!acc.find(m => m.id === messageId)) {
+          acc.push({ ...curr, id: messageId });
+        }
+        return acc;
+      }, []);
+      
+      setMessages(uniqueMessages);
       setStreamingMessage('');
       setView('chat');
       if (window.innerWidth < 1024) setIsSidebarOpen(false);
@@ -511,7 +534,8 @@ export default function App() {
 
       setCurrentConversation(data);
       setConversations(prev => {
-        if (prev.some(c => c.id === data.id)) return prev;
+        const exists = prev.some(c => c.id === data.id);
+        if (exists) return prev;
         return [data, ...prev];
       });
       await sendMessage(initialPrompt, data);
@@ -541,15 +565,6 @@ export default function App() {
       created_at: new Date().toISOString()
     };
 
-    const updatedMessages = [...messages, userMessage];
-    setMessages(updatedMessages);
-    setInput('');
-    setIsLoading(true);
-    setStreamingMessage('');
-
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 60000);
-
     // Smart Image Intent Detection
     const lowerContent = content.toLowerCase();
     const isImageIntent = 
@@ -558,6 +573,43 @@ export default function App() {
        /image|picture|photo|logo|flyer|poster|illustration|drawing|sketch|graphic|realistic/i.test(lowerContent)) ||
       /logo for|flyer for|poster for/i.test(lowerContent) ||
       /^realistic |^photorealistic /i.test(lowerContent);
+
+    // Check for usage limits
+    if (profile && profile.plan === 'free') {
+      // General usage limit (15 requests)
+      if (profile.usage_count >= (profile.max_usage || 15)) {
+        setUpgradeReason('usage');
+        setShowUpgradeModal(true);
+        return;
+      }
+
+      // Image generation limit (3 per day)
+      if (isImageIntent) {
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+        
+        const { count, error: countError } = await supabase
+          .from('images')
+          .select('*', { count: 'exact', head: true })
+          .eq('user_id', user.id)
+          .gte('created_at', today.toISOString());
+
+        if (!countError && count !== null && count >= 3) {
+          setUpgradeReason('images');
+          setShowUpgradeModal(true);
+          return;
+        }
+      }
+    }
+
+    const updatedMessages = [...messages, userMessage];
+    setMessages(updatedMessages);
+    setInput('');
+    setIsLoading(true);
+    setStreamingMessage('');
+
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 60000);
 
     try {
       // Primary: Server-side OpenAI (Uses Vercel Env Vars)
@@ -604,6 +656,12 @@ export default function App() {
           messages: finalMessages,
           updated_at: new Date().toISOString()
         }).eq('id', conv.id);
+        
+        if (profile) {
+          const newCount = (profile.usage_count || 0) + 1;
+          await supabase.from('profiles').update({ usage_count: newCount }).eq('id', user.id);
+          setProfile({ ...profile, usage_count: newCount });
+        }
         
         setIsLoading(false);
         return;
@@ -695,6 +753,60 @@ export default function App() {
     } catch (error) {
       console.error("Error renaming:", error);
       toast.error('Failed to rename conversation');
+    }
+  };
+
+  const handleApplyKey = async (key: string) => {
+    if (!user || !profile) return;
+    
+    if (profile.plan === 'pro') {
+      toast.info('You are already on the PRO plan');
+      return;
+    }
+
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || 'https://wxezfzhhzlauggufecmm.supabase.co';
+      const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Ind4ZXpmemhoemxhdWdndWZlY21tIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQyNTQxMjcsImV4cCI6MjA4OTgzMDEyN30.2nsDSFhOtm1Xs3RuZNDo74jGbBwd05E7lPP-FN5cd1Q';
+
+      // We use fetch directly and avoid the 'apikey' header which is causing CORS issues
+      // Supabase Edge Functions accept Authorization: Bearer <token>
+      const response = await fetch(`${supabaseUrl}/functions/v1/activate-pro`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${session?.access_token || supabaseAnonKey}`
+        },
+        body: JSON.stringify({ key })
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        // Handle specific error cases for better UX
+        if (response.status === 401 || response.status === 403) {
+          throw new Error('Session expired. Please sign in again.');
+        }
+        throw new Error(errorData.error || `Activation failed (Status: ${response.status})`);
+      }
+
+      const data = await response.json();
+
+      if (data?.success) {
+        await fetchProfile();
+        toast.success('Pro activated successfully for 30 days!');
+      } else {
+        // Show clear messages like "Invalid or expired key"
+        const errorMessage = data?.error || 'Invalid or expired activation key. Please check and try again.';
+        toast.error(errorMessage);
+      }
+    } catch (error: any) {
+      console.error("Activation error details:", error);
+      // Handle CORS/Network errors specifically
+      if (error.message?.includes('Failed to fetch') || error.message?.includes('CORS')) {
+        toast.error('Connection error: The activation server is currently unreachable. Please try again later.');
+      } else {
+        toast.error(error.message || 'Failed to activate Pro. Please try again.');
+      }
     }
   };
 
@@ -882,7 +994,7 @@ export default function App() {
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   {conversations.map((conv, idx) => (
                     <div
-                      key={`history-${conv.id}-${idx}`}
+                      key={`history-${conv.id || idx}`}
                       className="p-4 bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-2xl text-left hover:border-zinc-400 dark:hover:border-zinc-600 transition-all group relative"
                     >
                       <div onClick={() => handleSelectConversation(conv.id)} className="cursor-pointer">
@@ -933,7 +1045,7 @@ export default function App() {
                 <div className="max-w-4xl mx-auto w-full p-4 md:p-8 space-y-8 pb-32">
                   {messages.map((m, idx) => (
                     <div 
-                      key={`msg-${m.id}-${idx}`} 
+                      key={`msg-${m.id || idx}`} 
                       onClick={() => setActiveMessageId(activeMessageId === m.id ? null : m.id)}
                       className={cn(
                         "flex w-full cursor-pointer md:cursor-default",
@@ -1203,6 +1315,7 @@ export default function App() {
             autoPlayVoice={autoPlayVoice}
             onToggleAutoPlay={() => setAutoPlayVoice(!autoPlayVoice)}
             onShowLegal={setShowLegal}
+            onApplyKey={handleApplyKey}
           />
         )}
         {showContextForm && (
@@ -1218,6 +1331,11 @@ export default function App() {
             onClose={() => setShowLegal(null)} 
           />
         )}
+        <UpgradeModal 
+          isOpen={showUpgradeModal} 
+          onClose={() => setShowUpgradeModal(false)} 
+          reason={upgradeReason} 
+        />
         <VoiceMode 
           isOpen={showVoiceMode}
           onClose={() => {
