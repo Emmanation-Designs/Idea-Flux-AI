@@ -26,7 +26,9 @@ import {
   Image as ImageIcon,
   Edit2,
   Trash2,
-  Waves
+  Waves,
+  Maximize2,
+  X
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Toaster, toast } from 'sonner';
@@ -39,6 +41,31 @@ import type { Message, ConversationType, Profile } from './types';
 
 // --- Components ---
 import { Sidebar } from './components/Sidebar';
+
+const ImageWithLoader = ({ src, alt, className, onClick }: { src: string, alt: string, className?: string, onClick?: (e: React.MouseEvent) => void }) => {
+  const [isLoaded, setIsLoaded] = useState(false);
+  
+  return (
+    <div className={cn("relative overflow-hidden bg-zinc-100 dark:bg-zinc-800", className)} onClick={onClick}>
+      {!isLoaded && (
+        <div className="absolute inset-0 flex items-center justify-center">
+          <div className="w-8 h-8 border-4 border-zinc-300 dark:border-zinc-600 border-t-zinc-900 dark:border-t-white rounded-full animate-spin" />
+        </div>
+      )}
+      <img 
+        src={src} 
+        alt={alt} 
+        className={cn(
+          "w-full h-auto transition-all duration-700 ease-out",
+          isLoaded ? "opacity-100 scale-100 blur-0" : "opacity-0 scale-105 blur-lg"
+        )}
+        onLoad={() => setIsLoaded(true)}
+        referrerPolicy="no-referrer"
+      />
+    </div>
+  );
+};
+
 import { WelcomeScreen } from './components/WelcomeScreen';
 import { ContextForm } from './components/ContextForm';
 import { Settings } from './components/Settings';
@@ -71,6 +98,7 @@ export default function App() {
   const [showSettings, setShowSettings] = useState(false);
   const [showContextForm, setShowContextForm] = useState<ConversationType | null>(null);
   const [showLegal, setShowLegal] = useState<'about' | 'privacy' | 'terms' | null>(null);
+  const [expandedImage, setExpandedImage] = useState<{url: string, title: string} | null>(null);
   const [streamingMessage, setStreamingMessage] = useState('');
   const [view, setView] = useState<'chat' | 'history'>('chat');
   const [isListening, setIsListening] = useState(false);
@@ -1075,18 +1103,45 @@ export default function App() {
                           </ReactMarkdown>
                         </div>
                         {m.image_url && (
-                          <div className="mt-4 rounded-xl overflow-hidden border border-zinc-200 dark:border-zinc-800">
-                            <img src={m.image_url} alt="Generated" className="w-full h-auto" referrerPolicy="no-referrer" />
-                            <button 
+                          <div className="mt-4 rounded-xl overflow-hidden border border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-900/50">
+                            <div 
+                              className="relative group/img cursor-zoom-in"
                               onClick={(e) => {
                                 e.stopPropagation();
-                                handleDownloadImage(m.image_url!, m.filename || 'generated-image.png');
+                                setExpandedImage({ url: m.image_url!, title: m.content });
                               }}
-                              className="w-full py-2 bg-zinc-100 dark:bg-zinc-800 text-xs font-bold flex items-center justify-center gap-2 hover:bg-zinc-200 dark:hover:bg-zinc-700 transition-colors"
                             >
-                              <Download className="w-3.5 h-3.5" />
-                              Download Image
-                            </button>
+                              <ImageWithLoader 
+                                src={m.image_url} 
+                                alt="Generated" 
+                                className="w-full"
+                              />
+                              <div className="absolute inset-0 bg-black/0 group-hover/img:bg-black/20 transition-colors flex items-center justify-center opacity-0 group-hover/img:opacity-100">
+                                <Maximize2 className="w-8 h-8 text-white drop-shadow-lg" />
+                              </div>
+                            </div>
+                            <div className="flex border-t border-zinc-200 dark:border-zinc-800">
+                              <button 
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setExpandedImage({ url: m.image_url!, title: m.content });
+                                }}
+                                className="flex-1 py-2.5 bg-transparent text-[10px] font-bold flex items-center justify-center gap-2 hover:bg-zinc-200 dark:hover:bg-zinc-800 transition-colors border-r border-zinc-200 dark:border-zinc-800"
+                              >
+                                <Maximize2 className="w-3 h-3" />
+                                EXPAND
+                              </button>
+                              <button 
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleDownloadImage(m.image_url!, m.filename || 'generated-image.png');
+                                }}
+                                className="flex-1 py-2.5 bg-transparent text-[10px] font-bold flex items-center justify-center gap-2 hover:bg-zinc-200 dark:hover:bg-zinc-800 transition-colors"
+                              >
+                                <Download className="w-3 h-3" />
+                                DOWNLOAD
+                              </button>
+                            </div>
                           </div>
                         )}
                         <div className="mt-2 flex items-center justify-between">
@@ -1366,6 +1421,63 @@ export default function App() {
           voiceOption={voiceOption}
           onVoiceOptionChange={setVoiceOption}
         />
+      </AnimatePresence>
+
+      {/* Image Lightbox */}
+      <AnimatePresence>
+        {expandedImage && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            onClick={() => setExpandedImage(null)}
+            className="fixed inset-0 z-[100] bg-black/95 backdrop-blur-xl flex flex-col items-center justify-center p-4 md:p-10"
+          >
+            <motion.button
+              initial={{ scale: 0.5, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              className="absolute top-6 right-6 p-3 bg-white/10 hover:bg-white/20 rounded-full text-white transition-colors"
+              onClick={() => setExpandedImage(null)}
+            >
+              <X className="w-6 h-6" />
+            </motion.button>
+
+            <motion.div
+              initial={{ scale: 0.9, opacity: 0, y: 20 }}
+              animate={{ scale: 1, opacity: 1, y: 0 }}
+              exit={{ scale: 0.9, opacity: 0, y: 20 }}
+              onClick={(e) => e.stopPropagation()}
+              className="relative max-w-5xl w-full flex flex-col items-center"
+            >
+              <div className="relative group rounded-2xl overflow-hidden shadow-2xl border border-white/10">
+                <ImageWithLoader 
+                  src={expandedImage.url} 
+                  alt={expandedImage.title} 
+                  className="max-h-[80vh] w-auto object-contain"
+                />
+                <div className="absolute bottom-0 left-0 right-0 p-6 bg-gradient-to-t from-black/80 to-transparent opacity-0 group-hover:opacity-100 transition-opacity">
+                  <p className="text-white text-sm font-medium line-clamp-2">{expandedImage.title}</p>
+                </div>
+              </div>
+
+              <div className="mt-8 flex items-center gap-4">
+                <button
+                  onClick={() => handleDownloadImage(expandedImage.url, 'expanded-image.png')}
+                  className="flex items-center gap-2 px-8 py-3 bg-white text-black rounded-full font-bold hover:bg-zinc-200 transition-colors shadow-lg"
+                >
+                  <Download className="w-5 h-5" />
+                  Download High Res
+                </button>
+                <button
+                  onClick={() => setExpandedImage(null)}
+                  className="flex items-center gap-2 px-8 py-3 bg-white/10 text-white rounded-full font-bold hover:bg-white/20 transition-colors border border-white/10"
+                >
+                  Close
+                </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
       </AnimatePresence>
 
       <Toaster position="top-center" theme={isDarkMode ? 'dark' : 'light'} />
