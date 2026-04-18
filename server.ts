@@ -23,8 +23,8 @@ app.get("/api/health", (req, res) => {
 });
 
 // API routes
-app.get("/api/proxy-image", async (req, res) => {
-  const imageUrl = req.query.url as string;
+app.all("/api/proxy-image", async (req, res) => {
+  const imageUrl = (req.method === "POST" ? req.body.url : req.query.url) as string;
   if (!imageUrl) return res.status(400).send("URL is required");
 
   try {

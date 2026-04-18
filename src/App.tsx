@@ -908,9 +908,13 @@ export default function App() {
   const handleDownloadImage = async (url: string, filename: string) => {
     try {
       toast.loading('Preparing download...', { id: 'img-dl' });
-      // Use our proxy to bypass CORS
-      const proxyUrl = `/api/proxy-image?url=${encodeURIComponent(url)}`;
-      const response = await fetch(proxyUrl);
+      // Use our proxy to bypass CORS and handle long URLs via POST
+      const response = await fetch('/api/proxy-image', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url })
+      });
+      
       if (!response.ok) throw new Error('Proxy fetch failed');
       
       const blob = await response.blob();
@@ -925,9 +929,7 @@ export default function App() {
       toast.success('Image download started', { id: 'img-dl' });
     } catch (error) {
       console.error('Download error:', error);
-      // Last resort fallback
-      window.open(url, '_blank');
-      toast.error('Failed to download directly. Opened in new tab.', { id: 'img-dl' });
+      toast.error('Failed to download image. Please try again.', { id: 'img-dl' });
     }
   };
 
@@ -1107,6 +1109,7 @@ export default function App() {
                             <div 
                               className="relative group/img cursor-zoom-in"
                               onClick={(e) => {
+                                e.preventDefault();
                                 e.stopPropagation();
                                 setExpandedImage({ url: m.image_url!, title: m.content });
                               }}
@@ -1123,6 +1126,7 @@ export default function App() {
                             <div className="flex border-t border-zinc-200 dark:border-zinc-800">
                               <button 
                                 onClick={(e) => {
+                                  e.preventDefault();
                                   e.stopPropagation();
                                   setExpandedImage({ url: m.image_url!, title: m.content });
                                 }}
@@ -1133,6 +1137,7 @@ export default function App() {
                               </button>
                               <button 
                                 onClick={(e) => {
+                                  e.preventDefault();
                                   e.stopPropagation();
                                   handleDownloadImage(m.image_url!, m.filename || 'generated-image.png');
                                 }}
@@ -1462,7 +1467,11 @@ export default function App() {
 
               <div className="mt-8 flex items-center gap-4">
                 <button
-                  onClick={() => handleDownloadImage(expandedImage.url, 'expanded-image.png')}
+                  onClick={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    handleDownloadImage(expandedImage.url, 'expanded-image.png');
+                  }}
                   className="flex items-center gap-2 px-8 py-3 bg-white text-black rounded-full font-bold hover:bg-zinc-200 transition-colors shadow-lg"
                 >
                   <Download className="w-5 h-5" />
