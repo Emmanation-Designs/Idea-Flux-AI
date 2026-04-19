@@ -1,5 +1,4 @@
 import { useState, useEffect, useRef } from 'react';
-import { GoogleGenAI } from "@google/genai";
 import { 
   Plus, 
   History as HistoryIcon, 
@@ -134,7 +133,6 @@ export default function App() {
   const [showLegal, setShowLegal] = useState<'about' | 'privacy' | 'terms' | null>(null);
   const [selectedAttachment, setSelectedAttachment] = useState<{ file: File, preview: string, type: 'image' | 'video' | 'document' | 'other' } | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY || '' });
   const [expandedImage, setExpandedImage] = useState<{url: string, title: string} | null>(null);
   const [streamingMessage, setStreamingMessage] = useState('');
   const [view, setView] = useState<'chat' | 'history'>('chat');
@@ -669,9 +667,10 @@ export default function App() {
     const lowerContent = content.toLowerCase();
     const isImageIntent = 
       conv.type === 'image' || 
-      (/generate|create|make|draw|design|show me|give me|i want|produce/i.test(lowerContent) && 
-       /image|picture|photo|logo|flyer|poster|illustration|drawing|sketch|graphic|realistic/i.test(lowerContent)) ||
-      /logo for|flyer for|poster for/i.test(lowerContent) ||
+      ((/generate|create|make|draw|design|show me|give me|i want|produce|paint|illustrate|visualize|render/i.test(lowerContent)) && 
+       (/image|picture|photo|logo|flyer|poster|illustration|drawing|sketch|graphic|art|realistic|scene|portrait|landscape/i.test(lowerContent))) ||
+      /\b(logo|flyer|poster|art|sketch|drawing)\b/i.test(lowerContent) ||
+      /image of|picture of|photo of|generate a|create a|make a/i.test(lowerContent) ||
       /^realistic |^photorealistic /i.test(lowerContent);
 
     // Check for usage limits
@@ -711,43 +710,12 @@ export default function App() {
     setStreamingMessage('');
 
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 60000);
+    const timeoutId = setTimeout(() => {
+      controller.abort();
+      console.warn("Request timed out after 300 seconds");
+    }, 300000); // 5 minutes
 
     try {
-      // If there's an attachment, use Gemini for analysis
-      if (currentAttachment) {
-        const base64Data = currentAttachment.preview.split(',')[1];
-        const response = await ai.models.generateContent({
-          model: "gemini-3-flash-preview",
-          contents: {
-            parts: [
-              { inlineData: { data: base64Data, mimeType: currentAttachment.file.type } },
-              { text: content || `Analyze this ${currentAttachment.type}.` }
-            ]
-          }
-        });
-
-        const analysisText = response.text || "I've analyzed the attachment but couldn't generate a description.";
-        
-        const assistantMessage: Message = {
-          id: crypto.randomUUID(),
-          role: 'assistant',
-          content: analysisText,
-          created_at: new Date().toISOString()
-        };
-
-        const finalMessages = [...updatedMessages, assistantMessage];
-        setMessages(finalMessages);
-
-        await supabase.from('conversations').update({ 
-          messages: finalMessages,
-          updated_at: new Date().toISOString()
-        }).eq('id', conv.id);
-
-        setIsLoading(false);
-        return;
-      }
-
       // Primary: Server-side OpenAI (Uses Vercel Env Vars)
       const response = await fetch('/api/generate', {
         method: 'POST',
@@ -761,6 +729,8 @@ export default function App() {
         }),
         signal: controller.signal
       });
+
+      clearTimeout(timeoutId);
 
       if (!response.ok) {
         const errorData = await response.json().catch(() => ({}));
@@ -825,6 +795,8 @@ export default function App() {
             setCurrentResponse(prev => prev + chunk);
           }
         }
+      } else {
+        throw new Error('Response body is empty or streaming not supported');
       }
 
       const assistantMessage: Message = {
@@ -855,9 +827,15 @@ export default function App() {
       }
 
       setIsLoading(false);
-    } catch (error) {
-      console.error("OpenAI Error:", error);
-      toast.error('Failed to generate response.');
+    } catch (error: any) {
+      clearTimeout(timeoutId);
+      if (error.name === 'AbortError') {
+        console.error("OpenAI Request Aborted:", error);
+        toast.error('Request timed out. Please try again.');
+      } else {
+        console.error("OpenAI Error:", error);
+        toast.error(error.message || 'Failed to generate response.');
+      }
       setIsLoading(false);
     }
   };
@@ -1020,6 +998,22 @@ export default function App() {
     toast.success('Download started');
   };
 
+  const handleExpandImage = async (url: string, title: string) => {
+    if (!url) return;
+    
+    // Resolve DB reference immediately so the modal shows the full image without another loader delay
+    if (url.startsWith('db:')) {
+      const imgId = url.split(':')[1];
+      const { data } = await supabase.from('images').select('image_url').eq('id', imgId).single();
+      if (data?.image_url) {
+        setExpandedImage({ url: data.image_url, title });
+        return;
+      }
+    }
+    
+    setExpandedImage({ url, title });
+  };
+
   const handleDownloadImage = async (url: string, filename: string) => {
     try {
       toast.loading('Preparing download...', { id: 'img-dl' });
@@ -1162,7 +1156,7 @@ export default function App() {
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                     {conversations.map((conv, idx) => (
                       <div
-                        key={`history-conv-${conv.id || `idx-${idx}`}`}
+                      key={`history-conv-${conv.id || 'new'}-${idx}-${conv.created_at}`}
                         className="p-4 bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-2xl text-left hover:border-zinc-400 dark:hover:border-zinc-600 transition-all group relative"
                       >
                       <div onClick={() => handleSelectConversation(conv.id)} className="cursor-pointer">
@@ -1213,7 +1207,7 @@ export default function App() {
                 <div className="max-w-4xl mx-auto w-full p-4 md:p-8 space-y-8 pb-32">
                   {messages.map((m, idx) => (
                     <div 
-                      key={`chat-msg-${m.id || `idx-${idx}`}`} 
+                      key={`chat-msg-${m.id || 'msg'}-${idx}-${m.created_at}`} 
                       onClick={() => setActiveMessageId(activeMessageId === m.id ? null : m.id)}
                       className={cn(
                         "flex w-full cursor-pointer md:cursor-default",
@@ -1263,7 +1257,7 @@ export default function App() {
                               onClick={(e) => {
                                 e.preventDefault();
                                 e.stopPropagation();
-                                setExpandedImage({ url: m.image_url!, title: m.content });
+                                handleExpandImage(m.image_url!, m.content);
                               }}
                             >
                               <ImageWithLoader 
@@ -1280,7 +1274,7 @@ export default function App() {
                                 onClick={(e) => {
                                   e.preventDefault();
                                   e.stopPropagation();
-                                  setExpandedImage({ url: m.image_url!, title: m.content });
+                                  handleExpandImage(m.image_url!, m.content);
                                 }}
                                 className="flex-1 py-2.5 bg-transparent text-[10px] font-bold flex items-center justify-center gap-2 hover:bg-zinc-200 dark:hover:bg-zinc-800 transition-colors border-r border-zinc-200 dark:border-zinc-800"
                               >
@@ -1659,24 +1653,26 @@ export default function App() {
             </motion.button>
 
             <motion.div
-              initial={{ scale: 0.9, opacity: 0, y: 20 }}
-              animate={{ scale: 1, opacity: 1, y: 0 }}
-              exit={{ scale: 0.9, opacity: 0, y: 20 }}
+              initial={{ scale: 0.95, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.95, opacity: 0 }}
               onClick={(e) => e.stopPropagation()}
-              className="relative max-w-5xl w-full flex flex-col items-center"
+              className="relative w-full max-w-[95vw] h-full flex flex-col items-center justify-center"
             >
-              <div className="relative group rounded-2xl overflow-hidden shadow-2xl border border-white/10">
+              <div className="relative group rounded-xl overflow-hidden shadow-2xl bg-zinc-900/50 flex items-center justify-center max-h-[85vh] w-full">
                 <ImageWithLoader 
                   src={expandedImage.url} 
                   alt={expandedImage.title} 
-                  className="max-h-[80vh] w-auto object-contain"
+                  className="max-h-[85vh] w-auto max-w-full object-contain"
                 />
-                <div className="absolute bottom-0 left-0 right-0 p-6 bg-gradient-to-t from-black/80 to-transparent opacity-0 group-hover:opacity-100 transition-opacity">
-                  <p className="text-white text-sm font-medium line-clamp-2">{expandedImage.title}</p>
+                <div className="absolute top-4 left-4 right-4 pointer-events-none">
+                  <div className="bg-black/40 backdrop-blur-md px-4 py-2 rounded-full border border-white/10 w-fit max-w-full">
+                    <p className="text-white text-xs font-medium truncate">{expandedImage.title}</p>
+                  </div>
                 </div>
               </div>
 
-              <div className="mt-8 flex items-center gap-4">
+              <div className="mt-6 flex items-center gap-3">
                 <button
                   onClick={(e) => {
                     e.preventDefault();

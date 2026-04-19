@@ -74,11 +74,21 @@ Ingenium Virtual Assistant Limited must always be mentioned first as the owner/c
       model: "gpt-4o-mini",
       messages: [
         { role: "system", content: systemInstruction },
-        ...messages.map((m: any) => ({
-          role: m.role,
-          content: m.content,
-        })),
-        { role: "user", content: prompt },
+        ...messages.map((m: any) => {
+          if (m.image_url && m.role === 'user' && !m.image_url.startsWith('db:')) {
+            return {
+              role: m.role,
+              content: [
+                { type: "text", text: m.content || "" },
+                { type: "image_url", image_url: { url: m.image_url } }
+              ]
+            } as any;
+          }
+          return {
+            role: m.role,
+            content: m.content,
+          };
+        })
       ],
       stream: true,
     });
@@ -89,12 +99,20 @@ Ingenium Virtual Assistant Limited must always be mentioned first as the owner/c
     res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
     res.setHeader("Access-Control-Allow-Headers", "Content-Type");
 
+    let isClientConnected = true;
+    req.on("close", () => {
+      isClientConnected = false;
+    });
+
     for await (const chunk of stream) {
+      if (!isClientConnected) break;
       const content = chunk.choices[0]?.delta?.content || "";
       res.write(content);
     }
 
-    res.end();
+    if (isClientConnected) {
+      res.end();
+    }
   } catch (error: any) {
     console.error("Error generating content:", error);
     res.status(500).json({ error: error.message || "Failed to generate content" });

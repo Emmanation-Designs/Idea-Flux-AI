@@ -59,24 +59,24 @@ export const WelcomeScreen = ({ onSelectType }: { onSelectType: (type: Conversat
   ];
 
   return (
-    <div className="flex-1 flex flex-col items-center justify-center p-4 md:p-8 w-full max-w-5xl mx-auto overflow-hidden -mt-24">
-      <div className="flex md:grid md:grid-cols-5 gap-4 md:gap-5 w-full overflow-x-auto md:overflow-x-visible pb-4 md:pb-0 snap-x snap-mandatory md:snap-none no-scrollbar px-4 md:px-0">
+    <div className="flex-1 flex flex-col items-center justify-center p-4 md:p-8 w-full max-w-6xl mx-auto overflow-hidden -mt-24">
+      <div className="flex md:grid md:grid-cols-5 gap-4 md:gap-6 w-full overflow-x-auto md:overflow-x-visible pb-4 md:pb-0 snap-x snap-mandatory md:snap-none no-scrollbar px-4 md:px-0">
         {suggestions.map((s, i) => (
           <motion.button
-            key={`welcome-sugg-${s.id}`}
+            key={`welcome-sugg-${s.id}-${i}`}
             initial={{ opacity: 0, scale: 0.9 }}
             animate={{ opacity: 1, scale: 1 }}
             transition={{ delay: i * 0.05 }}
             onClick={() => onSelectType(s.id as ConversationType)}
-            className="flex-shrink-0 w-[140px] md:w-full snap-center group p-5 bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-2xl text-center md:text-left hover:border-zinc-400 dark:hover:border-zinc-600 transition-all hover:shadow-xl flex flex-col items-center md:items-start h-full"
+            className="flex-shrink-0 w-[160px] md:w-full snap-center group p-6 bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-2xl text-center md:text-left hover:border-zinc-400 dark:hover:border-zinc-600 transition-all hover:shadow-xl flex flex-col items-center md:items-start h-full"
           >
-            <div className={cn("w-10 h-10 rounded-xl flex items-center justify-center mb-3 transition-transform group-hover:scale-110 shadow-sm", s.bg)}>
-              <s.icon className={cn("w-5 h-5", s.color)} />
+            <div className={cn("w-12 h-12 rounded-2xl flex items-center justify-center mb-4 transition-transform group-hover:scale-110 shadow-sm", s.bg)}>
+              <s.icon className={cn("w-6 h-6", s.color)} />
             </div>
-            <h3 className="text-xs md:text-sm font-bold mb-1.5 group-hover:text-zinc-900 dark:group-hover:text-white transition-colors line-clamp-1">
+            <h3 className="text-sm md:text-base font-bold mb-2 group-hover:text-zinc-900 dark:group-hover:text-white transition-colors line-clamp-1">
               {s.title.replace('Create ', '')}
             </h3>
-            <p className="text-[10px] md:text-xs text-zinc-500 dark:text-zinc-400 leading-relaxed line-clamp-3">{s.desc}</p>
+            <p className="text-[11px] md:text-sm text-zinc-500 dark:text-zinc-400 leading-relaxed line-clamp-3">{s.desc}</p>
           </motion.button>
         ))}
       </div>

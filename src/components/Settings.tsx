@@ -132,9 +132,9 @@ export const Settings = ({
             <h3 className="text-sm font-bold opacity-70">Voice Settings</h3>
             
             <div className="grid grid-cols-2 gap-2">
-              {(['alloy', 'echo'] as const).map((v) => (
+              {(['alloy', 'echo'] as const).map((v, i) => (
                 <button
-                  key={v}
+                  key={`${v}-${i}`}
                   onClick={() => onVoiceOptionChange(v)}
                   className={cn(
                     "px-3 py-2 rounded-xl text-xs font-medium transition-all border",

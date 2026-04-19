@@ -102,9 +102,9 @@ export const VoiceMode = ({
               >
                 <h3 className="text-xs font-bold uppercase tracking-wider opacity-50 mb-3">Select Voice</h3>
                 <div className="space-y-2">
-                  {(['alloy', 'echo'] as const).map((v) => (
+                  {(['alloy', 'echo'] as const).map((v, i) => (
                     <button
-                      key={v}
+                      key={`${v}-${i}`}
                       onClick={() => {
                         onVoiceOptionChange(v);
                         setShowVoiceSettings(false);

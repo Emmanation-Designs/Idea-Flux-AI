@@ -77,7 +77,7 @@ app.post("/api/generate", async (req, res) => {
         prompt: enhancedPrompt,
         n: 1,
         size: "1024x1024",
-        quality: "hd",
+        quality: "standard",
       });
 
       const imageUrl = response.data[0].url;
@@ -86,6 +86,8 @@ app.post("/api/generate", async (req, res) => {
       // Fetch the image and convert to base64 for fast loading and persistence
       console.log("Fetching generated image for base64 conversion...");
       const imgFetch = await fetch(imageUrl);
+      if (!imgFetch.ok) throw new Error(`Failed to fetch generated image: ${imgFetch.statusText}`);
+      
       const arrayBuffer = await imgFetch.arrayBuffer();
       const buffer = Buffer.from(arrayBuffer);
       const base64 = `data:${imgFetch.headers.get("content-type") || "image/png"};base64,${buffer.toString("base64")}`;
@@ -189,11 +191,21 @@ Ingenium Virtual Assistant Limited must always be mentioned first as the owner/c
       model: "gpt-4o-mini",
       messages: [
         { role: "system", content: systemInstruction + searchContext },
-        ...messages.map((m: any) => ({
-          role: m.role,
-          content: m.content,
-        })),
-        { role: "user", content: prompt }
+        ...messages.map((m: any) => {
+          if (m.image_url && m.role === 'user' && !m.image_url.startsWith('db:')) {
+            return {
+              role: m.role,
+              content: [
+                { type: "text", text: m.content || "" },
+                { type: "image_url", image_url: { url: m.image_url } }
+              ]
+            } as any;
+          }
+          return {
+            role: m.role,
+            content: m.content,
+          };
+        })
       ],
       stream: true,
     });
@@ -208,16 +220,30 @@ Ingenium Virtual Assistant Limited must always be mentioned first as the owner/c
 
     console.log("Stream initialized, starting to iterate...");
     let chunkCount = 0;
+    
+    // Stop streaming if client disconnects
+    let isClientConnected = true;
+    req.on("close", () => {
+      isClientConnected = false;
+      console.log("Client closed connection, stopping stream.");
+    });
+
     for await (const chunk of stream) {
+      if (!isClientConnected) {
+        console.log("Break loop because client disconnected.");
+        break;
+      }
       const content = chunk.choices[0]?.delta?.content || "";
       if (content) {
         chunkCount++;
         res.write(content);
       }
     }
-    console.log(`\nStream finished. Total chunks: ${chunkCount}`);
+    console.log(`\nStream finished or aborted. Total chunks: ${chunkCount}`);
 
-    res.end();
+    if (isClientConnected) {
+      res.end();
+    }
   } catch (error: any) {
     console.error("Error generating content:", error);
     res.status(500).json({ error: error.message || "Failed to generate content" });
@@ -246,6 +272,12 @@ async function startServer() {
         res.sendFile(path.join(distPath, "index.html"));
       });
     }
+
+    console.log("Server environment check:", {
+      openai: !!process.env.OPENAI_API_KEY,
+      tavily: !!process.env.TAVILY_API_KEY,
+      supabase: !!process.env.VITE_SUPABASE_URL
+    });
 
     app.listen(PORT, "0.0.0.0", () => {
       console.log(`Server running on http://localhost:${PORT}`);
