@@ -79,8 +79,20 @@ app.post("/api/generate", async (req, res) => {
         size: "1024x1024",
         quality: "hd",
       });
+
+      const imageUrl = response.data[0].url;
+      if (!imageUrl) throw new Error("No image URL generated");
+
+      // Fetch the image and convert to base64 for fast loading and persistence
+      console.log("Fetching generated image for base64 conversion...");
+      const imgFetch = await fetch(imageUrl);
+      const arrayBuffer = await imgFetch.arrayBuffer();
+      const buffer = Buffer.from(arrayBuffer);
+      const base64 = `data:${imgFetch.headers.get("content-type") || "image/png"};base64,${buffer.toString("base64")}`;
+
       return res.json({ 
-        image_url: response.data[0].url,
+        image_url: base64, // Return base64 for immediate display and storage
+        original_url: imageUrl, // Keep original URL as fallback
         filename: filename
       });
     }

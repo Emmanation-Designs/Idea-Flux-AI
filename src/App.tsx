@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
+import { GoogleGenAI } from "@google/genai";
 import { 
   Plus, 
   History as HistoryIcon, 
@@ -28,7 +29,11 @@ import {
   Trash2,
   Waves,
   Maximize2,
-  X
+  X,
+  Paperclip,
+  File as FileIcon,
+  Film,
+  FileText
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Toaster, toast } from 'sonner';
@@ -44,24 +49,53 @@ import { Sidebar } from './components/Sidebar';
 
 const ImageWithLoader = ({ src, alt, className, onClick }: { src: string, alt: string, className?: string, onClick?: (e: React.MouseEvent) => void }) => {
   const [isLoaded, setIsLoaded] = useState(false);
+  const [hasError, setHasError] = useState(false);
+  const [displaySrc, setDisplaySrc] = useState(src.startsWith('db:') ? '' : src);
+
+  useEffect(() => {
+    if (src.startsWith('db:')) {
+      const imgId = src.split(':')[1];
+      supabase.from('images').select('image_url').eq('id', imgId).single()
+        .then(({ data, error }) => {
+          if (error || !data?.image_url) {
+            console.error("Error fetching lazy image:", error);
+            setHasError(true);
+          } else {
+            setDisplaySrc(data.image_url);
+          }
+        });
+    } else {
+      setDisplaySrc(src);
+    }
+  }, [src]);
   
   return (
-    <div className={cn("relative overflow-hidden bg-zinc-100 dark:bg-zinc-800", className)} onClick={onClick}>
-      {!isLoaded && (
+    <div className={cn("relative overflow-hidden bg-zinc-100 dark:bg-zinc-800 focus-within:ring-2 focus-within:ring-zinc-500", className)} onClick={onClick}>
+      {!isLoaded && !hasError && (
         <div className="absolute inset-0 flex items-center justify-center">
           <div className="w-8 h-8 border-4 border-zinc-300 dark:border-zinc-600 border-t-zinc-900 dark:border-t-white rounded-full animate-spin" />
         </div>
       )}
-      <img 
-        src={src} 
-        alt={alt} 
-        className={cn(
-          "w-full h-auto transition-all duration-700 ease-out",
-          isLoaded ? "opacity-100 scale-100 blur-0" : "opacity-0 scale-105 blur-lg"
-        )}
-        onLoad={() => setIsLoaded(true)}
-        referrerPolicy="no-referrer"
-      />
+      {hasError && (
+        <div className="absolute inset-0 flex flex-col items-center justify-center p-4 text-center">
+          <ImageIcon className="w-8 h-8 text-zinc-400 mb-2" />
+          <p className="text-xs text-zinc-500">Image failed to load</p>
+        </div>
+      )}
+      {displaySrc && (
+        <img 
+          src={displaySrc} 
+          alt={alt} 
+          className={cn(
+            "w-full h-auto transition-all duration-700 ease-out",
+            isLoaded ? "opacity-100 scale-100 blur-0" : "opacity-0 scale-105 blur-lg",
+            hasError && "hidden"
+          )}
+          onLoad={() => setIsLoaded(true)}
+          onError={() => setHasError(true)}
+          referrerPolicy="no-referrer"
+        />
+      )}
     </div>
   );
 };
@@ -98,6 +132,9 @@ export default function App() {
   const [showSettings, setShowSettings] = useState(false);
   const [showContextForm, setShowContextForm] = useState<ConversationType | null>(null);
   const [showLegal, setShowLegal] = useState<'about' | 'privacy' | 'terms' | null>(null);
+  const [selectedAttachment, setSelectedAttachment] = useState<{ file: File, preview: string, type: 'image' | 'video' | 'document' | 'other' } | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY || '' });
   const [expandedImage, setExpandedImage] = useState<{url: string, title: string} | null>(null);
   const [streamingMessage, setStreamingMessage] = useState('');
   const [view, setView] = useState<'chat' | 'history'>('chat');
@@ -573,23 +610,58 @@ export default function App() {
     }
   };
 
+  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      if (file.size > 20 * 1024 * 1024) { // 20MB limit
+        toast.error('File too large. Please select a file under 20MB');
+        return;
+      }
+
+      let type: 'image' | 'video' | 'document' | 'other' = 'other';
+      if (file.type.startsWith('image/')) type = 'image';
+      else if (file.type.startsWith('video/')) type = 'video';
+      else if (file.type === 'application/pdf' || file.type.includes('word') || file.type.includes('text')) type = 'document';
+      
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        setSelectedAttachment({
+          file,
+          preview: reader.result as string,
+          type
+        });
+      };
+      reader.readAsDataURL(file);
+    }
+  };
+
+  const clearAttachment = () => {
+    setSelectedAttachment(null);
+    if (fileInputRef.current) {
+      fileInputRef.current.value = '';
+    }
+  };
+
   const sendMessage = async (content: string, convOverride?: any) => {
     let conv = convOverride || currentConversation;
     
-    if (!conv && content.trim()) {
+    if (!conv && (content.trim() || selectedAttachment)) {
       console.log("No conversation found, starting new one...");
-      const type = showVoiceMode ? 'voice' : 'script';
-      await startConversation(type, content.slice(0, 30) || 'New Chat', content);
+      const type = selectedAttachment ? 'general' : (showVoiceMode ? 'voice' : 'script');
+      await startConversation(type, content.slice(0, 30) || (selectedAttachment ? 'File Analysis' : 'New Chat'), content);
       return;
     }
 
-    if (!conv || !content.trim()) return;
+    if (!conv || (!content.trim() && !selectedAttachment)) return;
     if (isLoading && !convOverride) return;
 
     const userMessage: Message = {
       id: crypto.randomUUID(),
       role: 'user',
       content,
+      image_url: selectedAttachment?.type === 'image' ? selectedAttachment.preview : undefined,
+      attachment_name: selectedAttachment?.file.name,
+      attachment_type: selectedAttachment?.type,
       created_at: new Date().toISOString()
     };
 
@@ -633,6 +705,8 @@ export default function App() {
     const updatedMessages = [...messages, userMessage];
     setMessages(updatedMessages);
     setInput('');
+    const currentAttachment = selectedAttachment; 
+    clearAttachment(); 
     setIsLoading(true);
     setStreamingMessage('');
 
@@ -640,6 +714,40 @@ export default function App() {
     const timeoutId = setTimeout(() => controller.abort(), 60000);
 
     try {
+      // If there's an attachment, use Gemini for analysis
+      if (currentAttachment) {
+        const base64Data = currentAttachment.preview.split(',')[1];
+        const response = await ai.models.generateContent({
+          model: "gemini-3-flash-preview",
+          contents: {
+            parts: [
+              { inlineData: { data: base64Data, mimeType: currentAttachment.file.type } },
+              { text: content || `Analyze this ${currentAttachment.type}.` }
+            ]
+          }
+        });
+
+        const analysisText = response.text || "I've analyzed the attachment but couldn't generate a description.";
+        
+        const assistantMessage: Message = {
+          id: crypto.randomUUID(),
+          role: 'assistant',
+          content: analysisText,
+          created_at: new Date().toISOString()
+        };
+
+        const finalMessages = [...updatedMessages, assistantMessage];
+        setMessages(finalMessages);
+
+        await supabase.from('conversations').update({ 
+          messages: finalMessages,
+          updated_at: new Date().toISOString()
+        }).eq('id', conv.id);
+
+        setIsLoading(false);
+        return;
+      }
+
       // Primary: Server-side OpenAI (Uses Vercel Env Vars)
       const response = await fetch('/api/generate', {
         method: 'POST',
@@ -661,25 +769,32 @@ export default function App() {
 
       if (isImageIntent) {
         const { image_url, filename } = await response.json();
+        
+        // Save to dedicated images table first to get an ID
+        const { data: imageData, error: imageError } = await supabase.from('images').insert({
+          user_id: user.id,
+          prompt: content,
+          image_url: image_url
+        }).select().single();
+
+        if (imageError) throw imageError;
+
         const assistantMessage: Message = {
           id: crypto.randomUUID(),
           role: 'assistant',
           content: `Generated image for: ${content}`,
-          image_url,
+          image_url: `db:${imageData.id}`, // Store lightweight reference in conversation
           filename,
           created_at: new Date().toISOString()
         };
         
+        // Use the actual image_url (Base64) for current state so it shows up instantly without another fetch
+        const stateMessage = { ...assistantMessage, image_url };
         const finalMessages = [...updatedMessages, assistantMessage];
-        setMessages(finalMessages);
+        const stateMessages = [...updatedMessages, stateMessage];
         
-        await supabase.from('images').insert({
-          user_id: user.id,
-          prompt: content,
-          url: image_url,
-          conversation_id: conv.id
-        });
-
+        setMessages(stateMessages);
+        
         await supabase.from('conversations').update({ 
           messages: finalMessages,
           updated_at: new Date().toISOString()
@@ -908,11 +1023,34 @@ export default function App() {
   const handleDownloadImage = async (url: string, filename: string) => {
     try {
       toast.loading('Preparing download...', { id: 'img-dl' });
-      // Use our proxy to bypass CORS and handle long URLs via POST
+      
+      let downloadUrl = url;
+
+      // If it's a DB reference, fetch the actual data first
+      if (url.startsWith('db:')) {
+        const imgId = url.split(':')[1];
+        const { data, error } = await supabase.from('images').select('image_url').eq('id', imgId).single();
+        if (error || !data?.image_url) throw new Error("Could not find image in database");
+        downloadUrl = data.image_url;
+      }
+
+      // If it's a data URI, download directly
+      if (downloadUrl.startsWith('data:')) {
+        const a = document.createElement('a');
+        a.href = downloadUrl;
+        a.download = filename.endsWith('.png') ? filename : `${filename}.png`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        toast.success('Image download started', { id: 'img-dl' });
+        return;
+      }
+
+      // Proxy fallback for remote URLs
       const response = await fetch('/api/proxy-image', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ url })
+        body: JSON.stringify({ url: downloadUrl })
       });
       
       if (!response.ok) throw new Error('Proxy fetch failed');
@@ -929,7 +1067,7 @@ export default function App() {
       toast.success('Image download started', { id: 'img-dl' });
     } catch (error) {
       console.error('Download error:', error);
-      toast.error('Failed to download image. Please try again.', { id: 'img-dl' });
+      toast.error('Failed to download image. It may have expired.', { id: 'img-dl' });
     }
   };
 
@@ -1021,12 +1159,12 @@ export default function App() {
               {conversations.length === 0 ? (
                 <div className="text-center py-20 opacity-50">No chats yet. Start a new one!</div>
               ) : (
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  {conversations.map((conv, idx) => (
-                    <div
-                      key={`history-${conv.id || idx}`}
-                      className="p-4 bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-2xl text-left hover:border-zinc-400 dark:hover:border-zinc-600 transition-all group relative"
-                    >
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    {conversations.map((conv, idx) => (
+                      <div
+                        key={`history-conv-${conv.id || `idx-${idx}`}`}
+                        className="p-4 bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-2xl text-left hover:border-zinc-400 dark:hover:border-zinc-600 transition-all group relative"
+                      >
                       <div onClick={() => handleSelectConversation(conv.id)} className="cursor-pointer">
                         <div className="flex items-center justify-between mb-2">
                           <span className="text-xs font-bold uppercase tracking-wider opacity-50">{conv.type}</span>
@@ -1075,7 +1213,7 @@ export default function App() {
                 <div className="max-w-4xl mx-auto w-full p-4 md:p-8 space-y-8 pb-32">
                   {messages.map((m, idx) => (
                     <div 
-                      key={`msg-${m.id || idx}`} 
+                      key={`chat-msg-${m.id || `idx-${idx}`}`} 
                       onClick={() => setActiveMessageId(activeMessageId === m.id ? null : m.id)}
                       className={cn(
                         "flex w-full cursor-pointer md:cursor-default",
@@ -1104,6 +1242,20 @@ export default function App() {
                             {m.content}
                           </ReactMarkdown>
                         </div>
+
+                        {/* Generic Attachment Display */}
+                        {m.attachment_type && m.attachment_type !== 'image' && (
+                          <div className="mt-3 mb-2 p-3 bg-zinc-50 dark:bg-zinc-800/50 border border-zinc-200 dark:border-zinc-700 rounded-xl flex items-center gap-3 w-fit min-w-[200px] max-w-full overflow-hidden">
+                            <div className="w-10 h-10 shrink-0 rounded-lg bg-zinc-200 dark:bg-zinc-700 flex items-center justify-center text-zinc-600 dark:text-zinc-400">
+                              {m.attachment_type === 'video' ? <Film className="w-5 h-5" /> : <FileText className="w-5 h-5" />}
+                            </div>
+                            <div className="min-w-0 flex-1">
+                              <p className="text-sm font-medium truncate text-zinc-900 dark:text-zinc-100">{m.attachment_name || 'Attached file'}</p>
+                              <p className="text-[10px] opacity-50 uppercase tracking-wider font-bold">{m.attachment_type}</p>
+                            </div>
+                          </div>
+                        )}
+
                         {m.image_url && (
                           <div className="mt-4 rounded-xl overflow-hidden border border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-900/50">
                             <div 
@@ -1304,39 +1456,98 @@ export default function App() {
                 </div>
               )}
               
-              <div className="relative">
-                <textarea
-                  ref={textareaRef}
-                  rows={1}
-                  value={input}
-                  onChange={(e) => setInput(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter' && !e.shiftKey) {
-                      e.preventDefault();
-                      sendMessage(input);
-                    }
-                  }}
-                  placeholder="Ask Ideaflux AI anything..."
-                  className="w-full bg-zinc-100 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-2xl px-4 py-4 pr-24 focus:ring-2 focus:ring-zinc-500 outline-none resize-none transition-all shadow-lg min-h-[56px] max-h-[200px]"
-                />
-                <div className="absolute right-3 bottom-3 flex items-center gap-2">
-                  <button 
-                    onClick={() => {
-                      setShowVoiceMode(true);
-                      toggleListening();
+              <div className="bg-zinc-100 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-2xl shadow-lg transition-all focus-within:ring-2 focus-within:ring-zinc-200 dark:focus-within:ring-zinc-800">
+                <AnimatePresence>
+                  {selectedAttachment && (
+                    <motion.div 
+                      initial={{ opacity: 0, height: 0 }}
+                      animate={{ opacity: 1, height: 'auto' }}
+                      exit={{ opacity: 0, height: 0 }}
+                      className="border-b border-zinc-200 dark:border-zinc-800 bg-zinc-50/50 dark:bg-zinc-800/30 p-3"
+                    >
+                      <div className="relative group/preview w-32 h-20 rounded-xl overflow-hidden bg-zinc-100 dark:bg-zinc-800 flex items-center justify-center border border-zinc-200 dark:border-zinc-700">
+                        {selectedAttachment.type === 'image' ? (
+                          <img src={selectedAttachment.preview} alt="Upload Preview" className="w-full h-full object-cover" />
+                        ) : selectedAttachment.type === 'video' ? (
+                          <div className="flex flex-col items-center gap-1 text-zinc-500">
+                            <Film className="w-6 h-6" />
+                            <span className="text-[10px] font-medium truncate max-w-[80px]">{selectedAttachment.file.name}</span>
+                          </div>
+                        ) : (
+                          <div className="flex flex-col items-center gap-1 text-zinc-500">
+                            <FileText className="w-6 h-6" />
+                            <span className="text-[10px] font-medium truncate max-w-[80px]">{selectedAttachment.file.name}</span>
+                          </div>
+                        )}
+                        <button 
+                          onClick={clearAttachment}
+                          className="absolute top-1 right-1 p-1 bg-black/50 text-white rounded-full hover:bg-black transition-colors"
+                          title="Cancel upload"
+                        >
+                          <X className="w-3 h-3" />
+                        </button>
+                      </div>
+                    </motion.div>
+                  )}
+                </AnimatePresence>
+
+                <div className="relative flex items-end">
+                  <input 
+                    type="file"
+                    ref={fileInputRef}
+                    onChange={handleFileUpload}
+                    className="hidden"
+                  />
+                  
+                  <div className="pl-3 pb-2.5">
+                    <button 
+                      onClick={() => fileInputRef.current?.click()}
+                      className="p-2.5 text-zinc-500 hover:text-zinc-900 dark:hover:text-white hover:bg-zinc-200/50 dark:hover:bg-zinc-800 transition-all rounded-xl"
+                      title="Attach File"
+                    >
+                      <Paperclip className="w-5 h-5" />
+                    </button>
+                  </div>
+
+                  <textarea
+                    ref={textareaRef}
+                    rows={1}
+                    value={input}
+                    onChange={(e) => setInput(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' && !e.shiftKey) {
+                        e.preventDefault();
+                        sendMessage(input);
+                      }
                     }}
-                    className="p-2 bg-zinc-200 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-400 rounded-xl hover:bg-zinc-300 dark:hover:bg-zinc-700 transition-all"
-                    title="Voice Chat"
-                  >
-                    <Waves className="w-5 h-5" />
-                  </button>
-                  <button 
-                    onClick={() => sendMessage(input)}
-                    disabled={!input.trim() || isLoading}
-                    className="p-2 bg-zinc-900 dark:bg-white text-white dark:text-zinc-900 rounded-xl disabled:opacity-50 transition-opacity"
-                  >
-                    <Send className="w-5 h-5" />
-                  </button>
+                    placeholder={selectedAttachment ? `What should I do with this ${selectedAttachment.type}?` : "Ask Ideaflux AI anything..."}
+                    className="w-full bg-transparent border-none rounded-none px-2 py-4 pr-24 focus:ring-0 outline-none resize-none transition-all min-h-[56px] max-h-[200px] text-sm md:text-base"
+                  />
+                  
+                  <div className="absolute right-2 bottom-2 flex items-center gap-0.5">
+                    <button 
+                      onClick={() => {
+                        setShowVoiceMode(true);
+                        toggleListening();
+                      }}
+                      className="p-2.5 text-zinc-500 hover:text-zinc-900 dark:hover:text-white hover:bg-zinc-200/50 dark:hover:bg-zinc-800 transition-all rounded-xl"
+                      title="Voice Chat"
+                    >
+                      <Waves className="w-5 h-5" />
+                    </button>
+                    <button 
+                      onClick={() => sendMessage(input)}
+                      disabled={(!input.trim() && !selectedAttachment) || isLoading}
+                      className={cn(
+                        "p-2.5 rounded-xl transition-all shadow-sm flex items-center justify-center",
+                        input.trim() || selectedAttachment
+                          ? "bg-zinc-900 dark:bg-white text-white dark:text-zinc-900 hover:shadow-md active:scale-95" 
+                          : "text-zinc-300 dark:text-zinc-700 cursor-not-allowed"
+                      )}
+                    >
+                      <Send className="w-5 h-5" />
+                    </button>
+                  </div>
                 </div>
               </div>
 

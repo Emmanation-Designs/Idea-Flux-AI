@@ -29,7 +29,7 @@ CREATE TABLE IF NOT EXISTS public.images (
     user_id UUID REFERENCES auth.users ON DELETE CASCADE NOT NULL,
     conversation_id UUID REFERENCES public.conversations ON DELETE CASCADE,
     prompt TEXT,
-    url TEXT,
+    image_url TEXT,
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
