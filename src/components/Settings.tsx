@@ -5,7 +5,15 @@ import {
   ExternalLink, 
   ChevronRight,
   Volume2,
-  VolumeX
+  VolumeX,
+  Sun,
+  Moon,
+  Shield,
+  CreditCard,
+  User,
+  Info,
+  Smartphone,
+  Zap
 } from 'lucide-react';
 import { motion } from 'motion/react';
 import { clsx, type ClassValue } from 'clsx';
@@ -24,7 +32,9 @@ export const Settings = ({
   autoPlayVoice,
   onToggleAutoPlay,
   onShowLegal,
-  onApplyKey
+  onApplyKey,
+  isDarkMode,
+  onToggleTheme
 }: { 
   profile: Profile | null; 
   onClose: () => void;
@@ -34,6 +44,8 @@ export const Settings = ({
   onToggleAutoPlay: () => void;
   onShowLegal: (type: 'about' | 'privacy' | 'terms') => void;
   onApplyKey: (key: string) => Promise<void>;
+  isDarkMode: boolean;
+  onToggleTheme: () => void;
 }) => {
   const [key, setKey] = React.useState('');
   const [isApplying, setIsApplying] = React.useState(false);
@@ -47,152 +59,228 @@ export const Settings = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
-      <motion.div 
-        initial={{ scale: 0.9, opacity: 0 }}
-        animate={{ scale: 1, opacity: 1 }}
-        className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-2xl w-full max-w-md p-6 shadow-2xl"
-      >
-        <div className="flex items-center justify-between mb-6">
-          <h2 className="text-xl font-bold flex items-center gap-2">
-            <SettingsIcon className="w-5 h-5" />
-            Settings
-          </h2>
-          <button onClick={onClose} className="p-1 hover:bg-zinc-100 dark:hover:bg-zinc-800 rounded-md">
-            <X className="w-5 h-5" />
-          </button>
-        </div>
-
-        <div className="space-y-6">
-          <div className="p-4 bg-zinc-50 dark:bg-zinc-950 rounded-xl border border-zinc-200 dark:border-zinc-800">
-            <div className="flex items-center justify-between mb-2">
-              <span className="text-sm font-medium opacity-70">Plan Status</span>
-              <span className={cn(
-                "text-xs font-bold px-2 py-0.5 rounded-full",
-                profile?.plan === 'pro' ? "bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-400" : "bg-zinc-200 text-zinc-700 dark:bg-zinc-800 dark:text-zinc-400"
-              )}>
-                {profile?.plan === 'pro' ? 'PRO' : 'FREE'}
-              </span>
-            </div>
-            <div className="space-y-1.5">
-              <div className="flex justify-between text-xs">
-                <span>Usage</span>
-                <span>{profile?.usage_count || 0} / {profile?.plan === 'pro' ? 'Unlimited' : (profile?.max_usage || 15)}</span>
-              </div>
-              <div className="w-full h-1.5 bg-zinc-200 dark:bg-zinc-800 rounded-full overflow-hidden">
-                <div 
-                  className="h-full bg-zinc-900 dark:bg-white transition-all duration-500" 
-                  style={{ width: profile?.plan === 'pro' ? '0%' : `${Math.min(100, ((profile?.usage_count || 0) / (profile?.max_usage || 15)) * 100)}%` }}
-                />
-              </div>
-            </div>
-            {profile?.plan === 'pro' && profile?.pro_expires_at && (
-              <div className="mt-3 text-[10px] text-amber-600 dark:text-amber-400 text-center font-medium">
-                Pro expires in {Math.ceil((new Date(profile.pro_expires_at).getTime() - new Date().getTime()) / (1000 * 60 * 60 * 24))} days
-              </div>
-            )}
-            {profile?.plan === 'free' && (
-              <div className="mt-3 text-[10px] text-zinc-500 text-center">
-                Pro Plan – $7 for 30 days
-              </div>
-            )}
+    <motion.div 
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+      className="fixed inset-0 z-50 flex flex-col bg-white dark:bg-zinc-950 overflow-hidden"
+    >
+      {/* Header */}
+      <header className="h-16 flex items-center justify-between px-6 border-b border-zinc-200 dark:border-zinc-800">
+        <h2 className="text-xl font-black tracking-tight flex items-center gap-3">
+          <div className="w-8 h-8 bg-zinc-900 dark:bg-white rounded-lg flex items-center justify-center">
+            <SettingsIcon className="w-4 h-4 text-white dark:text-black" />
           </div>
+          Settings
+        </h2>
+        <button 
+          onClick={onClose} 
+          className="p-2 hover:bg-zinc-100 dark:hover:bg-zinc-900 rounded-xl transition-all active:scale-95 border border-zinc-200 dark:border-zinc-800"
+        >
+          <X className="w-5 h-5" />
+        </button>
+      </header>
 
-          <div>
-            <label className="block text-sm font-medium mb-1.5 opacity-70">Activation Key</label>
-            <div className="flex gap-2">
-              <input 
-                className="flex-1 bg-zinc-50 dark:bg-zinc-950 border border-zinc-200 dark:border-zinc-800 rounded-xl px-4 py-2 focus:ring-2 focus:ring-zinc-500 outline-none text-sm transition-all"
-                placeholder={profile?.plan === 'pro' ? "Pro already active" : "Enter key to upgrade"}
-                value={key}
-                onChange={(e) => setKey(e.target.value)}
-                disabled={isApplying || profile?.plan === 'pro'}
-              />
-              <button 
-                onClick={handleApply}
-                disabled={isApplying || !key.trim() || profile?.plan === 'pro'}
-                className="px-4 py-2 bg-zinc-900 dark:bg-white text-white dark:text-zinc-900 rounded-xl text-sm font-bold disabled:opacity-50 hover:opacity-90 transition-all active:scale-95"
-              >
-                {isApplying ? (
-                  <div className="flex items-center gap-2">
-                    <div className="w-3 h-3 border-2 border-current border-t-transparent rounded-full animate-spin" />
-                    <span>Applying</span>
-                  </div>
-                ) : 'Apply'}
-              </button>
+      {/* Scrollable Content */}
+      <div className="flex-1 overflow-y-auto">
+        <div className="max-w-3xl mx-auto w-full p-6 md:p-12 space-y-12">
+          
+          {/* Account & Plan */}
+          <section className="space-y-6">
+            <div className="flex items-center gap-2 text-xs font-black uppercase tracking-[0.2em] opacity-40">
+              <User className="w-3.5 h-3.5" />
+              Account & Plan
             </div>
-            {profile?.plan === 'free' && (
-              <p className="mt-2 text-[10px] text-zinc-500">
-                Enter a valid activation key to unlock unlimited generations and DALL·E 3 images.
-              </p>
-            )}
-          </div>
-
-          <div className="space-y-4 pt-4 border-t border-zinc-200 dark:border-zinc-800">
-            <h3 className="text-sm font-bold opacity-70">Voice Settings</h3>
             
-            <div className="grid grid-cols-2 gap-2">
-              {(['alloy', 'echo'] as const).map((v, i) => (
-                <button
-                  key={`${v}-${i}`}
-                  onClick={() => onVoiceOptionChange(v)}
+            <div className="grid md:grid-cols-2 gap-6">
+              <div className="p-6 bg-zinc-50 dark:bg-zinc-900/50 rounded-2xl border border-zinc-200 dark:border-zinc-800 relative overflow-hidden group">
+                <div className="absolute top-0 right-0 p-4 opacity-5 group-hover:opacity-10 transition-opacity">
+                  <CreditCard className="w-24 h-24 rotate-12" />
+                </div>
+                <div className="relative flex flex-col h-full justify-between gap-4">
+                  <div>
+                    <span className={cn(
+                      "px-3 py-1 rounded-full text-[10px] font-black tracking-widest uppercase",
+                      profile?.plan === 'pro' 
+                        ? "bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-400 border border-amber-200 dark:border-amber-800" 
+                        : "bg-zinc-200 text-zinc-700 dark:bg-zinc-800 dark:text-zinc-400 border border-zinc-300 dark:border-zinc-700"
+                    )}>
+                      {profile?.plan === 'pro' ? 'PRO PLAN' : 'FREE PLAN'}
+                    </span>
+                    <h3 className="mt-4 text-2xl font-black">
+                      {profile?.plan === 'pro' ? 'Premium Active' : 'Limited Access'}
+                    </h3>
+                  </div>
+                  
+                  <div className="space-y-2">
+                    <div className="flex justify-between text-xs font-bold opacity-60">
+                      <span>Usage Tracker</span>
+                      <span>{profile?.usage_count || 0} / {profile?.plan === 'pro' ? '∞' : (profile?.max_usage || 15)}</span>
+                    </div>
+                    <div className="w-full h-2 bg-zinc-200 dark:bg-zinc-800 rounded-full overflow-hidden">
+                      <motion.div 
+                        initial={{ width: 0 }}
+                        animate={{ width: profile?.plan === 'pro' ? '100%' : `${Math.min(100, ((profile?.usage_count || 0) / (profile?.max_usage || 15)) * 100)}%` }}
+                        className={cn(
+                          "h-full rounded-full transition-all duration-1000",
+                          profile?.plan === 'pro' ? "bg-amber-500 shadow-[0_0_10px_rgba(245,158,11,0.5)]" : "bg-zinc-900 dark:bg-white"
+                        )}
+                      />
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div className="p-6 bg-zinc-50 dark:bg-zinc-900/50 rounded-2xl border border-zinc-200 dark:border-zinc-800 flex flex-col justify-between gap-6">
+                <div>
+                  <h4 className="text-sm font-black uppercase tracking-wider opacity-60 mb-2">Activation Settings</h4>
+                  <div className="flex gap-2">
+                    <input 
+                      className="flex-1 bg-white dark:bg-zinc-950 border border-zinc-200 dark:border-zinc-800 rounded-xl px-4 py-2.5 focus:ring-2 focus:ring-zinc-900 dark:focus:ring-white outline-none text-sm transition-all"
+                      placeholder={profile?.plan === 'pro' ? "Pro already active" : "Enter key to upgrade"}
+                      value={key}
+                      onChange={(e) => setKey(e.target.value)}
+                      disabled={isApplying || profile?.plan === 'pro'}
+                    />
+                    <button 
+                      onClick={handleApply}
+                      disabled={isApplying || !key.trim() || profile?.plan === 'pro'}
+                      className="px-6 py-2.5 bg-zinc-900 dark:bg-white text-white dark:text-zinc-900 rounded-xl text-sm font-black disabled:opacity-50 hover:opacity-90 transition-all active:scale-95 shadow-lg shadow-black/5"
+                    >
+                      {isApplying ? '...' : 'APPLY'}
+                    </button>
+                  </div>
+                </div>
+                {profile?.plan === 'free' ? (
+                  <p className="text-xs text-zinc-500 leading-relaxed">
+                    Unlock Unlimited Generations, DALL·E 3 High-Definition Images, and Advanced Search.
+                  </p>
+                ) : (
+                  <div className="text-xs text-amber-600 dark:text-amber-400 font-bold">
+                    Pro subscription active. Thank you for supporting Ideaflux AI.
+                  </div>
+                )}
+              </div>
+            </div>
+          </section>
+
+          {/* Preferences */}
+          <section className="space-y-6">
+            <div className="flex items-center gap-2 text-xs font-black uppercase tracking-[0.2em] opacity-40">
+              <Smartphone className="w-3.5 h-3.5" />
+              Preferences & Themes
+            </div>
+
+            <div className="grid md:grid-cols-2 gap-4">
+              {/* Appearance */}
+              <div className="p-1 bg-zinc-100 dark:bg-zinc-900 rounded-2xl flex items-center">
+                <button 
+                  onClick={() => !isDarkMode && onToggleTheme()}
                   className={cn(
-                    "px-3 py-2 rounded-xl text-xs font-medium transition-all border",
-                    voiceOption === v 
-                      ? "bg-zinc-900 dark:bg-white text-white dark:text-zinc-900 border-transparent" 
-                      : "bg-transparent border-zinc-200 dark:border-zinc-800 hover:border-zinc-400 dark:hover:border-zinc-600"
+                    "flex-1 flex items-center justify-center gap-3 py-3 rounded-xl text-sm font-bold transition-all",
+                    !isDarkMode ? "bg-white text-black shadow-sm" : "text-zinc-500 hover:text-zinc-300"
                   )}
                 >
-                  {v === 'alloy' ? 'Female (Alloy)' : 'Male (Echo)'}
+                  <Sun className="w-4 h-4" />
+                  Light
                 </button>
-              ))}
+                <button 
+                  onClick={() => isDarkMode && onToggleTheme()}
+                  className={cn(
+                    "flex-1 flex items-center justify-center gap-3 py-3 rounded-xl text-sm font-bold transition-all",
+                    isDarkMode ? "bg-zinc-800 text-white shadow-sm" : "text-zinc-500 hover:text-zinc-700"
+                  )}
+                >
+                  <Moon className="w-4 h-4" />
+                  Dark
+                </button>
+              </div>
+
+              {/* Voice Autoplay */}
+              <div className="flex items-center justify-between p-4 bg-zinc-50 dark:bg-zinc-900/50 rounded-2xl border border-zinc-200 dark:border-zinc-800">
+                <div className="flex flex-col">
+                  <span className="text-sm font-bold">Auto-play Voice</span>
+                  <span className="text-[10px] opacity-50 uppercase tracking-widest leading-none">Voice Replies</span>
+                </div>
+                <button 
+                  onClick={onToggleAutoPlay}
+                  className={cn(
+                    "w-12 h-6 rounded-full transition-all relative",
+                    autoPlayVoice ? "bg-zinc-900 dark:bg-white" : "bg-zinc-200 dark:bg-zinc-700"
+                  )}
+                >
+                  <motion.div 
+                    animate={{ x: autoPlayVoice ? 24 : 4 }}
+                    className={cn(
+                      "absolute top-1 w-4 h-4 rounded-full shadow-sm",
+                      autoPlayVoice ? "bg-white dark:bg-zinc-950" : "bg-white"
+                    )}
+                  />
+                </button>
+              </div>
             </div>
 
-            <button 
-              onClick={onToggleAutoPlay}
-              className="flex items-center justify-between w-full p-3 bg-zinc-50 dark:bg-zinc-950 rounded-xl border border-zinc-200 dark:border-zinc-800"
-            >
-              <span className="text-sm font-medium">Auto-play AI Voice</span>
-              <div className={cn(
-                "w-10 h-5 rounded-full transition-colors relative",
-                autoPlayVoice ? "bg-zinc-900 dark:bg-white" : "bg-zinc-200 dark:bg-zinc-800"
-              )}>
-                <div className={cn(
-                  "absolute top-1 w-3 h-3 rounded-full transition-all",
-                  autoPlayVoice 
-                    ? "right-1 bg-white dark:bg-zinc-900" 
-                    : "left-1 bg-zinc-400 dark:bg-zinc-600"
-                )} />
+            {/* Voice Selection */}
+            <div className="p-6 bg-zinc-50 dark:bg-zinc-900/50 rounded-2xl border border-zinc-200 dark:border-zinc-800 space-y-4">
+              <div className="flex items-center justify-between">
+                <h4 className="text-sm font-black uppercase tracking-wider opacity-60">AI Voice Profile</h4>
+                <div className="flex items-center gap-2 text-zinc-400">
+                  <Volume2 className="w-4 h-4" />
+                </div>
               </div>
-            </button>
-          </div>
+              <div className="grid grid-cols-2 gap-3">
+                {(['alloy', 'echo'] as const).map((v, i) => (
+                  <button
+                    key={`${v}-${i}`}
+                    onClick={() => onVoiceOptionChange(v)}
+                    className={cn(
+                      "flex items-center justify-between px-6 py-4 rounded-xl text-sm font-black transition-all border-2",
+                      voiceOption === v 
+                        ? "bg-white dark:bg-zinc-950 text-zinc-900 dark:text-white border-zinc-900 dark:border-white shadow-xl shadow-black/5 scale-[1.02]" 
+                        : "bg-transparent border-transparent text-zinc-500 hover:bg-white/50 dark:hover:bg-zinc-800/50"
+                    )}
+                  >
+                    <span>{v === 'alloy' ? 'Female' : 'Male'}</span>
+                    <span className="text-[10px] opacity-40 uppercase tracking-widest">{v}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          </section>
 
-          <div className="pt-4 border-t border-zinc-200 dark:border-zinc-800">
-            <a 
-              href="https://wa.me/447526596522" 
-              target="_blank" 
-              rel="noopener noreferrer"
-              className="flex items-center justify-between p-3 bg-emerald-50 dark:bg-emerald-950/20 text-emerald-700 dark:text-emerald-400 rounded-xl hover:opacity-80 transition-opacity"
-            >
-              <div className="flex items-center gap-3">
-                <div className="w-8 h-8 bg-emerald-500 rounded-full flex items-center justify-center text-white">
-                  <ExternalLink className="w-4 h-4" />
-                </div>
-                <div className="text-sm">
-                  <div className="font-bold">Support & Feedback</div>
-                  <div className="text-xs opacity-70">Chat with us on WhatsApp</div>
-                </div>
+          {/* Footer / Links */}
+          <section className="pt-12 border-t border-zinc-200 dark:border-zinc-800 space-y-12">
+            <div className="flex flex-col md:flex-row items-center justify-between gap-8">
+              <div className="flex flex-wrap items-center justify-center md:justify-start gap-x-8 gap-y-4">
+                <button onClick={() => onShowLegal('about')} className="text-xs font-black uppercase tracking-[0.1em] opacity-40 hover:opacity-100 transition-opacity">About</button>
+                <button onClick={() => onShowLegal('privacy')} className="text-xs font-black uppercase tracking-[0.1em] opacity-40 hover:opacity-100 transition-opacity">Privacy</button>
+                <button onClick={() => onShowLegal('terms')} className="text-xs font-black uppercase tracking-[0.1em] opacity-40 hover:opacity-100 transition-opacity">Terms</button>
               </div>
-              <ChevronRight className="w-4 h-4" />
-            </a>
-          </div>
-          <div className="pt-4 border-t border-zinc-200 dark:border-zinc-800 flex flex-wrap gap-x-4 gap-y-2">
-            <button onClick={() => onShowLegal('about')} className="text-xs text-zinc-500 hover:text-zinc-900 dark:hover:text-white transition-colors">About Ideaflux AI</button>
-            <button onClick={() => onShowLegal('privacy')} className="text-xs text-zinc-500 hover:text-zinc-900 dark:hover:text-white transition-colors">Privacy Policy</button>
-            <button onClick={() => onShowLegal('terms')} className="text-xs text-zinc-500 hover:text-zinc-900 dark:hover:text-white transition-colors">Terms of Service</button>
-          </div>
+              
+              <div className="flex items-center gap-6">
+                <a 
+                  href="https://wa.me/447526596522" 
+                  target="_blank" 
+                  rel="noopener noreferrer"
+                  className="px-6 py-3 bg-emerald-500 dark:bg-emerald-600 text-white rounded-full text-xs font-black tracking-widest uppercase hover:scale-105 transition-all shadow-lg shadow-emerald-500/20"
+                >
+                  Chat on WhatsApp
+                </a>
+              </div>
+            </div>
+
+            <div className="flex flex-col items-center gap-4 py-8">
+              <div className="flex items-center gap-2 grayscale brightness-200 opacity-30">
+                <Zap className="w-5 h-5" />
+                <span className="font-black text-lg tracking-tighter">IDEAFLUX AI</span>
+              </div>
+              <p className="text-[10px] uppercase font-black tracking-[0.3em] opacity-20">
+                Version 2.0.4 • Powered by OpenAI
+              </p>
+            </div>
+          </section>
         </div>
-      </motion.div>
-    </div>
+      </div>
+    </motion.div>
   );
 };

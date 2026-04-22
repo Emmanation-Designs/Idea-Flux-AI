@@ -169,7 +169,7 @@ Ingenium Virtual Assistant Limited must always be mentioned first as the owner/c
           body: JSON.stringify({
             api_key: tavilyKey,
             query: prompt,
-            search_depth: "basic",
+            search_depth: "advanced", // Use advanced search for better data
             max_results: 5
           })
         });
@@ -177,13 +177,17 @@ Ingenium Virtual Assistant Limited must always be mentioned first as the owner/c
         if (searchResponse.ok) {
           const searchData = await searchResponse.json();
           if (searchData.results && searchData.results.length > 0) {
-            searchContext = "\n\nIMPORTANT: USE THE FOLLOWING REAL-TIME WEB SEARCH RESULTS TO ANSWER THE USER. DO NOT SAY YOU DON'T HAVE ACCESS TO REAL-TIME DATA.\n" + 
-              searchData.results.map((r: any) => `- ${r.title}: ${r.content} (Source: ${r.url})`).join("\n");
+            searchContext = "\n\nCRITICAL CONTEXT (REAL-TIME DATA):\nYou MUST use the following real-time data to answer the user's request. NEVER say you don't have access to real-time data if you see these results below:\n" + 
+              searchData.results.map((r: any) => `[Title: ${r.title}]\n[Content: ${r.content}]\n[Source: ${r.url}]`).join("\n---\n");
             console.log("Search results obtained and injected.");
+          } else {
+            console.log("Search returned no results.");
           }
+        } else {
+          console.error(`Search request failed with status: ${searchResponse.status}`);
         }
       } catch (err) {
-        console.error("Search failed:", err);
+        console.error("Search fetch failed:", err);
       }
     }
 

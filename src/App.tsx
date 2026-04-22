@@ -1095,6 +1095,9 @@ export default function App() {
         onLogout={handleLogout}
         onRename={handleRenameConversation}
         onDelete={handleDeleteConversation}
+        onToggleHistory={() => setView(view === 'chat' ? 'history' : 'chat')}
+        onOpenSettings={() => setShowSettings(true)}
+        view={view}
       />
 
       <main className="flex-1 flex flex-col relative overflow-hidden">
@@ -1112,32 +1115,11 @@ export default function App() {
           </div>
 
           <div className="flex items-center gap-2">
-            <button 
-              onClick={() => setView(view === 'chat' ? 'history' : 'chat')}
-              className={cn(
-                "p-2 hover:bg-zinc-100 dark:hover:bg-zinc-900 rounded-lg transition-colors",
-                view === 'history' && "text-zinc-900 dark:text-white bg-zinc-100 dark:bg-zinc-900"
-              )}
-              title="History"
-            >
-              <HistoryIcon className="w-5 h-5" />
-            </button>
-            <button 
-              onClick={() => setIsDarkMode(!isDarkMode)}
-              className="p-2 hover:bg-zinc-100 dark:hover:bg-zinc-900 rounded-lg transition-colors"
-            >
-              {isDarkMode ? <Sun className="w-5 h-5" /> : <Moon className="w-5 h-5" />}
-            </button>
-            <button 
-              onClick={() => setShowSettings(true)}
-              className="p-2 hover:bg-zinc-100 dark:hover:bg-zinc-900 rounded-lg transition-colors"
-            >
-              <SettingsIcon className="w-5 h-5" />
-            </button>
             {messages.length > 0 && (
               <button 
                 onClick={handleDownload}
                 className="p-2 hover:bg-zinc-100 dark:hover:bg-zinc-900 rounded-lg transition-colors"
+                title="Download conversation"
               >
                 <Download className="w-5 h-5" />
               </button>
@@ -1581,6 +1563,8 @@ export default function App() {
             onToggleAutoPlay={() => setAutoPlayVoice(!autoPlayVoice)}
             onShowLegal={setShowLegal}
             onApplyKey={handleApplyKey}
+            isDarkMode={isDarkMode}
+            onToggleTheme={() => setIsDarkMode(!isDarkMode)}
           />
         )}
         {showContextForm && (
