@@ -509,6 +509,49 @@ export default function App() {
       }, []);
       
       setConversations(uniqueConversations);
+
+      // Auto-migrate/heal expiring images
+      uniqueConversations.forEach(async (conv: any) => {
+        const messages = conv.messages || [];
+        let updated = false;
+        const newMessages = await Promise.all(messages.map(async (m: any) => {
+          if (m.image_url && !m.image_url.startsWith('db:') && !m.image_url.startsWith('data:')) {
+            try {
+              const proxyResp = await fetch('/api/proxy-image', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ url: m.image_url })
+              });
+              if (proxyResp.ok) {
+                const blob = await proxyResp.blob();
+                const reader = new FileReader();
+                const base64 = await new Promise<string>((resolve) => {
+                  reader.onloadend = () => resolve(reader.result as string);
+                  reader.readAsDataURL(blob);
+                });
+                
+                const { data: imgData } = await supabase.from('images').insert({
+                  user_id: user.id,
+                  prompt: m.content || "Migrated Image",
+                  image_url: base64
+                }).select().single();
+                
+                if (imgData) {
+                  updated = true;
+                  return { ...m, image_url: `db:${imgData.id}` };
+                }
+              }
+            } catch (e) {
+              console.error("Migration failed:", e);
+            }
+          }
+          return m;
+        }));
+
+        if (updated) {
+          await supabase.from('conversations').update({ messages: newMessages }).eq('id', conv.id);
+        }
+      });
     } catch (error) {
       console.error("Error fetching history:", error);
     }

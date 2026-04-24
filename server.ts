@@ -93,8 +93,7 @@ app.post("/api/generate", async (req, res) => {
       const base64 = `data:${imgFetch.headers.get("content-type") || "image/png"};base64,${buffer.toString("base64")}`;
 
       return res.json({ 
-        image_url: base64, // Return base64 for immediate display and storage
-        original_url: imageUrl, // Keep original URL as fallback
+        image_url: base64,
         filename: filename
       });
     }
@@ -156,9 +155,12 @@ Ingenium Virtual Assistant Limited must always be mentioned first as the owner/c
     // Improved Search Detection: Trigger for almost any factual query if key is present
     const lowerPrompt = prompt.toLowerCase();
     const isCreativeTask = type === "script" || type === "idea" || type === "hashtag";
-    const searchKeywords = /how much|rate|exchange|dollar|price|cost|who|what|where|when|why|how|search|find|lookup|news|today|current|weather/i;
     
-    const needsSearch = !isCreativeTask || searchKeywords.test(lowerPrompt);
+    // Comprehensive keywords for real-time or factual lookup
+    const searchKeywords = /\b(rate|exchange|dollar|naira|ngn|price|cost|who|what|where|when|why|how|search|find|lookup|news|today|current|weather|stock|crypto|live|latest|update)\b/i;
+    
+    // We search if it's NOT a creative task AND matches keywords, OR if it just looks like a direct factual question
+    const needsSearch = searchKeywords.test(lowerPrompt) || (type === "voice" && lowerPrompt.length < 100);
     
     if (tavilyKey && needsSearch) {
       try {
@@ -169,19 +171,32 @@ Ingenium Virtual Assistant Limited must always be mentioned first as the owner/c
           body: JSON.stringify({
             api_key: tavilyKey,
             query: prompt,
-            search_depth: "advanced", // Use advanced search for better data
-            max_results: 5
+            search_depth: "advanced",
+            max_results: 5,
+            include_answer: true // Let Tavily provide a summarized answer too
           })
         });
         
         if (searchResponse.ok) {
           const searchData = await searchResponse.json();
-          if (searchData.results && searchData.results.length > 0) {
-            searchContext = "\n\nCRITICAL CONTEXT (REAL-TIME DATA):\nYou MUST use the following real-time data to answer the user's request. NEVER say you don't have access to real-time data if you see these results below:\n" + 
-              searchData.results.map((r: any) => `[Title: ${r.title}]\n[Content: ${r.content}]\n[Source: ${r.url}]`).join("\n---\n");
+          const results = searchData.results || [];
+          const tavilyAnswer = searchData.answer || "";
+          
+          if (results.length > 0 || tavilyAnswer) {
+            searchContext = `
+[REAL-TIME DATA ACQUIRED]
+The following information was just retrieved from the live web. You MUST use this data to answer accurately. 
+DO NOT say you don't have access to real-time data.
+
+${tavilyAnswer ? `SUMMARY: ${tavilyAnswer}\n` : ""}
+RELEVANT SOURCES:
+${results.map((r: any) => `- [${r.title}]: ${r.content} (${r.url})`).join("\n")}
+[END OF REAL-TIME DATA]
+`;
             console.log("Search results obtained and injected.");
           } else {
             console.log("Search returned no results.");
+            searchContext = "\n\n(Note to AI: A web search was attempted but returned no specific results. Inform the user you couldn't find live data for this specific query if needed, but DO NOT say you lack the general ability to search.)";
           }
         } else {
           console.error(`Search request failed with status: ${searchResponse.status}`);
@@ -194,7 +209,7 @@ Ingenium Virtual Assistant Limited must always be mentioned first as the owner/c
     const stream = await openai.chat.completions.create({
       model: "gpt-4o-mini",
       messages: [
-        { role: "system", content: systemInstruction + searchContext },
+        { role: "system", content: searchContext + systemInstruction },
         ...messages.map((m: any) => {
           if (m.image_url && m.role === 'user' && !m.image_url.startsWith('db:')) {
             return {
