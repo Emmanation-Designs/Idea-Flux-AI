@@ -41,6 +41,7 @@ import remarkGfm from 'remark-gfm';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 import { supabase } from './lib/supabase';
+
 import type { Message, ConversationType, Profile } from './types';
 
 // --- Components ---
@@ -794,7 +795,7 @@ export default function App() {
     }, 300000); // 5 minutes
 
     try {
-      // Primary: Server-side OpenAI (Uses Vercel Env Vars)
+      // Primary: Server-side API (Uses env vars on backend)
       const response = await fetch('/api/generate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -818,7 +819,7 @@ export default function App() {
       if (isImageIntent) {
         const { image_url, filename } = await response.json();
         
-        // Save to dedicated images table first to get an ID
+        // Save to dedicated images table
         const { data: imageData, error: imageError } = await supabase.from('images').insert({
           user_id: user.id,
           prompt: content,
@@ -831,12 +832,11 @@ export default function App() {
           id: crypto.randomUUID(),
           role: 'assistant',
           content: `Generated image for: ${content}`,
-          image_url: `db:${imageData.id}`, // Store lightweight reference in conversation
+          image_url: `db:${imageData.id}`,
           filename,
           created_at: new Date().toISOString()
         };
         
-        // Use the actual image_url (Base64) for current state so it shows up instantly without another fetch
         const stateMessage = { ...assistantMessage, image_url };
         const finalMessages = [...updatedMessages, assistantMessage];
         const stateMessages = [...updatedMessages, stateMessage];
@@ -915,10 +915,10 @@ export default function App() {
     } catch (error: any) {
       clearTimeout(timeoutId);
       if (error.name === 'AbortError') {
-        console.error("OpenAI Request Aborted:", error);
+        console.error("AI Request Aborted:", error);
         toast.error('Request timed out. Please try again.');
       } else {
-        console.error("OpenAI Error:", error);
+        console.error("AI Error:", error);
         toast.error(error.message || 'Failed to generate response.');
       }
       setIsLoading(false);
@@ -1545,52 +1545,52 @@ export default function App() {
 
         {/* Input Area */}
         {activeView === 'chat' && (
-          <div className="relative p-6 bg-white dark:bg-zinc-950">
-            <div className="max-w-3xl mx-auto space-y-6">
+          <div className="relative p-3 md:p-6 bg-white dark:bg-zinc-950">
+            <div className="max-w-4xl mx-auto space-y-4 md:space-y-6">
               {/* Usage Stats Bar */}
               {profile && profile.plan === 'free' && (
-                <div className="flex flex-wrap items-center justify-center gap-6 text-[10px] font-black uppercase tracking-[0.2em] opacity-40">
-                  <div className="flex items-center gap-2">
-                    <MessageSquare className="w-3 h-3" />
+                <div className="flex flex-wrap items-center justify-center gap-4 md:gap-6 text-[9px] md:text-[10px] font-black uppercase tracking-[0.2em] opacity-40">
+                  <div className="flex items-center gap-1.5 md:gap-2">
+                    <MessageSquare className="w-2.5 h-2.5 md:w-3 md:h-3" />
                     {profile.usage_messages} / {PLAN_LIMITS[profile.plan as keyof typeof PLAN_LIMITS].messages} MSGS
                   </div>
-                  <div className="flex items-center gap-2">
-                    <ImageIcon className="w-3 h-3" />
+                  <div className="flex items-center gap-1.5 md:gap-2">
+                    <ImageIcon className="w-2.5 h-2.5 md:w-3 md:h-3" />
                     {profile.usage_images} / {PLAN_LIMITS[profile.plan as keyof typeof PLAN_LIMITS].images} IMGS
                   </div>
                 </div>
               )}
               
-              <div className="bg-zinc-50 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-[2.5rem] shadow-2xl transition-all focus-within:ring-2 focus-within:ring-zinc-200 dark:focus-within:ring-zinc-800 relative z-20">
+              <div className="bg-zinc-50 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-[1.5rem] md:rounded-[2.5rem] shadow-xl md:shadow-2xl transition-all focus-within:ring-1 focus-within:ring-zinc-200 dark:focus-within:ring-zinc-800 relative z-20 overflow-hidden">
                 <AnimatePresence>
                   {selectedAttachment && (
                     <motion.div 
                       initial={{ opacity: 0, height: 0 }}
                       animate={{ opacity: 1, height: 'auto' }}
                       exit={{ opacity: 0, height: 0 }}
-                      className="border-b border-zinc-200 dark:border-zinc-800 bg-zinc-100/50 dark:bg-zinc-800/30 p-4"
+                      className="border-b border-zinc-200 dark:border-zinc-800 bg-zinc-100/50 dark:bg-zinc-800/30 p-2 md:p-4"
                     >
-                      <div className="relative group/preview w-32 h-24 rounded-2xl overflow-hidden bg-white dark:bg-zinc-800 flex items-center justify-center border border-zinc-200 dark:border-zinc-700 shadow-sm">
+                      <div className="relative group/preview w-24 h-20 md:w-32 md:h-24 rounded-xl md:rounded-2xl overflow-hidden bg-white dark:bg-zinc-800 flex items-center justify-center border border-zinc-200 dark:border-zinc-700 shadow-sm">
                         {selectedAttachment.type === 'image' ? (
                           <img src={selectedAttachment.preview} alt="Upload Preview" className="w-full h-full object-cover" />
                         ) : (
-                          <div className="flex flex-col items-center gap-2 text-zinc-400">
-                            {selectedAttachment.type === 'video' ? <Film className="w-6 h-6" /> : <FileText className="w-6 h-6" />}
-                            <span className="text-[10px] font-black truncate max-w-[100px] uppercase tracking-widest">{selectedAttachment.file.name}</span>
+                          <div className="flex flex-col items-center gap-1 md:gap-2 text-zinc-400">
+                            {selectedAttachment.type === 'video' ? <Film className="w-5 h-5 md:w-6 md:h-6" /> : <FileText className="w-5 h-5 md:w-6 md:h-6" />}
+                            <span className="text-[8px] md:text-[10px] font-black truncate max-w-[80px] md:max-w-[100px] uppercase tracking-widest">{selectedAttachment.file.name}</span>
                           </div>
                         )}
                         <button 
                           onClick={clearAttachment}
-                          className="absolute top-2 right-2 p-1.5 bg-black/50 text-white rounded-full hover:bg-black transition-all opacity-0 group-hover/preview:opacity-100 scale-90 group-hover/preview:scale-100"
+                          className="absolute top-1 right-1 md:top-2 md:right-2 p-1 md:p-1.5 bg-black/50 text-white rounded-full hover:bg-black transition-all opacity-100 md:opacity-0 md:group-hover/preview:opacity-100 scale-90 md:group-hover/preview:scale-100"
                         >
-                          <X className="w-4 h-4" />
+                          <X className="w-3.5 h-3.5 md:w-4 md:h-4" />
                         </button>
                       </div>
                     </motion.div>
                   )}
                 </AnimatePresence>
 
-                <div className="relative flex items-end p-2">
+                <div className="relative flex items-center px-1 md:px-2">
                   <input 
                     type="file"
                     ref={fileInputRef}
@@ -1598,58 +1598,60 @@ export default function App() {
                     className="hidden"
                   />
                   
-                  <div className="pb-1 pl-2">
+                  <div className="flex-shrink-0">
                     <button 
                       onClick={() => fileInputRef.current?.click()}
-                      className="p-4 text-zinc-400 hover:text-zinc-900 dark:hover:text-white hover:bg-white dark:hover:bg-zinc-800 transition-all rounded-3xl shadow-sm"
+                      className="p-3 md:p-4 text-zinc-400 hover:text-zinc-900 dark:hover:text-white hover:bg-white dark:hover:bg-zinc-800 transition-all rounded-2xl md:rounded-3xl"
                     >
-                      <Paperclip className="w-5 h-5" />
+                      <Paperclip className="w-4 h-4 md:w-5 md:h-5" />
                     </button>
                   </div>
-
-                  <textarea
-                    ref={textareaRef}
-                    rows={1}
-                    value={input}
-                    onChange={(e) => setInput(e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter' && !e.shiftKey) {
-                        e.preventDefault();
-                        sendMessage(input);
-                      }
-                    }}
-                    placeholder={selectedAttachment ? `Ask about this ${selectedAttachment.type}...` : "Message Trelvix AI..."}
-                    className="w-full bg-transparent border-none rounded-none px-4 py-5 pr-32 focus:ring-0 outline-none resize-none transition-all min-h-[64px] max-h-[200px] text-sm md:text-base font-medium placeholder:text-zinc-400"
-                  />
-                  
-                  <div className="absolute right-4 bottom-3.5 flex items-center gap-2">
-                    <button 
-                      onClick={() => {
-                        setShowVoiceMode(true);
-                        toggleListening();
+ 
+                  <div className="flex-1 relative flex items-center">
+                    <textarea
+                      ref={textareaRef}
+                      rows={1}
+                      value={input}
+                      onChange={(e) => setInput(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter' && !e.shiftKey) {
+                          e.preventDefault();
+                          sendMessage(input);
+                        }
                       }}
-                      className="p-3 text-zinc-400 hover:text-zinc-900 dark:hover:text-white hover:bg-white dark:hover:bg-zinc-800 transition-all rounded-2xl"
-                    >
-                      <Waves className="w-5 h-5" />
-                    </button>
-                    <button 
-                      onClick={() => sendMessage(input)}
-                      disabled={(!input.trim() && !selectedAttachment) || isLoading}
-                      className={cn(
-                        "p-3 rounded-2xl transition-all shadow-xl flex items-center justify-center transform active:scale-95",
-                        input.trim() || selectedAttachment
-                          ? "bg-zinc-900 dark:bg-white text-white dark:text-zinc-900 hover:shadow-black/20 dark:hover:shadow-white/20" 
-                          : "text-zinc-300 dark:text-zinc-700 cursor-not-allowed"
-                      )}
-                    >
-                      <Send className="w-5 h-5" />
-                    </button>
+                      placeholder={selectedAttachment ? `Ask about this ${selectedAttachment.type}...` : "Message Trelvix AI..."}
+                      className="w-full bg-transparent border-none rounded-none px-2 md:px-4 py-4 md:py-5 pr-20 md:pr-28 focus:ring-0 outline-none resize-none transition-all min-h-[56px] md:min-h-[64px] max-h-[200px] text-sm md:text-base font-medium placeholder:text-zinc-400"
+                    />
+                    
+                    <div className="absolute right-0 flex items-center gap-1 md:gap-2 mr-1">
+                      <button 
+                        onClick={() => {
+                          setShowVoiceMode(true);
+                          toggleListening();
+                        }}
+                        className="p-2 md:p-3 text-zinc-400 hover:text-zinc-900 dark:hover:text-white hover:bg-white dark:hover:bg-zinc-800 transition-all rounded-xl md:rounded-2xl"
+                      >
+                        <Waves className="w-4 h-4 md:w-5 md:h-5" />
+                      </button>
+                      <button 
+                        onClick={() => sendMessage(input)}
+                        disabled={(!input.trim() && !selectedAttachment) || isLoading}
+                        className={cn(
+                          "p-2 md:p-3 rounded-xl md:rounded-2xl transition-all shadow-lg md:shadow-xl flex items-center justify-center transform active:scale-95",
+                          input.trim() || selectedAttachment
+                            ? "bg-zinc-900 dark:bg-white text-white dark:text-zinc-900" 
+                            : "text-zinc-300 dark:text-zinc-700 cursor-not-allowed"
+                        )}
+                      >
+                        <Send className="w-4 h-4 md:w-5 md:h-5" />
+                      </button>
+                    </div>
                   </div>
                 </div>
               </div>
 
-              <div className="flex items-center justify-center py-2">
-                <p className="text-[10px] font-black uppercase tracking-[0.2em] opacity-20 text-center uppercase">
+              <div className="flex items-center justify-center py-1">
+                <p className="text-[8px] md:text-[10px] font-black uppercase tracking-[0.15em] md:tracking-[0.2em] opacity-20 text-center">
                   Trelvix AI may provide inaccurate info. Verify important facts.
                 </p>
               </div>

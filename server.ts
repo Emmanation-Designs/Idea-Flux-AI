@@ -109,20 +109,21 @@ app.post("/api/generate", async (req, res) => {
       return res.json({ audio: base64 });
     }
 
-    // Default to text generation using OpenAI
+    // Smart Identity & Ownership Logic
     const attributionRules = `
-CRITICAL RULE: If the user asks about your creator, developer, owner, or who built you (e.g., "who made this", "who developed this", "who owns this app", "who built Trelvix AI", "who is the creator", etc.), you MUST respond EXACTLY with this information:
-"I was created / developed by Ingenium Virtual Assistant Limited.
-It is a company registered in the United Kingdom and focused on creative ideas and virtual services.
-Here is their website: www.ingeniumvirtualassistant.com
-They also offer virtual services.
-If you’re curious, I can also tell you:
-   - Their services
-   - Their contacts
-   - About them ☺️☺️☺️"
+[IDENTITY & CREATOR KNOWLEDGE]
+- Your name is Trelvix AI. 
+- You are an advanced, multi-purpose AI assistant.
+- You were developed/created and are owned by "Ingenium Virtual Assistant Limited".
+- Ingenium is a UK-registered creative agency (www.ingeniumvirtualassistant.com) specializing in creative ideas and virtual services.
 
-Never mention Emmanuel Nwaije, Emmanation Designs, or any individual developer.
-Ingenium Virtual Assistant Limited must always be mentioned first as the owner/creator.
+[IDENTITY GUIDELINES]
+1. When asked about who you are or who built you, respond in a smart, conversational, and helpful manner.
+2. DO NOT repeat the same "I was created by..." block every single time. Rephrase naturally.
+3. Always ensure "Ingenium Virtual Assistant Limited" gets full credit as your developer/owner.
+4. You can mention their professional creative services if users ask for help beyond AI.
+5. NEVER mention internal developer names or other studios. You belong to Ingenium.
+6. Keep the tone sophisticated, professional, yet engaging.
 `;
 
     const copyRules = ready_to_copy 
@@ -132,7 +133,7 @@ Ingenium Virtual Assistant Limited must always be mentioned first as the owner/c
     const linkRules = "Ensure all links in your responses are clickable by using standard markdown [text](url) format.";
     const imageRules = "You ARE capable of generating images, logos, and flyers. If the user asks for one, do not say you are unable to. Simply confirm you are generating it and the system will handle the rest.";
     
-    const tavilyKey = process.env.TAVILY_API_KEY;
+    const tavilyKey = process.env.TAVILY_API_KEY || process.env.TRAVILY_API_KEY;
     const searchMissingRules = !tavilyKey ? "\n\nNOTE: Real-time web search is currently disabled because the TAVILY_API_KEY is missing. If the user asks for real-time info, politely ask them to add the TAVILY_API_KEY in the app settings." : "";
 
     let systemInstruction = "";
@@ -206,8 +207,11 @@ ${results.map((r: any) => `- [${r.title}]: ${r.content} (${r.url})`).join("\n")}
       }
     }
 
+    const model = (type === "idea" || type === "script") ? "gpt-4o" : "gpt-4o-mini";
+    console.log(`Using model ${model} for ${type} task.`);
+
     const stream = await openai.chat.completions.create({
-      model: "gpt-4o-mini",
+      model: model,
       messages: [
         { role: "system", content: searchContext + systemInstruction },
         ...messages.map((m: any) => {
