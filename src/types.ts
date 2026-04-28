@@ -27,9 +27,11 @@ export interface Conversation {
 export interface Profile {
   id: string;
   email: string;
-  plan: 'free' | 'pro';
-  usage_count: number;
-  max_usage: number;
+  plan: 'free' | 'pro' | 'plus';
+  usage_messages: number;
+  usage_analysis: number;
+  usage_images: number;
+  last_reset_date: string | null;
   pro_expires_at: string | null;
   activation_key?: string;
 }

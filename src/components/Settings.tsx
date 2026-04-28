@@ -13,7 +13,13 @@ import {
   User,
   Info,
   Smartphone,
-  Zap
+  Zap,
+  Check,
+  Plus,
+  MessageSquare,
+  FileText,
+  Hash,
+  Image as ImageIcon
 } from 'lucide-react';
 import { motion } from 'motion/react';
 import { clsx, type ClassValue } from 'clsx';
@@ -33,6 +39,7 @@ export const Settings = ({
   onToggleAutoPlay,
   onShowLegal,
   onApplyKey,
+  onUpgrade,
   isDarkMode,
   onToggleTheme
 }: { 
@@ -44,6 +51,7 @@ export const Settings = ({
   onToggleAutoPlay: () => void;
   onShowLegal: (type: 'about' | 'privacy' | 'terms') => void;
   onApplyKey: (key: string) => Promise<void>;
+  onUpgrade: () => void;
   isDarkMode: boolean;
   onToggleTheme: () => void;
 }) => {
@@ -58,24 +66,21 @@ export const Settings = ({
     setKey('');
   };
 
+  const userInitial = profile?.email?.charAt(0).toUpperCase() || 'U';
+
   return (
     <motion.div 
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
       exit={{ opacity: 0 }}
-      className="fixed inset-0 z-50 flex flex-col bg-white dark:bg-zinc-950 overflow-hidden"
+      className="fixed inset-0 z-50 flex flex-col bg-zinc-50 dark:bg-zinc-950 overflow-hidden"
     >
       {/* Header */}
-      <header className="h-16 flex items-center justify-between px-6 border-b border-zinc-200 dark:border-zinc-800">
-        <h2 className="text-xl font-black tracking-tight flex items-center gap-3">
-          <div className="w-8 h-8 bg-zinc-900 dark:bg-white rounded-lg flex items-center justify-center">
-            <SettingsIcon className="w-4 h-4 text-white dark:text-black" />
-          </div>
-          Settings
-        </h2>
+      <header className="h-16 flex items-center justify-between px-6 border-b border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-950">
+        <h2 className="text-sm font-black uppercase tracking-widest opacity-40">Settings</h2>
         <button 
           onClick={onClose} 
-          className="p-2 hover:bg-zinc-100 dark:hover:bg-zinc-900 rounded-xl transition-all active:scale-95 border border-zinc-200 dark:border-zinc-800"
+          className="p-2 hover:bg-zinc-100 dark:hover:bg-zinc-900 rounded-full transition-all"
         >
           <X className="w-5 h-5" />
         </button>
@@ -83,200 +88,148 @@ export const Settings = ({
 
       {/* Scrollable Content */}
       <div className="flex-1 overflow-y-auto">
-        <div className="max-w-3xl mx-auto w-full p-6 md:p-12 space-y-12">
+        <div className="max-w-xl mx-auto w-full p-6 md:p-12 space-y-12">
           
-          {/* Account & Plan */}
-          <section className="space-y-6">
-            <div className="flex items-center gap-2 text-xs font-black uppercase tracking-[0.2em] opacity-40">
-              <User className="w-3.5 h-3.5" />
-              Account & Plan
-            </div>
-            
-            <div className="grid md:grid-cols-2 gap-6">
-              <div className="p-6 bg-zinc-50 dark:bg-zinc-900/50 rounded-2xl border border-zinc-200 dark:border-zinc-800 relative overflow-hidden group">
-                <div className="absolute top-0 right-0 p-4 opacity-5 group-hover:opacity-10 transition-opacity">
-                  <CreditCard className="w-24 h-24 rotate-12" />
-                </div>
-                <div className="relative flex flex-col h-full justify-between gap-4">
-                  <div>
-                    <span className={cn(
-                      "px-3 py-1 rounded-full text-[10px] font-black tracking-widest uppercase",
-                      profile?.plan === 'pro' 
-                        ? "bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-400 border border-amber-200 dark:border-amber-800" 
-                        : "bg-zinc-200 text-zinc-700 dark:bg-zinc-800 dark:text-zinc-400 border border-zinc-300 dark:border-zinc-700"
-                    )}>
-                      {profile?.plan === 'pro' ? 'PRO PLAN' : 'FREE PLAN'}
-                    </span>
-                    <h3 className="mt-4 text-2xl font-black">
-                      {profile?.plan === 'pro' ? 'Premium Active' : 'Limited Access'}
-                    </h3>
-                  </div>
-                  
-                  <div className="space-y-2">
-                    <div className="flex justify-between text-xs font-bold opacity-60">
-                      <span>Usage Tracker</span>
-                      <span>{profile?.usage_count || 0} / {profile?.plan === 'pro' ? '∞' : (profile?.max_usage || 15)}</span>
-                    </div>
-                    <div className="w-full h-2 bg-zinc-200 dark:bg-zinc-800 rounded-full overflow-hidden">
-                      <motion.div 
-                        initial={{ width: 0 }}
-                        animate={{ width: profile?.plan === 'pro' ? '100%' : `${Math.min(100, ((profile?.usage_count || 0) / (profile?.max_usage || 15)) * 100)}%` }}
-                        className={cn(
-                          "h-full rounded-full transition-all duration-1000",
-                          profile?.plan === 'pro' ? "bg-amber-500 shadow-[0_0_10px_rgba(245,158,11,0.5)]" : "bg-zinc-900 dark:bg-white"
-                        )}
-                      />
-                    </div>
-                  </div>
-                </div>
-              </div>
+          {/* User Profile Info - Minimalist */}
+          <div className="flex flex-col items-center gap-2 text-center">
+            <h3 className="text-3xl font-black tracking-tight">{profile?.email?.split('@')[0]}</h3>
+            <p className="text-[10px] text-zinc-400 font-bold uppercase tracking-[0.2em]">{profile?.plan} account</p>
+          </div>
 
-              <div className="p-6 bg-zinc-50 dark:bg-zinc-900/50 rounded-2xl border border-zinc-200 dark:border-zinc-800 flex flex-col justify-between gap-6">
+          {/* Section: My Trelvix AI */}
+          <section className="space-y-4">
+            <h4 className="text-[10px] font-black uppercase tracking-[0.2em] opacity-40 px-2">My Trelvix AI</h4>
+            <div className="bg-white dark:bg-zinc-900 rounded-3xl border border-zinc-200 dark:border-zinc-800 overflow-hidden divide-y divide-zinc-100 dark:divide-zinc-800 shadow-sm">
+              <div className="p-6 space-y-6">
                 <div>
-                  <h4 className="text-sm font-black uppercase tracking-wider opacity-60 mb-2">Activation Settings</h4>
-                  <div className="flex gap-2">
-                    <input 
-                      className="flex-1 bg-white dark:bg-zinc-950 border border-zinc-200 dark:border-zinc-800 rounded-xl px-4 py-2.5 focus:ring-2 focus:ring-zinc-900 dark:focus:ring-white outline-none text-sm transition-all"
-                      placeholder={profile?.plan === 'pro' ? "Pro already active" : "Enter key to upgrade"}
-                      value={key}
-                      onChange={(e) => setKey(e.target.value)}
-                      disabled={isApplying || profile?.plan === 'pro'}
-                    />
-                    <button 
-                      onClick={handleApply}
-                      disabled={isApplying || !key.trim() || profile?.plan === 'pro'}
-                      className="px-6 py-2.5 bg-zinc-900 dark:bg-white text-white dark:text-zinc-900 rounded-xl text-sm font-black disabled:opacity-50 hover:opacity-90 transition-all active:scale-95 shadow-lg shadow-black/5"
-                    >
-                      {isApplying ? '...' : 'APPLY'}
-                    </button>
+                  <div className="flex items-center gap-4 mb-4">
+                    <User className="w-5 h-5 text-emerald-500" />
+                    <div className="text-sm font-black uppercase tracking-widest">Personalization</div>
+                  </div>
+                  <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
+                    {[
+                      'Default', 'Fun', 'Therapy', 'Teacher', 'Professional', 
+                      'Creative', 'Technical', 'Motivational', 'Sarcastic', 'Empathetic',
+                      'Minimalist', 'Expert', 'Curious', 'Storyteller', 'Assistant'
+                    ].map((p) => (
+                      <button 
+                        key={p}
+                        className="px-3 py-2 text-[10px] font-black uppercase tracking-widest bg-zinc-50 dark:bg-zinc-950 border border-zinc-100 dark:border-zinc-800 rounded-xl hover:border-emerald-500 transition-all text-zinc-500 hover:text-emerald-500"
+                      >
+                        {p}
+                      </button>
+                    ))}
                   </div>
                 </div>
-                {profile?.plan === 'free' ? (
-                  <p className="text-xs text-zinc-500 leading-relaxed">
-                    Unlock Unlimited Generations, DALL·E 3 High-Definition Images, and Advanced Search.
-                  </p>
-                ) : (
-                  <div className="text-xs text-amber-600 dark:text-amber-400 font-bold">
-                    Pro subscription active. Thank you for supporting Ideaflux AI.
+
+                <div className="space-y-4 pt-4 border-t border-zinc-100 dark:border-zinc-800 text-center">
+                  <div className="text-[10px] text-zinc-500 font-black uppercase tracking-widest mb-4">Quick AI Tools</div>
+                  <div className="flex items-center justify-around">
+                    {[
+                      { icon: MessageSquare, label: 'Idea', color: 'text-blue-500', type: 'idea' },
+                      { icon: FileText, label: 'Script', color: 'text-purple-500', type: 'script' },
+                      { icon: Hash, label: 'Tags', color: 'text-emerald-500', type: 'hashtag' },
+                      { icon: ImageIcon, label: 'Images', color: 'text-orange-500', type: 'image' }
+                    ].map((app) => (
+                      <button 
+                        key={app.label}
+                        onClick={() => {
+                          onClose();
+                          // The App.tsx handles setShowContextForm if we were to emit an event, 
+                          // but for now, we'll just go to the view or the user can navigate.
+                          // Ideally we'd want to trigger the form.
+                          // I'll assume standard navigation for now.
+                        }}
+                        className="flex flex-col items-center gap-2 group"
+                      >
+                        <div className="w-12 h-12 flex items-center justify-center bg-zinc-50 dark:bg-zinc-950 rounded-2xl border border-zinc-100 dark:border-zinc-800 group-hover:border-zinc-400 transition-all">
+                          <app.icon className={cn("w-5 h-5", app.color)} />
+                        </div>
+                        <span className="text-[10px] font-black uppercase tracking-widest opacity-60">{app.label}</span>
+                      </button>
+                    ))}
                   </div>
-                )}
+                </div>
               </div>
             </div>
           </section>
 
-          {/* Preferences */}
-          <section className="space-y-6">
-            <div className="flex items-center gap-2 text-xs font-black uppercase tracking-[0.2em] opacity-40">
-              <Smartphone className="w-3.5 h-3.5" />
-              Preferences & Themes
-            </div>
-
-            <div className="grid md:grid-cols-2 gap-4">
-              {/* Appearance */}
-              <div className="p-1 bg-zinc-100 dark:bg-zinc-900 rounded-2xl flex items-center">
+          {/* Section: Account */}
+          <section className="space-y-4">
+            <h4 className="text-[10px] font-black uppercase tracking-[0.2em] opacity-40 px-2">Account</h4>
+            <div className="bg-white dark:bg-zinc-900 rounded-3xl border border-zinc-200 dark:border-zinc-800 overflow-hidden shadow-sm">
+              {/* Plan Box */}
+              <div className="p-8 bg-zinc-50 dark:bg-zinc-950 border-b border-zinc-100 dark:divide-zinc-800">
+                <div className="flex items-center justify-between mb-4">
+                  <span className={cn(
+                    "px-3 py-1 rounded-full text-[10px] font-black tracking-widest uppercase",
+                    profile?.plan === 'free' ? "bg-zinc-200 text-zinc-600" : "bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-400 border border-amber-200 dark:border-amber-800"
+                  )}>
+                    {profile?.plan?.toUpperCase()} PLAN
+                  </span>
+                  {(profile?.plan === 'pro' || profile?.plan === 'plus') && profile?.pro_expires_at && (
+                    <span className="text-[10px] font-bold text-zinc-500 italic">
+                      {Math.ceil((new Date(profile.pro_expires_at).getTime() - Date.now()) / (1000 * 60 * 60 * 24))} days remaining
+                    </span>
+                  )}
+                </div>
+                <h4 className="text-2xl font-black mb-6">
+                  {profile?.plan === 'free' ? 'Unlock Professional Tools' : 'Premium Access Active'}
+                </h4>
                 <button 
-                  onClick={() => !isDarkMode && onToggleTheme()}
+                  onClick={onUpgrade}
                   className={cn(
-                    "flex-1 flex items-center justify-center gap-3 py-3 rounded-xl text-sm font-bold transition-all",
-                    !isDarkMode ? "bg-white text-black shadow-sm" : "text-zinc-500 hover:text-zinc-300"
+                    "w-full py-4 rounded-2xl text-xs font-black uppercase tracking-[0.2em] transition-all transform active:scale-95 shadow-xl",
+                    profile?.plan === 'free' 
+                      ? "bg-zinc-900 dark:bg-zinc-100 text-white dark:text-zinc-900 shadow-zinc-900/20 dark:shadow-white/10"
+                      : "bg-amber-500 text-white shadow-amber-500/20"
                   )}
                 >
-                  <Sun className="w-4 h-4" />
-                  Light
-                </button>
-                <button 
-                  onClick={() => isDarkMode && onToggleTheme()}
-                  className={cn(
-                    "flex-1 flex items-center justify-center gap-3 py-3 rounded-xl text-sm font-bold transition-all",
-                    isDarkMode ? "bg-zinc-800 text-white shadow-sm" : "text-zinc-500 hover:text-zinc-700"
-                  )}
-                >
-                  <Moon className="w-4 h-4" />
-                  Dark
+                  {profile?.plan === 'free' ? 'Upgrade Plan' : 'Manage Subscription'}
                 </button>
               </div>
 
-              {/* Voice Autoplay */}
-              <div className="flex items-center justify-between p-4 bg-zinc-50 dark:bg-zinc-900/50 rounded-2xl border border-zinc-200 dark:border-zinc-800">
-                <div className="flex flex-col">
-                  <span className="text-sm font-bold">Auto-play Voice</span>
-                  <span className="text-[10px] opacity-50 uppercase tracking-widest leading-none">Voice Replies</span>
+              {/* Email & Settings */}
+              <div className="divide-y divide-zinc-100 dark:divide-zinc-800">
+                <div className="px-6 py-5 flex items-center justify-between">
+                  <div className="flex items-center gap-4">
+                    <Info className="w-5 h-5 text-zinc-400" />
+                    <div>
+                      <div className="text-sm font-black">Email</div>
+                      <div className="text-xs text-zinc-400 font-medium">{profile?.email}</div>
+                    </div>
+                  </div>
                 </div>
                 <button 
-                  onClick={onToggleAutoPlay}
-                  className={cn(
-                    "w-12 h-6 rounded-full transition-all relative",
-                    autoPlayVoice ? "bg-zinc-900 dark:bg-white" : "bg-zinc-200 dark:bg-zinc-700"
-                  )}
+                  onClick={onToggleTheme}
+                  className="w-full px-6 py-5 flex items-center justify-between hover:bg-zinc-50 dark:hover:bg-zinc-800 transition-colors text-left"
                 >
-                  <motion.div 
-                    animate={{ x: autoPlayVoice ? 24 : 4 }}
-                    className={cn(
-                      "absolute top-1 w-4 h-4 rounded-full shadow-sm",
-                      autoPlayVoice ? "bg-white dark:bg-zinc-950" : "bg-white"
-                    )}
-                  />
+                  <div className="flex items-center gap-4">
+                    {isDarkMode ? <Sun className="w-5 h-5 text-zinc-400" /> : <Moon className="w-5 h-5 text-zinc-400" />}
+                    <div className="text-sm font-black">Appearance</div>
+                  </div>
+                  <div className="text-[10px] font-black uppercase tracking-widest text-zinc-400">{isDarkMode ? 'Dark' : 'Light'}</div>
                 </button>
-              </div>
-            </div>
-
-            {/* Voice Selection */}
-            <div className="p-6 bg-zinc-50 dark:bg-zinc-900/50 rounded-2xl border border-zinc-200 dark:border-zinc-800 space-y-4">
-              <div className="flex items-center justify-between">
-                <h4 className="text-sm font-black uppercase tracking-wider opacity-60">AI Voice Profile</h4>
-                <div className="flex items-center gap-2 text-zinc-400">
-                  <Volume2 className="w-4 h-4" />
-                </div>
-              </div>
-              <div className="grid grid-cols-2 gap-3">
-                {(['alloy', 'echo'] as const).map((v, i) => (
-                  <button
-                    key={`${v}-${i}`}
-                    onClick={() => onVoiceOptionChange(v)}
-                    className={cn(
-                      "flex items-center justify-between px-6 py-4 rounded-xl text-sm font-black transition-all border-2",
-                      voiceOption === v 
-                        ? "bg-white dark:bg-zinc-950 text-zinc-900 dark:text-white border-zinc-900 dark:border-white shadow-xl shadow-black/5 scale-[1.02]" 
-                        : "bg-transparent border-transparent text-zinc-500 hover:bg-white/50 dark:hover:bg-zinc-800/50"
-                    )}
-                  >
-                    <span>{v === 'alloy' ? 'Female' : 'Male'}</span>
-                    <span className="text-[10px] opacity-40 uppercase tracking-widest">{v}</span>
-                  </button>
-                ))}
               </div>
             </div>
           </section>
 
-          {/* Footer / Links */}
-          <section className="pt-12 border-t border-zinc-200 dark:border-zinc-800 space-y-12">
-            <div className="flex flex-col md:flex-row items-center justify-between gap-8">
-              <div className="flex flex-wrap items-center justify-center md:justify-start gap-x-8 gap-y-4">
-                <button onClick={() => onShowLegal('about')} className="text-xs font-black uppercase tracking-[0.1em] opacity-40 hover:opacity-100 transition-opacity">About</button>
-                <button onClick={() => onShowLegal('privacy')} className="text-xs font-black uppercase tracking-[0.1em] opacity-40 hover:opacity-100 transition-opacity">Privacy</button>
-                <button onClick={() => onShowLegal('terms')} className="text-xs font-black uppercase tracking-[0.1em] opacity-40 hover:opacity-100 transition-opacity">Terms</button>
-              </div>
-              
-              <div className="flex items-center gap-6">
-                <a 
-                  href="https://wa.me/447526596522" 
-                  target="_blank" 
-                  rel="noopener noreferrer"
-                  className="px-6 py-3 bg-emerald-500 dark:bg-emerald-600 text-white rounded-full text-xs font-black tracking-widest uppercase hover:scale-105 transition-all shadow-lg shadow-emerald-500/20"
-                >
-                  Chat on WhatsApp
-                </a>
-              </div>
-            </div>
-
-            <div className="flex flex-col items-center gap-4 py-8">
-              <div className="flex items-center gap-2 grayscale brightness-200 opacity-30">
-                <Zap className="w-5 h-5" />
-                <span className="font-black text-lg tracking-tighter">IDEAFLUX AI</span>
-              </div>
-              <p className="text-[10px] uppercase font-black tracking-[0.3em] opacity-20">
-                Version 2.0.4 • Powered by OpenAI
-              </p>
+          {/* Section: Legal */}
+          <section className="space-y-4 pb-12">
+            <h4 className="text-[10px] font-black uppercase tracking-[0.2em] opacity-40 px-2">Legal</h4>
+            <div className="bg-white dark:bg-zinc-900 rounded-3xl border border-zinc-200 dark:border-zinc-800 overflow-hidden divide-y divide-zinc-100 dark:divide-zinc-800 shadow-sm">
+              <button onClick={() => onShowLegal('about')} className="w-full px-6 py-5 flex items-center justify-between hover:bg-zinc-50 dark:hover:bg-zinc-800 transition-colors text-left group">
+                <span className="text-sm font-black group-hover:pl-2 transition-all">About</span>
+                <ChevronRight className="w-4 h-4 text-zinc-300" />
+              </button>
+              <button onClick={() => onShowLegal('privacy')} className="w-full px-6 py-5 flex items-center justify-between hover:bg-zinc-50 dark:hover:bg-zinc-800 transition-colors text-left group">
+                <span className="text-sm font-black group-hover:pl-2 transition-all">Privacy Policy</span>
+                <ChevronRight className="w-4 h-4 text-zinc-300" />
+              </button>
+              <button onClick={() => onShowLegal('terms')} className="w-full px-6 py-5 flex items-center justify-between hover:bg-zinc-50 dark:hover:bg-zinc-800 transition-colors text-left group">
+                <span className="text-sm font-black group-hover:pl-2 transition-all">Terms of Service</span>
+                <ChevronRight className="w-4 h-4 text-zinc-300" />
+              </button>
             </div>
           </section>
         </div>
@@ -284,3 +237,4 @@ export const Settings = ({
     </motion.div>
   );
 };
+

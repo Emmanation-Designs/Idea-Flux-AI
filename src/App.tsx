@@ -107,6 +107,13 @@ import { Auth } from './components/Auth';
 import { LegalModal } from './components/Legal';
 import { CodeBlock } from './components/CodeBlock';
 import { UpgradeModal } from './components/UpgradeModal';
+import { AppsView } from './components/AppsView';
+
+const PLAN_LIMITS = {
+  free: { messages: 15, analysis: 5, images: 5 },
+  pro: { messages: 100, analysis: Infinity, images: 20 },
+  plus: { messages: Infinity, analysis: Infinity, images: Infinity }
+};
 
 // --- Utils ---
 function cn(...inputs: ClassValue[]) {
@@ -135,7 +142,7 @@ export default function App() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [expandedImage, setExpandedImage] = useState<{url: string, title: string} | null>(null);
   const [streamingMessage, setStreamingMessage] = useState('');
-  const [view, setView] = useState<'chat' | 'history'>('chat');
+  const [activeView, setActiveView] = useState<'chat' | 'history' | 'apps' | 'images' | 'settings'>('chat');
   const [isListening, setIsListening] = useState(false);
   const [voiceOption, setVoiceOption] = useState<'alloy' | 'echo'>('alloy');
   const [isPlaying, setIsPlaying] = useState(false);
@@ -143,18 +150,15 @@ export default function App() {
   const [currentlyPlayingMessageId, setCurrentlyPlayingMessageId] = useState<string | null>(null);
   const [shouldPlayVoice, setShouldPlayVoice] = useState(false);
   const [autoPlayVoice, setAutoPlayVoice] = useState(false);
-  
   const [showVoiceMode, setShowVoiceMode] = useState(false);
   const [isMuted, setIsMuted] = useState(false);
   const [isSpeakerOn, setIsSpeakerOn] = useState(true);
   const [currentTranscript, setCurrentTranscript] = useState('');
   const [currentResponse, setCurrentResponse] = useState('');
   const transcriptRef = useRef('');
-  
   const [activeMessageId, setActiveMessageId] = useState<string | null>(null);
-  
   const [showUpgradeModal, setShowUpgradeModal] = useState(false);
-  const [upgradeReason, setUpgradeReason] = useState<'usage' | 'images'>('usage');
+  const [upgradeReason, setUpgradeReason] = useState<'usage' | 'images' | 'manual'>('usage');
   
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const recognitionRef = useRef<any>(null);
@@ -471,20 +475,52 @@ export default function App() {
       .eq('id', user.id)
       .single();
     
+    // Check for daily reset
+    const now = new Date();
+    const today = now.toISOString().split('T')[0];
+    
     if (error && error.code === 'PGRST116') {
       // Create profile if not exists
       const newProfile = {
         id: user.id,
         email: user.email,
-        usage_count: 0,
-        max_usage: 15,
+        usage_messages: 0,
+        usage_analysis: 0,
+        usage_images: 0,
+        last_reset_date: now.toISOString(),
         plan: 'free',
         pro_expires_at: null
       };
       const { data: created } = await supabase.from('profiles').insert(newProfile).select().single();
       setProfile(created);
-    } else {
-      setProfile(data);
+    } else if (data) {
+      const lastReset = data.last_reset_date ? new data.last_reset_date.split('T')[0] : '';
+      
+      if (lastReset !== today) {
+        // Reset counters for a new day
+        const resetData = {
+          usage_messages: 0,
+          usage_analysis: 0,
+          usage_images: 0,
+          last_reset_date: now.toISOString()
+        };
+        const { data: updated } = await supabase.from('profiles').update(resetData).eq('id', user.id).select().single();
+        setProfile(updated);
+      } else {
+        // Standard profile fetch with migration for old profiles
+        if (!('usage_messages' in data)) {
+          const migrated = {
+            usage_messages: data.usage_count || 0,
+            usage_analysis: 0,
+            usage_images: 0,
+            last_reset_date: data.last_reset_date || now.toISOString()
+          };
+          const { data: updated } = await supabase.from('profiles').update(migrated).eq('id', user.id).select().single();
+          setProfile(updated);
+        } else {
+          setProfile(data);
+        }
+      }
     }
   };
 
@@ -561,7 +597,7 @@ export default function App() {
     setCurrentConversation(null);
     setMessages([]);
     setStreamingMessage('');
-    setView('chat');
+    setActiveView('chat');
     if (window.innerWidth < 1024) setIsSidebarOpen(false);
   };
 
@@ -581,7 +617,7 @@ export default function App() {
       
       setMessages(uniqueMessages);
       setStreamingMessage('');
-      setView('chat');
+      setActiveView('chat');
       if (window.innerWidth < 1024) setIsSidebarOpen(false);
     }
   };
@@ -716,28 +752,27 @@ export default function App() {
       /image of|picture of|photo of|generate a|create a|make a/i.test(lowerContent) ||
       /^realistic |^photorealistic /i.test(lowerContent);
 
+    const isAnalysisIntent = !!selectedAttachment;
+
     // Check for usage limits
-    if (profile && profile.plan === 'free') {
-      // General usage limit (15 requests)
-      if (profile.usage_count >= (profile.max_usage || 15)) {
-        setUpgradeReason('usage');
-        setShowUpgradeModal(true);
-        return;
-      }
-
-      // Image generation limit (3 per day)
+    if (profile) {
+      const limits = PLAN_LIMITS[profile.plan as keyof typeof PLAN_LIMITS] || PLAN_LIMITS.free;
+      
       if (isImageIntent) {
-        const today = new Date();
-        today.setHours(0, 0, 0, 0);
-        
-        const { count, error: countError } = await supabase
-          .from('images')
-          .select('*', { count: 'exact', head: true })
-          .eq('user_id', user.id)
-          .gte('created_at', today.toISOString());
-
-        if (!countError && count !== null && count >= 3) {
+        if (profile.usage_images >= limits.images) {
           setUpgradeReason('images');
+          setShowUpgradeModal(true);
+          return;
+        }
+      } else if (isAnalysisIntent) {
+        if (profile.usage_analysis >= limits.analysis) {
+          setUpgradeReason('usage'); // Re-using usage for analysis limit for now
+          setShowUpgradeModal(true);
+          return;
+        }
+      } else {
+        if (profile.usage_messages >= limits.messages) {
+          setUpgradeReason('usage');
           setShowUpgradeModal(true);
           return;
         }
@@ -814,9 +849,12 @@ export default function App() {
         }).eq('id', conv.id);
         
         if (profile) {
-          const newCount = (profile.usage_count || 0) + 1;
-          await supabase.from('profiles').update({ usage_count: newCount }).eq('id', user.id);
-          setProfile({ ...profile, usage_count: newCount });
+          const { data: updatedProfile } = await supabase.from('profiles')
+            .update({ usage_images: (profile?.usage_images || 0) + 1 })
+            .eq('id', user.id)
+            .select()
+            .single();
+          if (updatedProfile) setProfile(updatedProfile);
         }
         
         setIsLoading(false);
@@ -864,9 +902,13 @@ export default function App() {
       }).eq('id', conv.id);
       
       if (profile) {
-        const newCount = (profile.usage_count || 0) + 1;
-        await supabase.from('profiles').update({ usage_count: newCount }).eq('id', user.id);
-        setProfile({ ...profile, usage_count: newCount });
+        const usageField = currentAttachment ? 'usage_analysis' : 'usage_messages';
+        const { data: updatedProfile } = await supabase.from('profiles')
+          .update({ [usageField]: (profile?.[usageField as keyof Profile] as number || 0) + 1 })
+          .eq('id', user.id)
+          .select()
+          .single();
+        if (updatedProfile) setProfile(updatedProfile);
       }
 
       setIsLoading(false);
@@ -890,7 +932,7 @@ export default function App() {
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `ideaflux-chat-${currentConversation?.title || 'export'}.txt`;
+    a.download = `trelvix-chat-${currentConversation?.title || 'export'}.txt`;
     a.click();
     URL.revokeObjectURL(url);
   };
@@ -1035,7 +1077,7 @@ export default function App() {
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `ideaflux-answer-${id.slice(0, 8)}.txt`;
+    a.download = `trelvix-answer-${id.slice(0, 8)}.txt`;
     a.click();
     URL.revokeObjectURL(url);
     toast.success('Download started');
@@ -1131,85 +1173,152 @@ export default function App() {
       <Sidebar 
         isOpen={isSidebarOpen}
         setIsOpen={setIsSidebarOpen}
-        conversations={conversations}
-        onSelectConversation={handleSelectConversation}
         onNewChat={handleNewChat}
-        currentConversationId={currentConversation?.id || null}
+        onOpenSettings={() => {
+          setShowSettings(true);
+          setActiveView('settings' as any);
+        }}
+        onOpenApps={() => setActiveView('apps')}
+        onOpenImages={() => setActiveView('images')}
+        activeView={activeView}
         onLogout={handleLogout}
-        onRename={handleRenameConversation}
-        onDelete={handleDeleteConversation}
-        onToggleHistory={() => setView(view === 'chat' ? 'history' : 'chat')}
-        onOpenSettings={() => setShowSettings(true)}
-        view={view}
       />
 
       <main className="flex-1 flex flex-col relative overflow-hidden">
-        {/* Header */}
-        <header className="h-16 flex items-center justify-between px-4 border-b border-zinc-200 dark:border-zinc-800 bg-white/80 dark:bg-zinc-950/80 backdrop-blur-md sticky top-0 z-30">
-          <div className="flex items-center gap-3">
-            {!isSidebarOpen && (
-              <button onClick={() => setIsSidebarOpen(true)} className="p-2 hover:bg-zinc-100 dark:hover:bg-zinc-900 rounded-lg">
-                <Menu className="w-5 h-5" />
-              </button>
-            )}
-            <h1 className="font-bold text-lg hidden md:block">
-              {currentConversation ? currentConversation.title : 'Ideaflux AI'}
-            </h1>
-          </div>
+        {/* Only show standard header for chat */}
+        {activeView === 'chat' && (
+          <header className="h-16 flex items-center justify-between px-4 border-b border-zinc-200 dark:border-zinc-800 bg-white/80 dark:bg-zinc-950/80 backdrop-blur-md sticky top-0 z-30">
+            <div className="flex items-center gap-3">
+              {!isSidebarOpen && (
+                <button onClick={() => setIsSidebarOpen(true)} className="p-2 hover:bg-zinc-100 dark:hover:bg-zinc-900 rounded-lg">
+                  <Menu className="w-5 h-5" />
+                </button>
+              )}
+              <h1 className="font-bold text-lg hidden md:block">
+                {currentConversation ? currentConversation.title : 'Trelvix AI'}
+              </h1>
+            </div>
 
-          <div className="flex items-center gap-2">
-            {messages.length > 0 && (
+            <div className="flex items-center gap-2">
               <button 
-                onClick={handleDownload}
-                className="p-2 hover:bg-zinc-100 dark:hover:bg-zinc-900 rounded-lg transition-colors"
-                title="Download conversation"
+                onClick={() => setActiveView('history')}
+                className="px-3 py-1.5 rounded-xl text-xs font-black uppercase tracking-widest transition-all hover:bg-zinc-100 dark:hover:bg-zinc-900 opacity-40 hover:opacity-100"
               >
-                <Download className="w-5 h-5" />
+                History
               </button>
-            )}
-          </div>
-        </header>
+              {messages.length > 0 && (
+                <button 
+                  onClick={handleDownload}
+                  className="p-2 hover:bg-zinc-100 dark:hover:bg-zinc-900 rounded-lg transition-colors"
+                  title="Download conversation"
+                >
+                  <Download className="w-5 h-5" />
+                </button>
+              )}
+            </div>
+          </header>
+        )}
 
         {/* Content Area */}
-        <div className="flex-1 overflow-y-auto flex flex-col pb-4">
-          {view === 'history' ? (
+        <div className="flex-1 overflow-y-auto flex flex-col">
+          {activeView === 'apps' ? (
+            <div className="flex-1 flex flex-col overflow-hidden">
+              <div className="px-6 pt-6 flex items-center justify-between md:hidden">
+                <button 
+                  onClick={() => setActiveView('chat')}
+                  className="px-4 py-2 bg-zinc-100 dark:bg-zinc-900 rounded-xl text-xs font-bold"
+                >
+                  Back
+                </button>
+              </div>
+              <AppsView 
+                onBack={() => setActiveView('chat')}
+                onSelectApp={(type) => {
+                  if (type === 'voice') {
+                    setShowVoiceMode(true);
+                    toggleListening();
+                  } else {
+                    setShowContextForm(type);
+                  }
+                }} 
+              />
+            </div>
+          ) : activeView === 'images' ? (
+            <div className="flex-1 flex flex-col items-center justify-center p-12 text-center space-y-8 relative">
+              <button 
+                onClick={() => setActiveView('chat')}
+                className="absolute top-6 left-6 px-4 py-2 bg-zinc-100 dark:bg-zinc-900 rounded-xl text-xs font-black uppercase tracking-widest hover:bg-zinc-200 dark:hover:bg-zinc-800 transition-all"
+              >
+                Return to Chat
+              </button>
+              <ImageIcon className="w-24 h-24 text-orange-500" />
+              <div>
+                <h2 className="text-4xl font-black">Image Studio</h2>
+                <p className="text-zinc-500 font-bold max-w-sm mx-auto mt-4 leading-relaxed">Generate high-quality AI images using proprietary generation technology.</p>
+              </div>
+              <button 
+                onClick={() => {
+                  setShowContextForm('image');
+                }}
+                className="px-8 py-5 bg-zinc-900 dark:bg-white text-white dark:text-zinc-900 rounded-2xl font-black uppercase tracking-widest shadow-2xl active:scale-95 transition-all hover:shadow-orange-500/20"
+              >
+                Generate New Image
+              </button>
+            </div>
+          ) : activeView === 'history' ? (
             <div className="max-w-4xl mx-auto w-full p-6 space-y-4">
-              <h2 className="text-2xl font-bold mb-6">Chat History</h2>
+              <div className="flex items-center justify-between mb-8">
+                <h2 className="text-3xl font-black">Chat History</h2>
+                <button 
+                  onClick={() => setActiveView('chat')}
+                  className="px-4 py-2 bg-zinc-100 dark:bg-zinc-900 rounded-xl text-xs font-bold hover:bg-zinc-200 dark:hover:bg-zinc-800 transition-all"
+                >
+                  Back to Chat
+                </button>
+              </div>
               {conversations.length === 0 ? (
-                <div className="text-center py-20 opacity-50">No chats yet. Start a new one!</div>
+                <div className="text-center py-20 opacity-50 flex flex-col items-center gap-4">
+                  <div className="w-16 h-16 bg-zinc-100 dark:bg-zinc-900 rounded-full flex items-center justify-center">
+                    <HistoryIcon className="w-8 h-8 opacity-20" />
+                  </div>
+                  <div className="font-bold">No chats yet. Start a new one!</div>
+                </div>
               ) : (
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pb-12">
                     {conversations.map((conv, idx) => (
                       <div
                       key={`history-conv-${conv.id || 'new'}-${idx}-${conv.created_at}`}
-                        className="p-4 bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-2xl text-left hover:border-zinc-400 dark:hover:border-zinc-600 transition-all group relative"
+                        className="p-6 bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-3xl text-left hover:border-zinc-400 dark:hover:border-zinc-600 transition-all group relative hover:shadow-xl"
                       >
-                      <div onClick={() => handleSelectConversation(conv.id)} className="cursor-pointer">
-                        <div className="flex items-center justify-between mb-2">
-                          <span className="text-xs font-bold uppercase tracking-wider opacity-50">{conv.type}</span>
-                          <span className="text-[10px] opacity-40">{new Date(conv.created_at).toLocaleDateString()}</span>
+                      <div onClick={() => {
+                        handleSelectConversation(conv.id);
+                        setActiveView('chat');
+                      }} className="cursor-pointer">
+                        <div className="flex items-center justify-between mb-4">
+                          <span className="text-[10px] font-black uppercase tracking-widest px-2 py-1 bg-zinc-100 dark:bg-zinc-800 rounded-lg">{conv.type}</span>
+                          <span className="text-[10px] font-bold opacity-40 uppercase tracking-widest">{new Date(conv.created_at).toLocaleDateString()}</span>
                         </div>
-                        <h3 className="font-bold mb-2 group-hover:text-zinc-900 dark:group-hover:text-white transition-colors">{conv.title}</h3>
-                        <p className="text-xs opacity-60 line-clamp-2">
+                        <h3 className="font-black mb-3 group-hover:text-zinc-900 dark:group-hover:text-white transition-colors">{conv.title}</h3>
+                        <p className="text-xs opacity-60 line-clamp-2 leading-relaxed">
                           {conv.messages?.[0]?.content || 'No messages yet'}
                         </p>
                       </div>
                       
-                      <div className="absolute right-2 bottom-2 flex items-center gap-1 md:opacity-0 md:group-hover:opacity-100 opacity-100 transition-opacity">
+                      <div className="mt-6 flex items-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
                         <button 
                           onClick={() => {
                             const newTitle = prompt('Rename conversation:', conv.title);
                             if (newTitle) handleRenameConversation(conv.id, newTitle);
                           }}
-                          className="p-1.5 bg-zinc-100 dark:bg-zinc-800 hover:bg-zinc-200 dark:hover:bg-zinc-700 rounded-lg text-zinc-500 hover:text-zinc-900 dark:hover:text-white transition-colors"
+                          className="flex-1 py-2 bg-zinc-100 dark:bg-zinc-800 hover:bg-zinc-200 dark:hover:bg-zinc-700 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all"
                         >
-                          <Edit2 className="w-3.5 h-3.5" />
+                          Rename
                         </button>
                         <button 
                           onClick={() => handleDeleteConversation(conv.id)}
-                          className="p-1.5 bg-zinc-100 dark:bg-zinc-800 hover:bg-zinc-200 dark:hover:bg-zinc-700 rounded-lg text-zinc-500 hover:text-red-500 transition-colors"
+                          className="flex-1 py-2 bg-red-50 dark:bg-red-950/20 hover:bg-red-100 text-red-500 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all"
                         >
-                          <Trash2 className="w-3.5 h-3.5" />
+                          Delete
                         </button>
                       </div>
                     </div>
@@ -1220,14 +1329,7 @@ export default function App() {
           ) : (
             <>
               {messages.length === 0 && !streamingMessage ? (
-                <WelcomeScreen onSelectType={(type) => {
-                  if (type === 'voice') {
-                    setShowVoiceMode(true);
-                    toggleListening();
-                  } else {
-                    setShowContextForm(type);
-                  }
-                }} />
+                <WelcomeScreen />
               ) : (
                 <div className="max-w-4xl mx-auto w-full p-4 md:p-8 space-y-8 pb-32">
                   {messages.map((m, idx) => (
@@ -1429,7 +1531,7 @@ export default function App() {
                             transition={{ repeat: Infinity, duration: 1, delay: 0.4 }}
                             className="w-1.5 h-1.5 bg-zinc-400 dark:bg-zinc-600 rounded-full"
                           />
-                          <span className="text-xs font-medium ml-1">Ideaflux is thinking...</span>
+                          <span className="text-xs font-medium ml-1">Trelvix is thinking...</span>
                         </div>
                       </div>
                     </div>
@@ -1442,75 +1544,53 @@ export default function App() {
         </div>
 
         {/* Input Area */}
-        {view === 'chat' && (
-          <div className="relative p-4 bg-white dark:bg-zinc-950 border-t border-zinc-200 dark:border-zinc-800">
-            <div className="max-w-3xl mx-auto space-y-4">
-              {/* Voice Selection */}
-              {showVoiceMode && (
-                <div className="flex items-center justify-center gap-4 mb-2">
-                  <button
-                    onClick={() => setVoiceOption('alloy')}
-                    className={cn(
-                      "px-3 py-1 rounded-full text-xs font-medium transition-all",
-                      voiceOption === 'alloy' ? "bg-zinc-900 dark:bg-white text-white dark:text-black" : "bg-zinc-100 dark:bg-zinc-800 text-zinc-500"
-                    )}
-                  >
-                    Female (Alloy)
-                  </button>
-                  <button
-                    onClick={() => setVoiceOption('echo')}
-                    className={cn(
-                      "px-3 py-1 rounded-full text-xs font-medium transition-all",
-                      voiceOption === 'echo' ? "bg-zinc-900 dark:bg-white text-white dark:text-black" : "bg-zinc-100 dark:bg-zinc-800 text-zinc-500"
-                    )}
-                  >
-                    Male (Echo)
-                  </button>
-                </div>
-              )}
-              {isListening && (
-                <div className="flex items-center justify-center gap-2 text-zinc-500 animate-pulse mb-2">
-                  <Mic className="w-4 h-4" />
-                  <span className="text-sm font-medium">Listening...</span>
+        {activeView === 'chat' && (
+          <div className="relative p-6 bg-white dark:bg-zinc-950">
+            <div className="max-w-3xl mx-auto space-y-6">
+              {/* Usage Stats Bar */}
+              {profile && profile.plan === 'free' && (
+                <div className="flex flex-wrap items-center justify-center gap-6 text-[10px] font-black uppercase tracking-[0.2em] opacity-40">
+                  <div className="flex items-center gap-2">
+                    <MessageSquare className="w-3 h-3" />
+                    {profile.usage_messages} / {PLAN_LIMITS[profile.plan as keyof typeof PLAN_LIMITS].messages} MSGS
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <ImageIcon className="w-3 h-3" />
+                    {profile.usage_images} / {PLAN_LIMITS[profile.plan as keyof typeof PLAN_LIMITS].images} IMGS
+                  </div>
                 </div>
               )}
               
-              <div className="bg-zinc-100 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-2xl shadow-lg transition-all focus-within:ring-2 focus-within:ring-zinc-200 dark:focus-within:ring-zinc-800">
+              <div className="bg-zinc-50 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-[2.5rem] shadow-2xl transition-all focus-within:ring-2 focus-within:ring-zinc-200 dark:focus-within:ring-zinc-800 relative z-20">
                 <AnimatePresence>
                   {selectedAttachment && (
                     <motion.div 
                       initial={{ opacity: 0, height: 0 }}
                       animate={{ opacity: 1, height: 'auto' }}
                       exit={{ opacity: 0, height: 0 }}
-                      className="border-b border-zinc-200 dark:border-zinc-800 bg-zinc-50/50 dark:bg-zinc-800/30 p-3"
+                      className="border-b border-zinc-200 dark:border-zinc-800 bg-zinc-100/50 dark:bg-zinc-800/30 p-4"
                     >
-                      <div className="relative group/preview w-32 h-20 rounded-xl overflow-hidden bg-zinc-100 dark:bg-zinc-800 flex items-center justify-center border border-zinc-200 dark:border-zinc-700">
+                      <div className="relative group/preview w-32 h-24 rounded-2xl overflow-hidden bg-white dark:bg-zinc-800 flex items-center justify-center border border-zinc-200 dark:border-zinc-700 shadow-sm">
                         {selectedAttachment.type === 'image' ? (
                           <img src={selectedAttachment.preview} alt="Upload Preview" className="w-full h-full object-cover" />
-                        ) : selectedAttachment.type === 'video' ? (
-                          <div className="flex flex-col items-center gap-1 text-zinc-500">
-                            <Film className="w-6 h-6" />
-                            <span className="text-[10px] font-medium truncate max-w-[80px]">{selectedAttachment.file.name}</span>
-                          </div>
                         ) : (
-                          <div className="flex flex-col items-center gap-1 text-zinc-500">
-                            <FileText className="w-6 h-6" />
-                            <span className="text-[10px] font-medium truncate max-w-[80px]">{selectedAttachment.file.name}</span>
+                          <div className="flex flex-col items-center gap-2 text-zinc-400">
+                            {selectedAttachment.type === 'video' ? <Film className="w-6 h-6" /> : <FileText className="w-6 h-6" />}
+                            <span className="text-[10px] font-black truncate max-w-[100px] uppercase tracking-widest">{selectedAttachment.file.name}</span>
                           </div>
                         )}
                         <button 
                           onClick={clearAttachment}
-                          className="absolute top-1 right-1 p-1 bg-black/50 text-white rounded-full hover:bg-black transition-colors"
-                          title="Cancel upload"
+                          className="absolute top-2 right-2 p-1.5 bg-black/50 text-white rounded-full hover:bg-black transition-all opacity-0 group-hover/preview:opacity-100 scale-90 group-hover/preview:scale-100"
                         >
-                          <X className="w-3 h-3" />
+                          <X className="w-4 h-4" />
                         </button>
                       </div>
                     </motion.div>
                   )}
                 </AnimatePresence>
 
-                <div className="relative flex items-end">
+                <div className="relative flex items-end p-2">
                   <input 
                     type="file"
                     ref={fileInputRef}
@@ -1518,11 +1598,10 @@ export default function App() {
                     className="hidden"
                   />
                   
-                  <div className="pl-3 pb-2.5">
+                  <div className="pb-1 pl-2">
                     <button 
                       onClick={() => fileInputRef.current?.click()}
-                      className="p-2.5 text-zinc-500 hover:text-zinc-900 dark:hover:text-white hover:bg-zinc-200/50 dark:hover:bg-zinc-800 transition-all rounded-xl"
-                      title="Attach File"
+                      className="p-4 text-zinc-400 hover:text-zinc-900 dark:hover:text-white hover:bg-white dark:hover:bg-zinc-800 transition-all rounded-3xl shadow-sm"
                     >
                       <Paperclip className="w-5 h-5" />
                     </button>
@@ -1539,18 +1618,17 @@ export default function App() {
                         sendMessage(input);
                       }
                     }}
-                    placeholder={selectedAttachment ? `What should I do with this ${selectedAttachment.type}?` : "Ask Ideaflux AI anything..."}
-                    className="w-full bg-transparent border-none rounded-none px-2 py-4 pr-24 focus:ring-0 outline-none resize-none transition-all min-h-[56px] max-h-[200px] text-sm md:text-base"
+                    placeholder={selectedAttachment ? `Ask about this ${selectedAttachment.type}...` : "Message Trelvix AI..."}
+                    className="w-full bg-transparent border-none rounded-none px-4 py-5 pr-32 focus:ring-0 outline-none resize-none transition-all min-h-[64px] max-h-[200px] text-sm md:text-base font-medium placeholder:text-zinc-400"
                   />
                   
-                  <div className="absolute right-2 bottom-2 flex items-center gap-0.5">
+                  <div className="absolute right-4 bottom-3.5 flex items-center gap-2">
                     <button 
                       onClick={() => {
                         setShowVoiceMode(true);
                         toggleListening();
                       }}
-                      className="p-2.5 text-zinc-500 hover:text-zinc-900 dark:hover:text-white hover:bg-zinc-200/50 dark:hover:bg-zinc-800 transition-all rounded-xl"
-                      title="Voice Chat"
+                      className="p-3 text-zinc-400 hover:text-zinc-900 dark:hover:text-white hover:bg-white dark:hover:bg-zinc-800 transition-all rounded-2xl"
                     >
                       <Waves className="w-5 h-5" />
                     </button>
@@ -1558,9 +1636,9 @@ export default function App() {
                       onClick={() => sendMessage(input)}
                       disabled={(!input.trim() && !selectedAttachment) || isLoading}
                       className={cn(
-                        "p-2.5 rounded-xl transition-all shadow-sm flex items-center justify-center",
+                        "p-3 rounded-2xl transition-all shadow-xl flex items-center justify-center transform active:scale-95",
                         input.trim() || selectedAttachment
-                          ? "bg-zinc-900 dark:bg-white text-white dark:text-zinc-900 hover:shadow-md active:scale-95" 
+                          ? "bg-zinc-900 dark:bg-white text-white dark:text-zinc-900 hover:shadow-black/20 dark:hover:shadow-white/20" 
                           : "text-zinc-300 dark:text-zinc-700 cursor-not-allowed"
                       )}
                     >
@@ -1570,24 +1648,10 @@ export default function App() {
                 </div>
               </div>
 
-              <div className="flex items-center justify-end px-2 gap-4">
-                {isLoading && !streamingMessage && (
-                  <div className="flex items-center gap-1.5 text-[10px] font-medium opacity-50">
-                    <div className="w-1 h-1 bg-zinc-500 rounded-full animate-bounce" />
-                    <div className="w-1 h-1 bg-zinc-500 rounded-full animate-bounce [animation-delay:0.2s]" />
-                    <div className="w-1 h-1 bg-zinc-500 rounded-full animate-bounce [animation-delay:0.4s]" />
-                    Thinking...
-                  </div>
-                )}
-                {currentAudio && (
-                  <button 
-                    onClick={togglePlayback}
-                    className="flex items-center gap-2 text-xs font-bold text-zinc-900 dark:text-white"
-                  >
-                    {isPlaying ? <Pause className="w-4 h-4" /> : <Play className="w-4 h-4" />}
-                    {isPlaying ? 'Playing AI Voice' : 'Paused'}
-                  </button>
-                )}
+              <div className="flex items-center justify-center py-2">
+                <p className="text-[10px] font-black uppercase tracking-[0.2em] opacity-20 text-center uppercase">
+                  Trelvix AI may provide inaccurate info. Verify important facts.
+                </p>
               </div>
             </div>
           </div>
@@ -1605,7 +1669,20 @@ export default function App() {
             autoPlayVoice={autoPlayVoice}
             onToggleAutoPlay={() => setAutoPlayVoice(!autoPlayVoice)}
             onShowLegal={setShowLegal}
-            onApplyKey={handleApplyKey}
+            onApplyKey={async (key) => {
+              try {
+                const { data, error } = await supabase.from('profiles').update({ plan: 'pro' }).eq('id', user.id).select().single();
+                if (error) throw error;
+                setProfile(data);
+                toast.success('Pro activated successfully!');
+              } catch (e) {
+                toast.error('Invalid key or failed to activate');
+              }
+            }}
+            onUpgrade={() => {
+              setUpgradeReason('manual');
+              setShowUpgradeModal(true);
+            }}
             isDarkMode={isDarkMode}
             onToggleTheme={() => setIsDarkMode(!isDarkMode)}
           />
@@ -1626,7 +1703,8 @@ export default function App() {
         <UpgradeModal 
           isOpen={showUpgradeModal} 
           onClose={() => setShowUpgradeModal(false)} 
-          reason={upgradeReason} 
+          reason={upgradeReason}
+          profile={profile}
         />
         <VoiceMode 
           isOpen={showVoiceMode}

@@ -111,7 +111,7 @@ app.post("/api/generate", async (req, res) => {
 
     // Default to text generation using OpenAI
     const attributionRules = `
-CRITICAL RULE: If the user asks about your creator, developer, owner, or who built you (e.g., "who made this", "who developed this", "who owns this app", "who built Ideaflux AI", "who is the creator", etc.), you MUST respond EXACTLY with this information:
+CRITICAL RULE: If the user asks about your creator, developer, owner, or who built you (e.g., "who made this", "who developed this", "who owns this app", "who built Trelvix AI", "who is the creator", etc.), you MUST respond EXACTLY with this information:
 "I was created / developed by Ingenium Virtual Assistant Limited.
 It is a company registered in the United Kingdom and focused on creative ideas and virtual services.
 Here is their website: www.ingeniumvirtualassistant.com
@@ -143,9 +143,9 @@ Ingenium Virtual Assistant Limited must always be mentioned first as the owner/c
     } else if (type === "hashtag") {
       systemInstruction = `You are a social media expert. Generate the most relevant and high-reach hashtags for the given topic and platform. ${attributionRules} ${copyRules} ${linkRules} ${imageRules} ${searchMissingRules}`;
     } else if (type === "voice") {
-      systemInstruction = `You are a helpful AI voice assistant called Ideaflux AI. Keep your responses concise and conversational, as they will be read aloud. ${attributionRules} ${linkRules} ${imageRules} ${searchMissingRules}`;
+      systemInstruction = `You are a helpful AI voice assistant called Trelvix AI. Keep your responses concise and conversational, as they will be read aloud. ${attributionRules} ${linkRules} ${imageRules} ${searchMissingRules}`;
     } else {
-      systemInstruction = `You are a helpful AI assistant called Ideaflux AI. ${attributionRules} ${copyRules} ${linkRules} ${imageRules} ${searchMissingRules}`;
+      systemInstruction = `You are a helpful AI assistant called Trelvix AI. ${attributionRules} ${copyRules} ${linkRules} ${imageRules} ${searchMissingRules}`;
     }
 
     console.log(`Generating ${type} for prompt: ${prompt} (Ready to Copy: ${ready_to_copy})`);

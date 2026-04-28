@@ -1,6 +1,6 @@
-# Ideaflux AI
+# Trelvix AI
 
-Ideaflux AI is a modern, clean AI companion for content creators, styled like Grok. It helps you generate viral ideas, high-retention scripts, and optimized hashtags in seconds.
+Trelvix AI is a modern, clean AI companion for content creators, styled like Grok. It helps you generate viral ideas, high-retention scripts, and optimized hashtags in seconds.
 
 ## Features
 
@@ -31,7 +31,7 @@ Ideaflux AI is a modern, clean AI companion for content creators, styled like Gr
 1. **Clone the repository**:
    ```bash
    git clone <repository-url>
-   cd ideaflux-ai
+   cd trelvix-ai
    ```
 
 2. **Install dependencies**:

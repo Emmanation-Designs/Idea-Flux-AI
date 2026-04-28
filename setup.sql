@@ -1,4 +1,4 @@
--- Ideaflux AI Database Setup Script
+-- Trelvix AI Database Setup Script
 -- Run this in your Supabase SQL Editor
 
 -- 1. Create Profiles Table
@@ -6,8 +6,10 @@ CREATE TABLE IF NOT EXISTS public.profiles (
     id UUID REFERENCES auth.users ON DELETE CASCADE PRIMARY KEY,
     email TEXT,
     plan TEXT DEFAULT 'free',
-    usage_count INT DEFAULT 0,
-    max_usage INT DEFAULT 15,
+    usage_messages INT DEFAULT 0,
+    usage_analysis INT DEFAULT 0,
+    usage_images INT DEFAULT 0,
+    last_reset_date TIMESTAMPTZ DEFAULT NOW(),
     pro_expires_at TIMESTAMPTZ,
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
