@@ -30,7 +30,7 @@ app.get("/api/health", (req, res) => {
 
 // API routes
 app.all("/api/proxy-image", async (req, res) => {
-  const imageUrl = (req.method === "POST" ? req.body.url : req.query.url) as string;
+  const imageUrl = (req.method === "POST" ? req.body.url : (req.query.url || req.body.url)) as string;
   if (!imageUrl) return res.status(400).send("URL is required");
 
   try {
@@ -289,14 +289,14 @@ ${results.map((r: any) => `- [${r.title}]: ${r.content} (${r.url})`).join("\n")}
   }
 }
 
-async function startServer() {
-  console.log("Starting server...");
-  try {
-    app.get("/api/test", (req, res) => {
-      res.json({ message: "Server is alive" });
-    });
+export default app;
 
-    if (process.env.NODE_ENV !== "production") {
+async function startServer() {
+  console.log("Starting server setup...");
+  try {
+    // API routes are already defined above and attached to `app`
+
+    if (process.env.NODE_ENV !== "production" && !process.env.VERCEL) {
       console.log("Initializing Vite in middleware mode...");
       const vite = await createViteServer({
         server: { middlewareMode: true },
@@ -306,24 +306,25 @@ async function startServer() {
       console.log("Vite middleware initialized.");
     } else {
       const distPath = path.join(process.cwd(), "dist");
+      // Check if dist exists, if not, we might be in build phase or dev
       app.use(express.static(distPath));
       app.get("*", (req, res) => {
         res.sendFile(path.join(distPath, "index.html"));
       });
     }
 
-    console.log("Server environment check:", {
-      openai: !!process.env.OPENAI_API_KEY,
-      tavily: !!process.env.TAVILY_API_KEY,
-      supabase: !!process.env.VITE_SUPABASE_URL
-    });
-
-    app.listen(PORT, "0.0.0.0", () => {
-      console.log(`Server running on http://localhost:${PORT}`);
-    });
+    // Only listen if not in a serverless environment like Vercel
+    if (!process.env.VERCEL && process.env.NODE_ENV !== "production") {
+      app.listen(PORT, "0.0.0.0", () => {
+        console.log(`Server running on http://localhost:${PORT}`);
+      });
+    }
   } catch (error) {
-    console.error("Failed to start server:", error);
+    console.error("Failed to start server setup:", error);
   }
 }
 
-startServer();
+// Only run startServer if not imported as a module (e.g. by Vercel)
+if (process.env.NODE_ENV !== "production" || !process.env.VERCEL) {
+  startServer();
+}
