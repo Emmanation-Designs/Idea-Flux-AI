@@ -577,7 +577,7 @@ export default function App() {
         .from('conversations')
         .select('*')
         .eq('user_id', user.id)
-        .order('created_at', { ascending: false });
+        .order('updated_at', { ascending: false });
 
       if (error) throw error;
       
@@ -708,13 +708,13 @@ export default function App() {
   };
 
   const startConversation = async (type: ConversationType, title: string, initialPrompt: string, metadata: any = {}) => {
-    if (!user) return;
+    if (!user || isLoading) return;
     setIsLoading(true);
 
     try {
       const newConversation = {
         user_id: user.id,
-        title: title,
+        title: title || 'New Chat',
         type: type,
         messages: [],
         metadata: metadata,
@@ -730,18 +730,19 @@ export default function App() {
 
       if (error) {
         console.error("Supabase insert error:", error);
-        toast.error(`Failed to create history entry: ${error.message || 'Unknown error'}`);
+        toast.error(`Failed to create conversation history`);
         setIsLoading(false);
         return;
       }
 
+      console.log("[Chat] Conversation created:", data.id);
       setCurrentConversation(data);
-      setConversations(prev => {
-        const exists = prev.some(c => c.id === data.id);
-        if (exists) return prev;
-        return [data, ...prev];
-      });
-      await sendMessage(initialPrompt, data);
+      setConversations(prev => [data, ...prev]);
+      
+      // Important: wait a tiny bit for state to settle before sending first message
+      setTimeout(() => {
+        sendMessage(initialPrompt, data);
+      }, 50);
     } catch (err) {
       console.error("Error in startConversation:", err);
       setIsLoading(false);
@@ -785,21 +786,26 @@ export default function App() {
     
     // If no conversation, start one first
     if (!conv && (content.trim() || selectedAttachment)) {
-      if (isLoading) return; // Prevent multiple creation triggers
+      if (isLoading) {
+        console.warn("[Chat] Blocked overlapping conversation creation");
+        return;
+      }
       
       console.log("[Chat] No active conversation, creating new one...");
       const type = selectedAttachment ? 'general' : (showVoiceMode ? 'voice' : 'script');
-      const title = content.trim() 
-        ? (content.split(' ').slice(0, 3).join(' ') + (content.split(' ').length > 3 ? '...' : '')) 
-        : (selectedAttachment ? 'File Analysis' : 'New Chat');
+      
+      // Sanitized title
+      const rawTitle = content.trim() || (selectedAttachment ? 'File Analysis' : 'New Chat');
+      const title = rawTitle.length > 50 ? rawTitle.slice(0, 47) + '...' : rawTitle;
       
       await startConversation(type, title, content);
       return;
     }
 
     if (!conv || (!content.trim() && !selectedAttachment)) return;
+    
     if (isLoading && !convOverride) {
-      console.warn("[Chat] Still loading previous response");
+      console.warn("[Chat] Busy generating previous response");
       return;
     }
 
