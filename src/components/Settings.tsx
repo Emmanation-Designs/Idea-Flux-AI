@@ -57,6 +57,46 @@ export const Settings = ({
 }) => {
   const [key, setKey] = React.useState('');
   const [isApplying, setIsApplying] = React.useState(false);
+  const [billingPeriod, setBillingPeriod] = React.useState<'month' | 'year'>('month');
+  const [isSubscribing, setIsSubscribing] = React.useState<string | null>(null);
+
+  const plans = {
+    pro: {
+      name: 'Pro',
+      monthly: 10,
+      yearly: 96,
+      features: ['100 messages / day', 'Unlimited analysis', '20 images / day', 'Priority support']
+    },
+    plus: {
+      name: 'Plus',
+      monthly: 25,
+      yearly: 240,
+      features: ['Unlimited messages', 'Unlimited analysis', 'Unlimited images', 'Enterprise support']
+    }
+  };
+
+  const handleSubscribe = async (planId: string) => {
+    if (!profile?.id) return;
+    setIsSubscribing(planId);
+    try {
+      const response = await fetch('/api/stripe/checkout', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          plan: planId,
+          interval: billingPeriod,
+          userId: profile.id
+        })
+      });
+      const data = await response.json();
+      if (data.url) {
+        window.location.href = data.url;
+      }
+    } catch (err) {
+      console.error(err);
+      setIsSubscribing(null);
+    }
+  };
 
   const handleApply = async () => {
     if (!key.trim()) return;
@@ -159,34 +199,95 @@ export const Settings = ({
             <h4 className="text-[10px] font-black uppercase tracking-[0.2em] opacity-40 px-2">Account</h4>
             <div className="bg-white dark:bg-zinc-900 rounded-3xl border border-zinc-200 dark:border-zinc-800 overflow-hidden shadow-sm">
               {/* Plan Box */}
-              <div className="p-8 bg-zinc-50 dark:bg-zinc-950 border-b border-zinc-100 dark:divide-zinc-800">
+              <div className="p-8 bg-zinc-50 dark:bg-zinc-950 border-b border-zinc-100 dark:border-zinc-800">
                 <div className="flex items-center justify-between mb-4">
                   <span className={cn(
                     "px-3 py-1 rounded-full text-[10px] font-black tracking-widest uppercase",
-                    profile?.plan === 'free' ? "bg-zinc-200 text-zinc-600" : "bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-400 border border-amber-200 dark:border-amber-800"
+                    profile?.plan === 'free' ? "bg-zinc-200 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400" : "bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-400 border border-amber-200 dark:border-amber-800"
                   )}>
                     {profile?.plan?.toUpperCase()} PLAN
                   </span>
                   {(profile?.plan === 'pro' || profile?.plan === 'plus') && profile?.subscription_expires_at && (
                     <span className="text-[10px] font-bold text-zinc-500 italic">
-                      {Math.ceil((new Date(profile.subscription_expires_at).getTime() - Date.now()) / (1000 * 60 * 60 * 24))} days remaining
+                      {Math.ceil((new Date(profile.subscription_expires_at).getTime() - Date.now()) / (1000 * 60 * 60 * 24))} days left
                     </span>
                   )}
                 </div>
-                <h4 className="text-2xl font-black mb-6">
-                  {profile?.plan === 'free' ? 'Unlock Professional Tools' : 'Premium Access Active'}
-                </h4>
-                <button 
-                  onClick={onUpgrade}
-                  className={cn(
-                    "w-full py-4 rounded-2xl text-xs font-black uppercase tracking-[0.2em] transition-all transform active:scale-95 shadow-xl",
-                    profile?.plan === 'free' 
-                      ? "bg-zinc-900 dark:bg-zinc-100 text-white dark:text-zinc-900 shadow-zinc-900/20 dark:shadow-white/10"
-                      : "bg-amber-500 text-white shadow-amber-500/20"
-                  )}
-                >
-                  {profile?.plan === 'free' ? 'Upgrade Plan' : 'Manage Subscription'}
-                </button>
+                
+                {profile?.plan === 'free' ? (
+                  <div className="space-y-8">
+                    <div className="text-center">
+                      <h4 className="text-2xl font-black mb-2">Upgrade Your Experience</h4>
+                      <p className="text-sm text-zinc-500 font-medium">Choose the perfect plan for your creative needs.</p>
+                    </div>
+
+                    {/* Billing Toggle */}
+                    <div className="flex p-1 bg-white dark:bg-zinc-900 rounded-2xl w-fit mx-auto border border-zinc-200 dark:border-zinc-800">
+                      <button 
+                        onClick={() => setBillingPeriod('month')}
+                        className={cn(
+                          "px-6 py-2 rounded-xl text-[10px] font-black transition-all uppercase tracking-widest",
+                          billingPeriod === 'month' ? "bg-zinc-900 dark:bg-zinc-100 text-white dark:text-zinc-900 shadow-sm" : "text-zinc-400"
+                        )}
+                      >
+                        Monthly
+                      </button>
+                      <button 
+                        onClick={() => setBillingPeriod('year')}
+                        className={cn(
+                          "px-6 py-2 rounded-xl text-[10px] font-black transition-all uppercase tracking-widest flex items-center gap-2",
+                          billingPeriod === 'year' ? "bg-zinc-900 dark:bg-zinc-100 text-white dark:text-zinc-900 shadow-sm" : "text-zinc-400"
+                        )}
+                      >
+                        Yearly
+                        <span className="px-1.5 py-0.5 bg-emerald-500 text-white text-[8px] rounded-md">Save</span>
+                      </button>
+                    </div>
+
+                    <div className="grid grid-cols-1 gap-4">
+                      {Object.entries(plans).map(([id, plan]) => (
+                        <div key={id} className="p-6 rounded-3xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 flex flex-col md:flex-row md:items-center justify-between gap-6 hover:border-zinc-400 dark:hover:border-zinc-600 transition-all group">
+                          <div>
+                            <h5 className="font-black text-xl mb-1">{plan.name}</h5>
+                            <div className="flex items-baseline gap-1">
+                              <span className="text-2xl font-black">${billingPeriod === 'month' ? plan.monthly : plan.yearly}</span>
+                              <span className="text-[10px] font-bold opacity-40 uppercase tracking-widest">/{billingPeriod === 'month' ? 'mo' : 'yr'}</span>
+                            </div>
+                          </div>
+                          <button 
+                            onClick={() => handleSubscribe(id)}
+                            disabled={isSubscribing !== null}
+                            className={cn(
+                              "px-8 py-4 rounded-2xl font-black text-[10px] uppercase tracking-widest transition-all active:scale-95 shadow-lg",
+                              id === 'pro' 
+                                ? "bg-zinc-900 dark:bg-zinc-100 text-white dark:text-zinc-900" 
+                                : "border-2 border-zinc-900 dark:border-white text-zinc-900 dark:text-white"
+                            )}
+                          >
+                            {isSubscribing === id ? 'Processing...' : 'Subscribe'}
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ) : (
+                  <div className="space-y-6">
+                    <h4 className="text-2xl font-black">
+                      Premium Access Active
+                    </h4>
+                    <div className="p-4 bg-amber-50 dark:bg-amber-900/10 border border-amber-100 dark:border-amber-900/30 rounded-2xl">
+                      <p className="text-xs text-amber-800 dark:text-amber-400 font-medium">
+                        You have full access to all {profile?.plan} features. Thank you for supporting Trelvix AI!
+                      </p>
+                    </div>
+                    <button 
+                      onClick={() => window.open('https://billing.stripe.com/p/login/test_4gw5lr8Yt4Yt4Yt4Yt', '_blank')}
+                      className="w-full py-4 bg-zinc-900 dark:bg-zinc-100 text-white dark:text-zinc-900 rounded-2xl text-[10px] font-black uppercase tracking-[0.2em] transition-all"
+                    >
+                      Manage Subscription
+                    </button>
+                  </div>
+                )}
               </div>
 
               {/* Email & Settings */}

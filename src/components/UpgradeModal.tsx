@@ -22,21 +22,49 @@ export const UpgradeModal: React.FC<UpgradeModalProps> = ({ isOpen, onClose, rea
   const plans = {
     pro: {
       name: 'Pro',
-      monthly: 7,
-      yearly: 70,
+      monthly: 10,
+      yearly: 96,
       features: ['100 messages / day', 'Unlimited analysis', '20 images / day', 'Priority support']
     },
     plus: {
       name: 'Plus',
-      monthly: 'TBD',
-      yearly: 'TBD',
+      monthly: 25,
+      yearly: 240,
       features: ['Unlimited messages', 'Unlimited analysis', 'Unlimited images', 'Enterprise support']
     }
   };
 
-  const handleSubscribe = (planId: string) => {
-    // Later connect to Stripe
-    window.location.href = `/api/stripe/checkout?plan=${planId}&period=${billingPeriod}`;
+  const [isSubscribing, setIsSubscribing] = React.useState<string | null>(null);
+
+  const handleSubscribe = async (planId: string) => {
+    if (!profile?.id) {
+      toast.error('Please log in to subscribe');
+      return;
+    }
+    
+    setIsSubscribing(planId);
+    try {
+      const response = await fetch('/api/stripe/checkout', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          plan: planId,
+          interval: billingPeriod === 'monthly' ? 'month' : 'year',
+          userId: profile.id
+        })
+      });
+
+      const data = await response.json();
+      if (data.url) {
+        window.location.href = data.url;
+      } else {
+        throw new Error(data.error || 'Failed to create checkout session');
+      }
+    } catch (err: any) {
+      console.error('[Checkout Error]:', err);
+      toast.error(err.message || 'Subscription failed to start');
+      setIsSubscribing(null);
+    }
   };
 
   return (
@@ -125,14 +153,15 @@ export const UpgradeModal: React.FC<UpgradeModalProps> = ({ isOpen, onClose, rea
 
                     <button 
                       onClick={() => handleSubscribe(id)}
+                      disabled={isSubscribing !== null}
                       className={cn(
-                        "w-full py-4 rounded-2xl font-black text-xs uppercase tracking-widest transition-all active:scale-95 shadow-xl",
+                        "w-full py-4 rounded-2xl font-black text-xs uppercase tracking-widest transition-all active:scale-95 shadow-xl disabled:opacity-50",
                         id === 'pro' 
                           ? "bg-zinc-900 dark:bg-white text-white dark:text-zinc-900 shadow-zinc-900/20 dark:shadow-white/10" 
                           : "bg-white dark:bg-zinc-800 border-2 border-zinc-900 dark:border-white text-zinc-900 dark:text-white"
                       )}
                     >
-                      Subscribe Now
+                      {isSubscribing === id ? 'Connecting...' : 'Subscribe Now'}
                     </button>
                   </div>
                 ))}

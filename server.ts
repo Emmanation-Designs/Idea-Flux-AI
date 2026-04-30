@@ -2,6 +2,8 @@ import express from "express";
 import path from "path";
 import OpenAI from "openai";
 import dotenv from "dotenv";
+import Stripe from "stripe";
+import { createClient } from "@supabase/supabase-js";
 
 // Import Vite types only for type checking
 import type { ViteDevServer } from "vite";
@@ -12,7 +14,13 @@ dotenv.config();
 const app = express();
 const PORT = Number(process.env.PORT) || 3000;
 
-app.use(express.json());
+app.use(express.json({
+  verify: (req: any, res, buf) => {
+    if (req.originalUrl.startsWith('/api/stripe/webhook')) {
+      req.rawBody = buf;
+    }
+  }
+}));
 
 // Global request logger
 app.use((req, res, next) => {
@@ -54,6 +62,97 @@ app.all("/api/proxy-image", async (req, res) => {
 
 app.post("/api/generate", async (req, res) => {
   return handleGenerate(req, res);
+});
+
+// Stripe Checkout Route
+app.post("/api/stripe/checkout", async (req, res) => {
+  try {
+    const { plan, interval, userId } = req.body;
+    if (!userId) return res.status(400).json({ error: 'User ID is required' });
+
+    const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!, {
+      apiVersion: '2024-06-20' as any,
+    });
+
+    let priceId = '';
+    if (plan === 'pro') {
+      priceId = interval === 'year' 
+        ? process.env.STRIPE_PRO_YEARLY_PRICE_ID! 
+        : process.env.STRIPE_PRO_MONTHLY_PRICE_ID!;
+    } else if (plan === 'plus') {
+      priceId = interval === 'year' 
+        ? process.env.STRIPE_PLUS_YEARLY_PRICE_ID! 
+        : process.env.STRIPE_PLUS_MONTHLY_PRICE_ID!;
+    }
+
+    if (!priceId) return res.status(400).json({ error: 'Invalid plan or interval' });
+
+    const session = await stripe.checkout.sessions.create({
+      payment_method_types: ['card'],
+      line_items: [{ price: priceId, quantity: 1 }],
+      mode: 'subscription',
+      success_url: `https://trelvixai.com/settings?success=true`,
+      cancel_url: `https://trelvixai.com/settings`,
+      client_reference_id: userId,
+      metadata: { userId, plan, interval },
+    });
+
+    res.json({ url: session.url });
+  } catch (error: any) {
+    console.error('[Stripe Checkout Error]:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Stripe Webhook Route
+app.post("/api/stripe/webhook", async (req: any, res) => {
+  const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!, {
+    apiVersion: '2024-06-20' as any,
+  });
+
+  const sig = req.headers['stripe-signature'];
+  const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET;
+
+  let event: Stripe.Event;
+
+  try {
+    event = stripe.webhooks.constructEvent(req.rawBody, sig!, webhookSecret!);
+  } catch (err: any) {
+    console.error(`[Webhook Error]: ${err.message}`);
+    return res.status(400).send(`Webhook Error: ${err.message}`);
+  }
+
+  if (event.type === 'checkout.session.completed') {
+    const session = event.data.object as Stripe.Checkout.Session;
+    const userId = session.client_reference_id || session.metadata?.userId;
+    const plan = session.metadata?.plan;
+    const interval = session.metadata?.interval;
+
+    if (userId && plan) {
+      const supabase = createClient(
+        process.env.SUPABASE_URL!,
+        process.env.SUPABASE_SERVICE_ROLE_KEY!
+      );
+
+      const expiresAt = new Date();
+      if (interval === 'year') {
+        expiresAt.setFullYear(expiresAt.getFullYear() + 1);
+      } else {
+        expiresAt.setDate(expiresAt.getDate() + 30);
+      }
+
+      await supabase
+        .from('profiles')
+        .update({
+          plan: plan,
+          subscription_expires_at: expiresAt.toISOString(),
+          last_usage_reset: new Date().toISOString().split('T')[0]
+        })
+        .eq('id', userId);
+    }
+  }
+
+  res.json({ received: true });
 });
 
 // Support legacy endpoint

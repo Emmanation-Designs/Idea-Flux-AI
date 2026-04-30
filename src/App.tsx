@@ -774,6 +774,16 @@ export default function App() {
     }
   };
 
+  useEffect(() => {
+    // Check for stripe success
+    const urlParams = new URLSearchParams(window.location.search);
+    if (urlParams.get('success') === 'true') {
+      toast.success('Payment successful! Your plan has been activated.');
+      // Clean up the URL
+      window.history.replaceState({}, document.title, window.location.pathname);
+    }
+  }, []);
+
   const clearAttachment = () => {
     setSelectedAttachment(null);
     if (fileInputRef.current) {
