@@ -408,7 +408,12 @@ export default function App() {
       });
       clearTimeout(timeoutId);
 
-      if (!response.ok) throw new Error('Failed to generate voice');
+      if (!response.ok) {
+        console.error(`Voice API Error (${response.status}):`, response.statusText);
+        const errorText = await response.text().catch(() => "Could not read error body");
+        console.error("Voice Error body:", errorText);
+        throw new Error('Failed to generate voice');
+      }
       
       const { audio } = await response.json();
       if (!audio) throw new Error("No audio data");
@@ -495,9 +500,20 @@ export default function App() {
       const { data: created } = await supabase.from('profiles').insert(newProfile).select().single();
       setProfile(created);
     } else if (data) {
-      const lastReset = data.last_reset_date ? new data.last_reset_date.split('T')[0] : '';
+      let lastReset = '';
+      try {
+        if (data.last_reset_date) {
+          // Robustly handle string or Date objects
+          const dateStr = typeof data.last_reset_date === 'string' 
+            ? data.last_reset_date 
+            : (data.last_reset_date instanceof Date ? data.last_reset_date.toISOString() : String(data.last_reset_date));
+          lastReset = dateStr.split('T')[0];
+        }
+      } catch (err) {
+        console.error("Error parsing last_reset_date:", err);
+      }
       
-      if (lastReset !== today) {
+      if (lastReset && lastReset !== today) {
         // Reset counters for a new day
         const resetData = {
           usage_messages: 0,
@@ -827,7 +843,12 @@ export default function App() {
       clearTimeout(timeoutId);
 
       if (!response.ok) {
-        const errorData = await response.json().catch(() => ({}));
+        const errorText = await response.text().catch(() => "");
+        console.error(`API Error (${response.status}):`, errorText);
+        let errorData = { error: 'Failed to generate' };
+        try {
+          if (errorText) errorData = JSON.parse(errorText);
+        } catch (e) {}
         throw new Error(errorData.error || 'Failed to generate');
       }
 
