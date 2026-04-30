@@ -8,7 +8,8 @@ import {
   LogOut,
   MessageSquare,
   Trash2,
-  Clock
+  Clock,
+  Edit2
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { clsx, type ClassValue } from 'clsx';
@@ -30,7 +31,8 @@ export const Sidebar = ({
   conversations = [],
   currentConversationId,
   onSelectConversation,
-  onDeleteConversation
+  onDeleteConversation,
+  onRenameConversation
 }: { 
   isOpen: boolean; 
   setIsOpen: (open: boolean) => void;
@@ -44,6 +46,7 @@ export const Sidebar = ({
   currentConversationId?: string;
   onSelectConversation: (id: string) => void;
   onDeleteConversation: (id: string) => void;
+  onRenameConversation: (id: string, newTitle: string) => void;
 }) => {
   return (
     <motion.aside
@@ -148,15 +151,27 @@ export const Sidebar = ({
                         <p className="font-bold truncate">{conv.title || 'Untitled Chat'}</p>
                       </div>
                     </button>
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        onDeleteConversation(conv.id);
-                      }}
-                      className="absolute right-2 top-1/2 -translate-y-1/2 p-2 text-zinc-300 hover:text-red-500 opacity-0 group-hover:opacity-100 focus:opacity-100 transition-all rounded-xl hover:bg-red-50 dark:hover:bg-red-950/20"
-                    >
-                      <Trash2 className="w-3.5 h-3.5" />
-                    </button>
+                    <div className="absolute right-2 top-1/2 -translate-y-1/2 flex items-center gap-1 opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-all">
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          const newTitle = prompt('Rename conversation:', conv.title);
+                          if (newTitle) onRenameConversation(conv.id, newTitle);
+                        }}
+                        className="p-1.5 text-zinc-400 hover:text-emerald-500 rounded-lg hover:bg-emerald-50 dark:hover:bg-emerald-950/20 transition-all"
+                      >
+                        <Edit2 className="w-3.5 h-3.5" />
+                      </button>
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          onDeleteConversation(conv.id);
+                        }}
+                        className="p-1.5 text-zinc-300 hover:text-red-500 rounded-lg hover:bg-red-50 dark:hover:bg-red-950/20 transition-all"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
                   </motion.div>
                 ))}
               </AnimatePresence>

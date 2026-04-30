@@ -92,7 +92,7 @@ export const Settings = ({
           
           {/* User Profile Info - Minimalist */}
           <div className="flex flex-col items-center gap-2 text-center">
-            <h3 className="text-3xl font-black tracking-tight">{profile?.email?.split('@')[0]}</h3>
+            <h3 className="text-3xl font-black tracking-tight">{profile?.name || profile?.email?.split('@')[0]}</h3>
             <p className="text-[10px] text-zinc-400 font-bold uppercase tracking-[0.2em]">{profile?.plan} account</p>
           </div>
 
@@ -167,9 +167,9 @@ export const Settings = ({
                   )}>
                     {profile?.plan?.toUpperCase()} PLAN
                   </span>
-                  {(profile?.plan === 'pro' || profile?.plan === 'plus') && profile?.pro_expires_at && (
+                  {(profile?.plan === 'pro' || profile?.plan === 'plus') && profile?.subscription_expires_at && (
                     <span className="text-[10px] font-bold text-zinc-500 italic">
-                      {Math.ceil((new Date(profile.pro_expires_at).getTime() - Date.now()) / (1000 * 60 * 60 * 24))} days remaining
+                      {Math.ceil((new Date(profile.subscription_expires_at).getTime() - Date.now()) / (1000 * 60 * 60 * 24))} days remaining
                     </span>
                   )}
                 </div>

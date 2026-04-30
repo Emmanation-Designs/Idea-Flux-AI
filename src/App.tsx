@@ -489,54 +489,43 @@ export default function App() {
       // Create profile if not exists
       const newProfile = {
         id: user.id,
-        email: user.email,
-        usage_messages: 0,
-        usage_analysis: 0,
-        usage_images: 0,
-        last_reset_date: now.toISOString(),
+        name: user.user_metadata?.full_name || null,
+        messages_used_today: 0,
+        analysis_used_today: 0,
+        images_used_today: 0,
+        last_usage_reset: now.toISOString(),
         plan: 'free',
-        pro_expires_at: null
+        subscription_expires_at: null
       };
       const { data: created } = await supabase.from('profiles').insert(newProfile).select().single();
       setProfile(created);
     } else if (data) {
       let lastReset = '';
       try {
-        if (data.last_reset_date) {
+        if (data.last_usage_reset) {
           // Robustly handle string or Date objects
-          const dateStr = typeof data.last_reset_date === 'string' 
-            ? data.last_reset_date 
-            : (data.last_reset_date instanceof Date ? data.last_reset_date.toISOString() : String(data.last_reset_date));
+          const dateStr = typeof data.last_usage_reset === 'string' 
+            ? data.last_usage_reset 
+            : (data.last_usage_reset instanceof Date ? data.last_usage_reset.toISOString() : String(data.last_usage_reset));
           lastReset = dateStr.split('T')[0];
         }
       } catch (err) {
-        console.error("Error parsing last_reset_date:", err);
+        console.error("Error parsing last_usage_reset:", err);
       }
       
       if (lastReset && lastReset !== today) {
         // Reset counters for a new day
         const resetData = {
-          usage_messages: 0,
-          usage_analysis: 0,
-          usage_images: 0,
-          last_reset_date: now.toISOString()
+          messages_used_today: 0,
+          analysis_used_today: 0,
+          images_used_today: 0,
+          last_usage_reset: now.toISOString()
         };
         const { data: updated } = await supabase.from('profiles').update(resetData).eq('id', user.id).select().single();
         setProfile(updated);
       } else {
-        // Standard profile fetch with migration for old profiles
-        if (!('usage_messages' in data)) {
-          const migrated = {
-            usage_messages: data.usage_count || 0,
-            usage_analysis: 0,
-            usage_images: 0,
-            last_reset_date: data.last_reset_date || now.toISOString()
-          };
-          const { data: updated } = await supabase.from('profiles').update(migrated).eq('id', user.id).select().single();
-          setProfile(updated);
-        } else {
-          setProfile(data);
-        }
+        // Standard profile fetch
+        setProfile(data);
       }
     }
   };
@@ -791,19 +780,19 @@ export default function App() {
       const limits = PLAN_LIMITS[profile.plan as keyof typeof PLAN_LIMITS] || PLAN_LIMITS.free;
       
       if (isImageIntent) {
-        if (profile.usage_images >= limits.images) {
+        if (profile.images_used_today >= limits.images) {
           setUpgradeReason('images');
           setShowUpgradeModal(true);
           return;
         }
       } else if (isAnalysisIntent) {
-        if (profile.usage_analysis >= limits.analysis) {
+        if (profile.analysis_used_today >= limits.analysis) {
           setUpgradeReason('usage'); // Re-using usage for analysis limit for now
           setShowUpgradeModal(true);
           return;
         }
       } else {
-        if (profile.usage_messages >= limits.messages) {
+        if (profile.messages_used_today >= limits.messages) {
           setUpgradeReason('usage');
           setShowUpgradeModal(true);
           return;
@@ -886,7 +875,7 @@ export default function App() {
         
         if (profile) {
           const { data: updatedProfile } = await supabase.from('profiles')
-            .update({ usage_images: (profile?.usage_images || 0) + 1 })
+            .update({ images_used_today: (profile?.images_used_today || 0) + 1 })
             .eq('id', user.id)
             .select()
             .single();
@@ -938,7 +927,7 @@ export default function App() {
       }).eq('id', conv.id);
       
       if (profile) {
-        const usageField = currentAttachment ? 'usage_analysis' : 'usage_messages';
+        const usageField = currentAttachment ? 'analysis_used_today' : 'messages_used_today';
         const { data: updatedProfile } = await supabase.from('profiles')
           .update({ [usageField]: (profile?.[usageField as keyof Profile] as number || 0) + 1 })
           .eq('id', user.id)
@@ -1203,6 +1192,7 @@ export default function App() {
           setActiveView('chat');
         }}
         onDeleteConversation={handleDeleteConversation}
+        onRenameConversation={handleRenameConversation}
       />
 
       <main className="flex-1 flex flex-col relative overflow-hidden">
@@ -1216,7 +1206,9 @@ export default function App() {
                 </button>
               )}
               <h1 className="font-bold text-lg hidden md:block">
-                {currentConversation ? currentConversation.title : 'Trelvix AI'}
+                {currentConversation 
+                  ? (currentConversation.title.split(' ').slice(0, 2).join(' ') + (currentConversation.title.split(' ').length > 2 ? '...' : '')) 
+                  : 'Trelvix AI'}
               </h1>
             </div>
 
@@ -1568,20 +1560,7 @@ export default function App() {
         {activeView === 'chat' && (
           <div className="relative p-3 md:p-6 bg-white dark:bg-zinc-950">
             <div className="max-w-4xl mx-auto space-y-4 md:space-y-6">
-              {/* Usage Stats Bar */}
-              {profile && profile.plan === 'free' && (
-                <div className="flex flex-wrap items-center justify-center gap-4 md:gap-6 text-[9px] md:text-[10px] font-black uppercase tracking-[0.2em] opacity-40">
-                  <div className="flex items-center gap-1.5 md:gap-2">
-                    <MessageSquare className="w-2.5 h-2.5 md:w-3 md:h-3" />
-                    {profile.usage_messages} / {PLAN_LIMITS[profile.plan as keyof typeof PLAN_LIMITS].messages} MSGS
-                  </div>
-                  <div className="flex items-center gap-1.5 md:gap-2">
-                    <ImageIcon className="w-2.5 h-2.5 md:w-3 md:h-3" />
-                    {profile.usage_images} / {PLAN_LIMITS[profile.plan as keyof typeof PLAN_LIMITS].images} IMGS
-                  </div>
-                </div>
-              )}
-              
+              {/* Input Area Group */}
               <div className="bg-zinc-50 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-[1.5rem] md:rounded-[2.5rem] shadow-xl md:shadow-2xl transition-all focus-within:ring-1 focus-within:ring-zinc-200 dark:focus-within:ring-zinc-800 relative z-20 overflow-hidden">
                 <AnimatePresence>
                   {selectedAttachment && (

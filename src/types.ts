@@ -26,12 +26,12 @@ export interface Conversation {
 
 export interface Profile {
   id: string;
-  email: string;
+  email?: string; // Optional if not in live schema update list
+  name?: string | null;
   plan: 'free' | 'pro' | 'plus';
-  usage_messages: number;
-  usage_analysis: number;
-  usage_images: number;
-  last_reset_date: string | null;
-  pro_expires_at: string | null;
-  activation_key?: string;
+  messages_used_today: number;
+  analysis_used_today: number;
+  images_used_today: number;
+  last_usage_reset: string | null;
+  subscription_expires_at: string | null;
 }
