@@ -473,6 +473,47 @@ export default function App() {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   };
 
+  const updateProfile = async (updates: Partial<Profile>) => {
+    if (!user) return;
+    
+    // Only send valid columns as per DB schema
+    const validKeys = [
+      'name', 
+      'plan', 
+      'subscription_expires_at', 
+      'messages_used_today', 
+      'analysis_used_today', 
+      'images_used_today', 
+      'last_usage_reset'
+    ];
+    
+    const filteredUpdates: any = {};
+    Object.keys(updates).forEach(key => {
+      if (validKeys.includes(key)) {
+        filteredUpdates[key] = (updates as any)[key];
+      }
+    });
+
+    if (Object.keys(filteredUpdates).length === 0) return;
+
+    try {
+      const { data, error } = await supabase
+        .from('profiles')
+        .update(filteredUpdates)
+        .eq('id', user.id)
+        .select()
+        .single();
+
+      if (error) throw error;
+      if (data) setProfile(data);
+      return data;
+    } catch (error) {
+      console.error("Error updating profile:", error);
+      // Don't toast here as it might be a background update, but do throw for callers who care
+      throw error;
+    }
+  };
+
   const fetchProfile = async () => {
     if (!user) return;
     const { data, error } = await supabase
@@ -515,14 +556,12 @@ export default function App() {
       
       if (lastReset && lastReset !== today) {
         // Reset counters for a new day
-        const resetData = {
+        await updateProfile({
           messages_used_today: 0,
           analysis_used_today: 0,
           images_used_today: 0,
           last_usage_reset: now.toISOString()
-        };
-        const { data: updated } = await supabase.from('profiles').update(resetData).eq('id', user.id).select().single();
-        setProfile(updated);
+        });
       } else {
         // Standard profile fetch
         setProfile(data);
@@ -744,15 +783,25 @@ export default function App() {
   const sendMessage = async (content: string, convOverride?: any) => {
     let conv = convOverride || currentConversation;
     
+    // If no conversation, start one first
     if (!conv && (content.trim() || selectedAttachment)) {
-      console.log("No conversation found, starting new one...");
+      if (isLoading) return; // Prevent multiple creation triggers
+      
+      console.log("[Chat] No active conversation, creating new one...");
       const type = selectedAttachment ? 'general' : (showVoiceMode ? 'voice' : 'script');
-      await startConversation(type, content.slice(0, 30) || (selectedAttachment ? 'File Analysis' : 'New Chat'), content);
+      const title = content.trim() 
+        ? (content.split(' ').slice(0, 3).join(' ') + (content.split(' ').length > 3 ? '...' : '')) 
+        : (selectedAttachment ? 'File Analysis' : 'New Chat');
+      
+      await startConversation(type, title, content);
       return;
     }
 
     if (!conv || (!content.trim() && !selectedAttachment)) return;
-    if (isLoading && !convOverride) return;
+    if (isLoading && !convOverride) {
+      console.warn("[Chat] Still loading previous response");
+      return;
+    }
 
     const userMessage: Message = {
       id: crypto.randomUUID(),
@@ -786,8 +835,8 @@ export default function App() {
           return;
         }
       } else if (isAnalysisIntent) {
-        if (profile.analysis_used_today >= limits.analysis) {
-          setUpgradeReason('usage'); // Re-using usage for analysis limit for now
+        if (profile.analysis_used_today >= (limits.analysis || 0)) {
+          setUpgradeReason('usage');
           setShowUpgradeModal(true);
           return;
         }
@@ -802,6 +851,7 @@ export default function App() {
 
     const updatedMessages = [...messages, userMessage];
     setMessages(updatedMessages);
+    const lastInput = content;
     setInput('');
     const currentAttachment = selectedAttachment; 
     clearAttachment(); 
@@ -811,18 +861,23 @@ export default function App() {
     const controller = new AbortController();
     const timeoutId = setTimeout(() => {
       controller.abort();
-      console.warn("Request timed out after 300 seconds");
-    }, 300000); // 5 minutes
+      console.warn("[Chat] Timeout reached");
+    }, 60000); // 1 minute is usually enough for serverless
 
     try {
-      // Primary: Server-side API (Uses env vars on backend)
+      console.log(`[Chat] Sending to /api/generate as type: ${isImageIntent ? 'image' : (conv.type || 'chat')}`);
+      
       const response = await fetch('/api/generate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           type: isImageIntent ? 'image' : (conv.type === 'image' ? 'chat' : (conv.type || 'chat')),
           prompt: content,
-          messages: updatedMessages,
+          messages: updatedMessages.map(m => ({
+            role: m.role,
+            content: m.content,
+            image_url: m.image_url
+          })),
           voice_option: voiceOption,
           ready_to_copy: conv.metadata?.ready_to_copy || false
         }),
@@ -832,18 +887,23 @@ export default function App() {
       clearTimeout(timeoutId);
 
       if (!response.ok) {
-        const errorText = await response.text().catch(() => "");
-        console.error(`API Error (${response.status}):`, errorText);
-        let errorData = { error: 'Failed to generate' };
+        let errorMessage = 'Failed to generate';
         try {
-          if (errorText) errorData = JSON.parse(errorText);
-        } catch (e) {}
-        throw new Error(errorData.error || 'Failed to generate');
+          const errorData = await response.json();
+          errorMessage = errorData.error || errorMessage;
+        } catch (e) {
+          const text = await response.text().catch(() => '');
+          errorMessage = text || `Server Error ${response.status}`;
+        }
+        throw new Error(errorMessage);
       }
 
       if (isImageIntent) {
-        const { image_url, filename } = await response.json();
+        const data = await response.json();
+        const { image_url, filename } = data;
         
+        if (!image_url) throw new Error("Image generation failed - no URL returned");
+
         // Save to dedicated images table
         const { data: imageData, error: imageError } = await supabase.from('images').insert({
           user_id: user.id,
@@ -851,22 +911,21 @@ export default function App() {
           image_url: image_url
         }).select().single();
 
-        if (imageError) throw imageError;
+        if (imageError) {
+          console.error("[Chat] Image save error:", imageError);
+        }
 
         const assistantMessage: Message = {
           id: crypto.randomUUID(),
           role: 'assistant',
           content: `Generated image for: ${content}`,
-          image_url: `db:${imageData.id}`,
-          filename,
+          image_url: imageData ? `db:${imageData.id}` : image_url,
+          filename: filename || `trelvix-${Date.now()}.png`,
           created_at: new Date().toISOString()
         };
         
-        const stateMessage = { ...assistantMessage, image_url };
         const finalMessages = [...updatedMessages, assistantMessage];
-        const stateMessages = [...updatedMessages, stateMessage];
-        
-        setMessages(stateMessages);
+        setMessages(finalMessages);
         
         await supabase.from('conversations').update({ 
           messages: finalMessages,
@@ -874,12 +933,7 @@ export default function App() {
         }).eq('id', conv.id);
         
         if (profile) {
-          const { data: updatedProfile } = await supabase.from('profiles')
-            .update({ images_used_today: (profile?.images_used_today || 0) + 1 })
-            .eq('id', user.id)
-            .select()
-            .single();
-          if (updatedProfile) setProfile(updatedProfile);
+          await updateProfile({ images_used_today: (profile?.images_used_today || 0) + 1 });
         }
         
         setIsLoading(false);
@@ -890,19 +944,19 @@ export default function App() {
       const decoder = new TextDecoder();
       let fullContent = '';
 
-      if (reader) {
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          const chunk = decoder.decode(value);
-          fullContent += chunk;
-          setStreamingMessage(prev => prev + chunk);
-          if (showVoiceMode) {
-            setCurrentResponse(prev => prev + chunk);
-          }
+      if (!reader) {
+        throw new Error('Streaming response not available');
+      }
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        const chunk = decoder.decode(value);
+        fullContent += chunk;
+        setStreamingMessage(prev => prev + chunk);
+        if (showVoiceMode) {
+          setCurrentResponse(prev => prev + chunk);
         }
-      } else {
-        throw new Error('Response body is empty or streaming not supported');
       }
 
       const assistantMessage: Message = {
@@ -928,24 +982,18 @@ export default function App() {
       
       if (profile) {
         const usageField = currentAttachment ? 'analysis_used_today' : 'messages_used_today';
-        const { data: updatedProfile } = await supabase.from('profiles')
-          .update({ [usageField]: (profile?.[usageField as keyof Profile] as number || 0) + 1 })
-          .eq('id', user.id)
-          .select()
-          .single();
-        if (updatedProfile) setProfile(updatedProfile);
+        await updateProfile({ [usageField]: (profile?.[usageField as keyof Profile] as number || 0) + 1 });
       }
 
       setIsLoading(false);
     } catch (error: any) {
       clearTimeout(timeoutId);
-      if (error.name === 'AbortError') {
-        console.error("AI Request Aborted:", error);
-        toast.error('Request timed out. Please try again.');
-      } else {
-        console.error("AI Error:", error);
-        toast.error(error.message || 'Failed to generate response.');
-      }
+      console.error("[Chat] Request Error:", error);
+      
+      toast.error(error.message || 'Connection failed. Please try again.');
+      
+      // Allow user to try again
+      setInput(lastInput); 
       setIsLoading(false);
     }
   };
@@ -1673,9 +1721,7 @@ export default function App() {
             onShowLegal={setShowLegal}
             onApplyKey={async (key) => {
               try {
-                const { data, error } = await supabase.from('profiles').update({ plan: 'pro' }).eq('id', user.id).select().single();
-                if (error) throw error;
-                setProfile(data);
+                await updateProfile({ plan: 'pro' });
                 toast.success('Pro activated successfully!');
               } catch (e) {
                 toast.error('Invalid key or failed to activate');
