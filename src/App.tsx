@@ -623,6 +623,22 @@ export default function App() {
     }
   };
 
+  const handleDeleteConversation = async (id: string) => {
+    if (!confirm('Are you sure you want to delete this conversation?')) return;
+    try {
+      const { error } = await supabase.from('conversations').delete().eq('id', id);
+      if (error) throw error;
+      setConversations(prev => prev.filter(c => c.id !== id));
+      if (currentConversation?.id === id) {
+        handleNewChat();
+      }
+      toast.success('Conversation deleted');
+    } catch (err) {
+      console.error("Error deleting conversation:", err);
+      toast.error('Failed to delete conversation');
+    }
+  };
+
   const handleContextSubmit = async (data: any) => {
     const type = showContextForm!;
     setShowContextForm(null);
@@ -746,7 +762,6 @@ export default function App() {
     // Smart Image Intent Detection
     const lowerContent = content.toLowerCase();
     const isImageIntent = 
-      conv.type === 'image' || 
       ((/generate|create|make|draw|design|show me|give me|i want|produce|paint|illustrate|visualize|render/i.test(lowerContent)) && 
        (/image|picture|photo|logo|flyer|poster|illustration|drawing|sketch|graphic|art|realistic|scene|portrait|landscape/i.test(lowerContent))) ||
       /\b(logo|flyer|poster|art|sketch|drawing)\b/i.test(lowerContent) ||
@@ -800,7 +815,7 @@ export default function App() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          type: isImageIntent ? 'image' : (conv.type || 'script'),
+          type: isImageIntent ? 'image' : (conv.type === 'image' ? 'chat' : (conv.type || 'chat')),
           prompt: content,
           messages: updatedMessages,
           voice_option: voiceOption,
@@ -1016,28 +1031,6 @@ export default function App() {
     }
   };
 
-  const handleDeleteConversation = async (id: string) => {
-    // Note: confirm() is blocked in iframes, so we delete directly or should use a custom modal.
-    // For now, we'll proceed with deletion to ensure functionality works.
-    try {
-      const { error } = await supabase
-        .from('conversations')
-        .delete()
-        .eq('id', id);
-
-      if (error) throw error;
-
-      setConversations(prev => prev.filter(c => c.id !== id));
-      if (currentConversation?.id === id) {
-        handleNewChat();
-      }
-      toast.success('Conversation deleted');
-    } catch (error) {
-      console.error("Error deleting:", error);
-      toast.error('Failed to delete conversation');
-    }
-  };
-
   const handleFeedback = async (messageId: string, feedback: 'like' | 'dislike') => {
     if (!currentConversation) return;
 
@@ -1182,6 +1175,13 @@ export default function App() {
         onOpenImages={() => setActiveView('images')}
         activeView={activeView}
         onLogout={handleLogout}
+        conversations={conversations}
+        currentConversationId={currentConversation?.id}
+        onSelectConversation={(id) => {
+          handleSelectConversation(id);
+          setActiveView('chat');
+        }}
+        onDeleteConversation={handleDeleteConversation}
       />
 
       <main className="flex-1 flex flex-col relative overflow-hidden">

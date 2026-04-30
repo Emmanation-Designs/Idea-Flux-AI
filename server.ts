@@ -43,8 +43,18 @@ app.all("/api/proxy-image", async (req, res) => {
   }
 });
 
+// Alias /api/chat to /api/generate for backward compatibility with older builds
+app.post("/api/chat", async (req, res) => {
+  console.log("Redirecting /api/chat to /api/generate");
+  return handleGenerate(req, res);
+});
+
 app.post("/api/generate", async (req, res) => {
-  console.log("Received request to /api/generate");
+  return handleGenerate(req, res);
+});
+
+async function handleGenerate(req: express.Request, res: express.Response) {
+  console.log("Received request to generate");
   const { type, prompt, messages = [], voice_option = "alloy", ready_to_copy = false } = req.body;
 
   try {
@@ -131,7 +141,7 @@ app.post("/api/generate", async (req, res) => {
       : "If the user asks for something copyable (prompt, code, list, hashtags, script, etc.), automatically provide the main content in a ready-to-copy format (like a markdown code block), while keeping the rest of the response normal.";
 
     const linkRules = "Ensure all links in your responses are clickable by using standard markdown [text](url) format.";
-    const imageRules = "You ARE capable of generating images, logos, and flyers. If the user asks for one, do not say you are unable to. Simply confirm you are generating it and the system will handle the rest.";
+    const imageRules = "You ARE capable of generating images, logos, and flyers. HOWEVER, you must only confirm generation if the user explicitly asks for an image/logo/flyer. If the user is just chatting or asking a question about a previous image, respond with text and DO NOT mention generating a new image unless requested.";
     
     const tavilyKey = process.env.TAVILY_API_KEY || process.env.TRAVILY_API_KEY;
     const searchMissingRules = !tavilyKey ? "\n\nNOTE: Real-time web search is currently disabled because the TAVILY_API_KEY is missing. If the user asks for real-time info, politely ask them to add the TAVILY_API_KEY in the app settings." : "";
@@ -207,8 +217,8 @@ ${results.map((r: any) => `- [${r.title}]: ${r.content} (${r.url})`).join("\n")}
       }
     }
 
-    const model = (type === "idea" || type === "script") ? "gpt-4o" : "gpt-4o-mini";
-    console.log(`Using model ${model} for ${type} task.`);
+    const model = "gpt-4o-mini";
+    console.log(`Using model ${model} for ${type} task (optimized for speed).`);
 
     const stream = await openai.chat.completions.create({
       model: model,
@@ -271,7 +281,7 @@ ${results.map((r: any) => `- [${r.title}]: ${r.content} (${r.url})`).join("\n")}
     console.error("Error generating content:", error);
     res.status(500).json({ error: error.message || "Failed to generate content" });
   }
-});
+}
 
 async function startServer() {
   console.log("Starting server...");
