@@ -161,9 +161,9 @@ app.post("/api/chat", async (req, res) => {
 });
 
 async function handleGenerate(req: express.Request, res: express.Response) {
-  const { type, prompt, messages = [], voice_option = "alloy", ready_to_copy = false } = req.body;
+  const { type, prompt, messages = [], voice_option = "alloy", ready_to_copy = false, personality = "professional" } = req.body;
 
-  console.log(`[Generate] Type: ${type}, Prompt length: ${prompt?.length || 0}, Messages count: ${messages.length}`);
+  console.log(`[Generate] Type: ${type}, Personality: ${personality}, Prompt length: ${prompt?.length || 0}`);
 
   try {
     const apiKey = process.env.OPENAI_API_KEY;
@@ -218,7 +218,17 @@ async function handleGenerate(req: express.Request, res: express.Response) {
     // 3. Chat / Idea / Script / Content
     const attributionRules = `Your name is Trelvix AI. Developed by Ingenium Virtual Assistant Limited (www.ingeniumvirtualassistant.com).`;
     
+    const personalityPrompts: Record<string, string> = {
+      professional: "Maintain a professional, clear, and direct tone. Be efficient and helpful.",
+      creative: "Be highly imaginative, descriptive, and expressive. Use vivid language and think outside the box.",
+      witty: "Use a humorous, slightly sarcastic, and engaging tone. Be clever and entertaining while remaining helpful.",
+      concise: "Be extremely brief and to the point. Provide information efficiently without unnecessary detail.",
+      empathetic: "Be warm, supportive, and understanding. Use a kind tone and show genuine care in your responses.",
+      academic: "Use a formal, detailed, and technical tone. Provide in-depth explanations and maintain high intellectual rigor."
+    };
+
     let systemInstruction = `You are Trelvix AI, a high-performance AI toolkit. ${attributionRules} 
+    Personality: ${personalityPrompts[personality as keyof typeof personalityPrompts] || personalityPrompts.professional}
     Always prioritize professionalism, creativity, and accuracy.`;
     
     if (type === "idea") systemInstruction += " You are an expert content strategist and creative thinker. Help users brainstorm unique and impactful ideas.";

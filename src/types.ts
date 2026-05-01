@@ -1,4 +1,5 @@
 export type ConversationType = 'idea' | 'script' | 'hashtag' | 'image' | 'voice' | 'general';
+export type PersonalityType = 'professional' | 'creative' | 'witty' | 'concise' | 'empathetic' | 'academic';
 
 export interface Message {
   id: string;
@@ -28,7 +29,9 @@ export interface Profile {
   id: string;
   email?: string; // Optional if not in live schema update list
   name?: string | null;
+  avatar_url?: string | null;
   plan: 'free' | 'pro' | 'plus';
+  personality?: PersonalityType;
   messages_used_today: number;
   analysis_used_today: number;
   images_used_today: number;

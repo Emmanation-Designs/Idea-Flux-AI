@@ -66,19 +66,21 @@ export const Auth = ({ onAuthSuccess, isDarkMode }: { onAuthSuccess: () => void;
       <motion.div 
         initial={{ opacity: 0, y: 20 }}
         animate={{ opacity: 1, y: 0 }}
-        className="w-full max-w-md bg-zinc-900 border border-zinc-800 rounded-[3rem] p-8 md:p-12 shadow-2xl relative z-10"
+        className="w-full max-w-md bg-zinc-900 border border-zinc-800 rounded-[2.5rem] p-10 md:p-12 shadow-2xl relative z-10"
       >
-        <div className="flex flex-col items-center mb-12">
-          <Zap className="w-16 h-16 text-emerald-500 mb-6 drop-shadow-[0_0_15px_rgba(16,185,129,0.3)]" />
-          <h1 className="text-3xl font-black tracking-tighter uppercase text-white">Trelvix AI</h1>
-          <p className="text-zinc-500 text-sm font-bold mt-2 uppercase tracking-widest opacity-60">Professional AI Toolkit</p>
+        <div className="flex flex-col items-center mb-10 text-center">
+          <div className="w-16 h-16 rounded-2xl bg-zinc-800 flex items-center justify-center mb-6 shadow-xl border border-zinc-700/50">
+            <Zap className="w-8 h-8 text-emerald-500 drop-shadow-[0_0_10px_rgba(16,185,129,0.3)]" />
+          </div>
+          <h1 className="text-3xl font-bold tracking-tight text-white mb-2">Trelvix AI</h1>
+          <p className="text-zinc-500 text-sm font-medium leading-relaxed max-w-[240px]">The professional creative engine for high-fidelity content.</p>
         </div>
 
-        <div className="space-y-4 mb-8">
+        <div className="space-y-3 mb-8">
           <button 
             type="button"
             onClick={handleGoogleSignIn}
-            className="w-full flex items-center justify-center gap-4 bg-white text-zinc-900 py-4 rounded-2xl font-black text-sm uppercase tracking-widest hover:bg-zinc-100 transition-all active:scale-95 shadow-xl shadow-white/5"
+            className="w-full flex items-center justify-center gap-3 bg-white text-zinc-900 py-3.5 rounded-xl font-bold text-sm hover:bg-zinc-100 transition-all active:scale-[0.98] shadow-lg"
           >
             <svg className="w-5 h-5" viewBox="0 0 24 24">
               <path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" fill="#4285F4"/>
@@ -89,42 +91,42 @@ export const Auth = ({ onAuthSuccess, isDarkMode }: { onAuthSuccess: () => void;
             Continue with Google
           </button>
           
-          <div className="flex items-center gap-4 py-4">
+          <div className="flex items-center gap-4 py-3">
             <div className="flex-1 h-[1px] bg-zinc-800" />
-            <span className="text-[10px] font-black text-zinc-600 uppercase tracking-widest">or email</span>
+            <span className="text-[10px] font-bold text-zinc-600 uppercase tracking-widest whitespace-nowrap">or use email</span>
             <div className="flex-1 h-[1px] bg-zinc-800" />
           </div>
         </div>
 
-        <form onSubmit={handleAuth} className="space-y-6">
-          <div>
-            <label className="block text-[10px] uppercase font-black tracking-widest text-zinc-500 mb-2 ml-1">Account ID</label>
+        <form onSubmit={handleAuth} className="space-y-5">
+          <div className="space-y-2">
+            <label className="block text-xs font-bold text-zinc-500 ml-1">Email Address</label>
             <input 
               type="email"
               required
               value={email}
               onChange={e => setEmail(e.target.value)}
-              className="w-full bg-zinc-800/50 border border-zinc-700 text-white rounded-2xl px-5 py-4 focus:ring-2 focus:ring-emerald-500 outline-none transition-all placeholder:text-zinc-600 shadow-inner"
+              className="w-full bg-zinc-800/40 border border-zinc-700/50 text-white rounded-xl px-4 py-3.5 focus:ring-2 focus:ring-emerald-500/50 outline-none transition-all placeholder:text-zinc-600 shadow-inner"
               placeholder="name@example.com"
             />
           </div>
-          <div>
-            <label className="block text-[10px] uppercase font-black tracking-widest text-zinc-500 mb-2 ml-1">Access Key</label>
+          <div className="space-y-2">
+            <label className="block text-xs font-bold text-zinc-500 ml-1">Password</label>
             <div className="relative">
               <input 
                 type={showPassword ? "text" : "password"}
                 required
                 value={password}
                 onChange={e => setPassword(e.target.value)}
-                className="w-full bg-zinc-800/50 border border-zinc-700 text-white rounded-2xl px-5 py-4 focus:ring-2 focus:ring-emerald-500 outline-none transition-all pr-14 placeholder:text-zinc-600 shadow-inner"
+                className="w-full bg-zinc-800/40 border border-zinc-700/50 text-white rounded-xl px-4 py-3.5 focus:ring-2 focus:ring-emerald-500/50 outline-none transition-all pr-12 placeholder:text-zinc-600 shadow-inner"
                 placeholder="••••••••"
               />
               <button 
                 type="button"
                 onClick={() => setShowPassword(!showPassword)}
-                className="absolute right-5 top-1/2 -translate-y-1/2 text-zinc-500 hover:text-white transition-colors"
+                className="absolute right-4 top-1/2 -translate-y-1/2 text-zinc-600 hover:text-white transition-colors"
               >
-                {showPassword ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
+                {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
               </button>
             </div>
           </div>
@@ -132,21 +134,22 @@ export const Auth = ({ onAuthSuccess, isDarkMode }: { onAuthSuccess: () => void;
           <button 
             type="submit"
             disabled={loading}
-            className="w-full py-4 bg-emerald-500 text-white rounded-2xl font-black text-sm uppercase tracking-widest hover:bg-emerald-400 transition-all disabled:opacity-50 shadow-xl shadow-emerald-500/10 active:scale-95"
+            className="w-full py-4 bg-emerald-500 text-white rounded-xl font-bold text-sm hover:bg-emerald-400 transition-all disabled:opacity-50 shadow-lg shadow-emerald-500/10 active:scale-[0.98] mt-2"
           >
             {loading ? 'Initializing...' : (isLogin ? 'Sign In' : 'Create Account')}
           </button>
         </form>
 
-        <div className="mt-8 text-center pt-8 border-t border-zinc-800">
+        <div className="mt-8 text-center pt-6 border-t border-zinc-800/50">
           <button 
             onClick={() => setIsLogin(!isLogin)}
-            className="text-xs font-black uppercase tracking-widest text-zinc-500 hover:text-white transition-colors"
+            className="text-xs font-medium text-zinc-500 hover:text-white transition-colors"
           >
-            {isLogin ? 'Need a new identity? Register' : 'Existing account? Authenticate'}
+            {isLogin ? "Don't have an account? Sign Up" : 'Already have an account? Sign In'}
           </button>
         </div>
       </motion.div>
+
     </div>
   );
 };

@@ -3,7 +3,8 @@ import {
   FileText, 
   Hash,
   Zap,
-  Waves
+  Waves,
+  Image as ImageIcon
 } from 'lucide-react';
 import { motion } from 'motion/react';
 import { clsx, type ClassValue } from 'clsx';
@@ -31,4 +32,5 @@ export const WelcomeScreen = () => {
     </div>
   );
 };
+
 

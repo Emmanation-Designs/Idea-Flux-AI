@@ -41,11 +41,11 @@ export const CodeBlock: React.FC<CodeBlockProps> = ({ children, className, inlin
       <div className="flex items-center justify-between px-4 py-2 bg-zinc-100/50 dark:bg-zinc-800/50 border-b border-zinc-200 dark:border-zinc-800">
         <div className="flex items-center gap-2">
           <div className="flex gap-1.5">
-            <div className="w-2.5 h-2.5 rounded-full bg-red-400/50" />
-            <div className="w-2.5 h-2.5 rounded-full bg-amber-400/50" />
-            <div className="w-2.5 h-2.5 rounded-full bg-emerald-400/50" />
+            <div className="w-2.5 h-2.5 rounded-full bg-zinc-300 dark:bg-zinc-700" />
+            <div className="w-2.5 h-2.5 rounded-full bg-zinc-300 dark:bg-zinc-700" />
+            <div className="w-2.5 h-2.5 rounded-full bg-zinc-300 dark:bg-zinc-700" />
           </div>
-          <span className="text-[10px] font-bold uppercase tracking-widest opacity-40 ml-2">Ready to Copy</span>
+          <span className="text-[10px] font-bold text-zinc-400 dark:text-zinc-500 ml-2 uppercase tracking-tight">Source Code</span>
         </div>
         
         <div className="flex items-center gap-2">
@@ -58,17 +58,17 @@ export const CodeBlock: React.FC<CodeBlockProps> = ({ children, className, inlin
           </button>
           <button
             onClick={handleCopy}
-            className="flex items-center gap-1.5 px-2.5 py-1 bg-zinc-900 dark:bg-zinc-100 text-white dark:text-zinc-900 rounded-md text-[10px] font-bold hover:bg-zinc-800 dark:hover:bg-zinc-200 transition-colors"
+            className="flex items-center gap-1.5 px-2.5 py-1.5 bg-zinc-900 dark:bg-zinc-100 text-white dark:text-zinc-900 rounded-md text-[10px] font-bold hover:opacity-90 transition-opacity"
           >
             {isCopied ? (
               <>
                 <Check className="w-3 h-3" />
-                COPIED
+                Copied
               </>
             ) : (
               <>
                 <Copy className="w-3 h-3" />
-                COPY
+                Copy
               </>
             )}
           </button>

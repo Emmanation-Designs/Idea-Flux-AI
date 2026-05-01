@@ -15,6 +15,8 @@ import { motion, AnimatePresence } from 'motion/react';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 
+import type { Profile } from '../types';
+
 function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }
@@ -28,6 +30,7 @@ export const Sidebar = ({
   onOpenImages,
   onLogout,
   activeView,
+  profile,
   conversations = [],
   currentConversationId,
   onSelectConversation,
@@ -42,6 +45,7 @@ export const Sidebar = ({
   onOpenImages: () => void;
   onLogout: () => void;
   activeView: string;
+  profile: Profile | null;
   conversations?: any[];
   currentConversationId?: string;
   onSelectConversation: (id: string) => void;
@@ -57,16 +61,26 @@ export const Sidebar = ({
         !isOpen && "pointer-events-none lg:pointer-events-auto"
       )}
     >
-      <div className="p-6 flex items-center justify-between">
+      <div className="p-6 flex items-center justify-between mb-2">
         <h2 
           onClick={onNewChat}
-          className="font-black text-xl flex items-center gap-2 cursor-pointer hover:opacity-80 transition-opacity"
+          className="font-black text-xs uppercase tracking-[0.2em] flex items-center gap-2 cursor-pointer transition-opacity"
         >
-          <Zap className="w-5 h-5 text-emerald-500" />
+          <Zap className="w-4 h-4 text-emerald-500" />
           Trelvix AI
         </h2>
-        <button onClick={() => setIsOpen(false)} className="p-1 hover:bg-zinc-200 dark:hover:bg-zinc-800 rounded-md lg:hidden">
+        <button onClick={() => setIsOpen(false)} className="p-1 hover:bg-zinc-200 dark:hover:bg-zinc-800 rounded-md lg:hidden text-zinc-400">
           <CloseIcon className="w-5 h-5" />
+        </button>
+      </div>
+
+      <div className="px-4 mb-6">
+        <button 
+          onClick={onNewChat}
+          className="w-full flex items-center gap-3 bg-zinc-900 dark:bg-zinc-100 text-white dark:text-zinc-900 px-4 py-3 rounded-xl font-black text-[10px] uppercase tracking-widest hover:brightness-110 active:scale-[0.98] transition-all shadow-xl shadow-zinc-500/10"
+        >
+          <Plus className="w-4 h-4" />
+          New Conversation
         </button>
       </div>
 
@@ -75,9 +89,9 @@ export const Sidebar = ({
           <button 
             onClick={onOpenImages}
             className={cn(
-              "w-full flex items-center gap-3 px-4 py-3 text-sm font-bold rounded-2xl transition-all",
+              "w-full flex items-center gap-3 px-4 py-2.5 text-sm font-medium rounded-xl transition-all",
               activeView === 'images' 
-                ? "bg-zinc-200 dark:bg-zinc-900 text-zinc-900 dark:text-white shadow-sm" 
+                ? "bg-zinc-200 dark:bg-zinc-800 text-zinc-900 dark:text-zinc-100 shadow-sm" 
                 : "text-zinc-500 hover:bg-zinc-100 dark:hover:bg-zinc-900"
             )}
           >
@@ -88,9 +102,9 @@ export const Sidebar = ({
           <button 
             onClick={onOpenApps}
             className={cn(
-              "w-full flex items-center gap-3 px-4 py-3 text-sm font-bold rounded-2xl transition-all",
+              "w-full flex items-center gap-3 px-4 py-2.5 text-sm font-medium rounded-xl transition-all",
               activeView === 'apps' 
-                ? "bg-zinc-200 dark:bg-zinc-900 text-zinc-900 dark:text-white shadow-sm" 
+                ? "bg-zinc-200 dark:bg-zinc-800 text-zinc-900 dark:text-zinc-100 shadow-sm" 
                 : "text-zinc-500 hover:bg-zinc-100 dark:hover:bg-zinc-900"
             )}
           >
@@ -101,9 +115,9 @@ export const Sidebar = ({
           <button 
             onClick={onOpenSettings}
             className={cn(
-              "w-full flex items-center gap-3 px-4 py-3 text-sm font-bold rounded-2xl transition-all",
+              "w-full flex items-center gap-3 px-4 py-2.5 text-sm font-medium rounded-xl transition-all",
               activeView === 'settings' 
-                ? "bg-zinc-200 dark:bg-zinc-900 text-zinc-900 dark:text-white shadow-sm" 
+                ? "bg-zinc-200 dark:bg-zinc-800 text-zinc-900 dark:text-zinc-100 shadow-sm" 
                 : "text-zinc-500 hover:bg-zinc-100 dark:hover:bg-zinc-900"
             )}
           >
@@ -125,10 +139,10 @@ export const Sidebar = ({
               </div>
             ) : (
               <AnimatePresence mode="popLayout">
-                {conversations.map((conv) => (
+                {conversations.map((conv, idx) => (
                   <motion.div
                     layout
-                    key={conv.id}
+                    key={conv.id || `side-conv-${idx}-${conv.created_at}`}
                     initial={{ opacity: 0, x: -10 }}
                     animate={{ opacity: 1, x: 0 }}
                     exit={{ opacity: 0, scale: 0.95 }}
@@ -137,9 +151,9 @@ export const Sidebar = ({
                     <button
                       onClick={() => onSelectConversation(conv.id)}
                       className={cn(
-                        "w-full text-left px-4 py-3 rounded-2xl text-sm transition-all flex items-center gap-3 relative pr-12",
+                        "w-full text-left px-4 py-2.5 rounded-xl text-sm transition-all flex items-center gap-3 relative pr-12",
                         currentConversationId === conv.id
-                          ? "bg-white dark:bg-zinc-900 text-zinc-900 dark:text-white shadow-md ring-1 ring-zinc-200 dark:ring-zinc-800"
+                          ? "bg-white dark:bg-zinc-900 text-zinc-900 dark:text-white shadow-sm border border-zinc-200 dark:border-zinc-800"
                           : "text-zinc-500 hover:bg-zinc-100/80 dark:hover:bg-zinc-900/80"
                       )}
                     >
@@ -148,7 +162,7 @@ export const Sidebar = ({
                         currentConversationId === conv.id ? "text-emerald-500" : "text-zinc-400"
                       )} />
                       <div className="flex-1 min-w-0">
-                        <p className="font-bold truncate">{conv.title || 'Untitled Chat'}</p>
+                        <p className="font-medium truncate">{conv.title || 'Untitled Chat'}</p>
                       </div>
                     </button>
                     <div className="absolute right-2 top-1/2 -translate-y-1/2 flex items-center gap-1 opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-all">
@@ -180,20 +194,35 @@ export const Sidebar = ({
         </div>
       </div>
 
-      <div className="p-4 border-t border-zinc-200 dark:border-zinc-800 space-y-2">
+      <div className="p-4 border-t border-zinc-200 dark:border-zinc-800 bg-white/50 dark:bg-zinc-950 px-2 space-y-1">
         <button 
-          onClick={onNewChat}
-          className="w-full flex items-center justify-center gap-2 bg-zinc-900 dark:bg-zinc-100 text-white dark:text-zinc-900 py-3.5 rounded-2xl font-black text-[10px] md:text-xs uppercase tracking-[0.2em] hover:scale-[1.02] active:scale-[0.98] transition-all shadow-xl shadow-black/10 dark:shadow-white/5"
+          onClick={onOpenSettings}
+          className="w-full flex items-center gap-3 p-3 rounded-2xl hover:bg-zinc-100 dark:hover:bg-zinc-900 transition-all text-left outline-none"
         >
-          <Plus className="w-4 h-4" />
-          New chat
+          <div className="w-10 h-10 rounded-xl bg-zinc-100 dark:bg-zinc-900 flex items-center justify-center border border-zinc-200 dark:border-zinc-800 overflow-hidden shrink-0">
+            {profile?.avatar_url ? (
+              <img src={profile.avatar_url} alt="Profile" className="w-full h-full object-cover" />
+            ) : (
+              <LogOut className="w-4 h-4 text-zinc-400 rotate-180" />
+            )}
+          </div>
+          <div className="flex-1 min-w-0">
+            <p className="text-xs font-black text-zinc-900 dark:text-zinc-100 truncate uppercase tracking-widest">
+              {profile?.name || profile?.email?.split('@')[0] || 'User'}
+            </p>
+            <p className="text-[10px] text-zinc-400 font-bold uppercase tracking-widest truncate">
+              {profile?.plan || 'Free'} Plan
+            </p>
+          </div>
+          <SettingsIcon className="w-4 h-4 text-zinc-300" />
         </button>
+
         <button 
           onClick={onLogout}
-          className="w-full flex items-center gap-3 px-4 py-3 text-sm font-bold text-red-500 hover:bg-red-50 dark:hover:bg-red-950/20 rounded-2xl transition-colors"
+          className="w-full flex items-center gap-3 px-4 py-2 text-[10px] font-black uppercase tracking-widest text-zinc-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-950/20 rounded-xl transition-colors"
         >
-          <LogOut className="w-4 h-4" />
-          Logout
+          <LogOut className="w-3.5 h-3.5" />
+          Sign Out
         </button>
       </div>
     </motion.aside>

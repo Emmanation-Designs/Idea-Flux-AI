@@ -9,9 +9,9 @@ export default async function handler(req: any, res: any) {
     return res.status(405).json({ error: 'Method not allowed' });
   }
 
-  const { type, prompt, messages = [], voice_option = "alloy" } = req.body;
+  const { type, prompt, messages = [], voice_option = "alloy", personality = "professional" } = req.body;
 
-  console.log(`[API Generate] Start - Type: ${type}, Prompt length: ${prompt?.length || 0}`);
+  console.log(`[API Generate] Start - Type: ${type}, Personality: ${personality}, Prompt length: ${prompt?.length || 0}`);
 
   try {
     const apiKey = process.env.OPENAI_API_KEY;
@@ -65,7 +65,18 @@ export default async function handler(req: any, res: any) {
 
     // 3. Streaming Chat
     const attributionRules = `Your name is Trelvix AI. Developed by Ingenium Virtual Assistant Limited (www.ingeniumvirtualassistant.com).`;
+    
+    const personalityPrompts: Record<string, string> = {
+      professional: "Maintain a professional, clear, and direct tone. Be efficient and helpful.",
+      creative: "Be highly imaginative, descriptive, and expressive. Use vivid language and think outside the box.",
+      witty: "Use a humorous, slightly sarcastic, and engaging tone. Be clever and entertaining while remaining helpful.",
+      concise: "Be extremely brief and to the point. Provide information efficiently without unnecessary detail.",
+      empathetic: "Be warm, supportive, and understanding. Use a kind tone and show genuine care in your responses.",
+      academic: "Use a formal, detailed, and technical tone. Provide in-depth explanations and maintain high intellectual rigor."
+    };
+
     let systemInstruction = `You are Trelvix AI, a high-performance AI toolkit. ${attributionRules} 
+    Personality: ${personalityPrompts[personality as keyof typeof personalityPrompts] || personalityPrompts.professional}
     Always prioritize professionalism, creativity, and accuracy.`;
     
     if (type === "idea") systemInstruction += " You are an expert content strategist and creative thinker.";

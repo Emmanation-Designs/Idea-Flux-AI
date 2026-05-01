@@ -479,7 +479,9 @@ export default function App() {
     // Only send valid columns as per DB schema
     const validKeys = [
       'name', 
+      'avatar_url',
       'plan', 
+      'personality',
       'subscription_expires_at', 
       'messages_used_today', 
       'analysis_used_today', 
@@ -531,6 +533,7 @@ export default function App() {
       const newProfile = {
         id: user.id,
         name: user.user_metadata?.full_name || null,
+        avatar_url: user.user_metadata?.avatar_url || null,
         messages_used_today: 0,
         analysis_used_today: 0,
         images_used_today: 0,
@@ -895,7 +898,8 @@ export default function App() {
             image_url: m.image_url
           })),
           voice_option: voiceOption,
-          ready_to_copy: conv.metadata?.ready_to_copy || false
+          ready_to_copy: conv.metadata?.ready_to_copy || false,
+          personality: profile?.personality || 'professional'
         }),
         signal: controller.signal
       });
@@ -1243,12 +1247,12 @@ export default function App() {
         onNewChat={handleNewChat}
         onOpenSettings={() => {
           setShowSettings(true);
-          setActiveView('settings' as any);
         }}
         onOpenApps={() => setActiveView('apps')}
         onOpenImages={() => setActiveView('images')}
         activeView={activeView}
         onLogout={handleLogout}
+        profile={profile}
         conversations={conversations}
         currentConversationId={currentConversation?.id}
         onSelectConversation={(id) => {
@@ -1279,7 +1283,7 @@ export default function App() {
             <div className="flex items-center gap-2">
               <button 
                 onClick={() => setActiveView('history')}
-                className="px-3 py-1.5 rounded-xl text-xs font-black uppercase tracking-widest transition-all hover:bg-zinc-100 dark:hover:bg-zinc-900 opacity-40 hover:opacity-100"
+                className="px-3 py-1.5 rounded-xl text-xs font-semibold transition-all hover:bg-zinc-100 dark:hover:bg-zinc-900 text-zinc-500"
               >
                 History
               </button>
@@ -1328,16 +1332,16 @@ export default function App() {
               >
                 Return to Chat
               </button>
-              <ImageIcon className="w-24 h-24 text-orange-500" />
-              <div>
-                <h2 className="text-4xl font-black">Image Studio</h2>
-                <p className="text-zinc-500 font-bold max-w-sm mx-auto mt-4 leading-relaxed">Generate high-quality AI images using proprietary generation technology.</p>
+              <ImageIcon className="w-16 h-16 text-orange-500" />
+              <div className="space-y-4">
+                <h2 className="text-4xl font-bold tracking-tight">Image Studio</h2>
+                <p className="text-zinc-500 font-medium max-w-sm mx-auto mt-4 leading-relaxed">Generate high-fidelity AI images with proprietary studio quality.</p>
               </div>
               <button 
                 onClick={() => {
                   setShowContextForm('image');
                 }}
-                className="px-8 py-5 bg-zinc-900 dark:bg-white text-white dark:text-zinc-900 rounded-2xl font-black uppercase tracking-widest shadow-2xl active:scale-95 transition-all hover:shadow-orange-500/20"
+                className="px-8 py-4 bg-zinc-900 dark:bg-white text-white dark:text-zinc-900 rounded-2xl font-bold shadow-xl active:scale-[0.98] transition-all hover:shadow-orange-500/20"
               >
                 Generate New Image
               </button>
@@ -1345,10 +1349,10 @@ export default function App() {
           ) : activeView === 'history' ? (
             <div className="max-w-4xl mx-auto w-full p-6 space-y-4">
               <div className="flex items-center justify-between mb-8">
-                <h2 className="text-3xl font-black">Chat History</h2>
+                <h2 className="text-2xl font-bold tracking-tight">Chat History</h2>
                 <button 
                   onClick={() => setActiveView('chat')}
-                  className="px-4 py-2 bg-zinc-100 dark:bg-zinc-900 rounded-xl text-xs font-bold hover:bg-zinc-200 dark:hover:bg-zinc-800 transition-all"
+                  className="px-4 py-2 bg-zinc-100 dark:bg-zinc-900 rounded-xl text-xs font-semibold hover:bg-zinc-200 dark:hover:bg-zinc-800 transition-all text-zinc-600 dark:text-zinc-400"
                 >
                   Back to Chat
                 </button>
@@ -1364,7 +1368,7 @@ export default function App() {
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pb-12">
                     {conversations.map((conv, idx) => (
                       <div
-                      key={`history-conv-${conv.id || 'new'}-${idx}-${conv.created_at}`}
+                        key={conv.id || `history-conv-${idx}-${conv.created_at}`}
                         className="p-6 bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-3xl text-left hover:border-zinc-400 dark:hover:border-zinc-600 transition-all group relative hover:shadow-xl"
                       >
                       <div onClick={() => {
@@ -1375,7 +1379,7 @@ export default function App() {
                           <span className="text-[10px] font-black uppercase tracking-widest px-2 py-1 bg-zinc-100 dark:bg-zinc-800 rounded-lg">{conv.type}</span>
                           <span className="text-[10px] font-bold opacity-40 uppercase tracking-widest">{new Date(conv.created_at).toLocaleDateString()}</span>
                         </div>
-                        <h3 className="font-black mb-3 group-hover:text-zinc-900 dark:group-hover:text-white transition-colors">{conv.title}</h3>
+                        <h3 className="font-bold mb-2 group-hover:text-zinc-900 dark:group-hover:text-white transition-colors">{conv.title}</h3>
                         <p className="text-xs opacity-60 line-clamp-2 leading-relaxed">
                           {conv.messages?.[0]?.content || 'No messages yet'}
                         </p>
@@ -1411,7 +1415,7 @@ export default function App() {
                 <div className="max-w-4xl mx-auto w-full p-4 md:p-8 space-y-8 pb-32">
                   {messages.map((m, idx) => (
                     <div 
-                      key={`chat-msg-${m.id || 'msg'}-${idx}-${m.created_at}`} 
+                      key={m.id || `chat-msg-${idx}-${m.created_at}`} 
                       onClick={() => setActiveMessageId(activeMessageId === m.id ? null : m.id)}
                       className={cn(
                         "flex w-full cursor-pointer md:cursor-default",
@@ -1421,8 +1425,8 @@ export default function App() {
                       <div className={cn(
                         "max-w-[85%] md:max-w-[75%] p-4 rounded-2xl text-sm md:text-base group relative",
                         m.role === 'user' 
-                          ? "bg-zinc-100 dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 rounded-tr-none" 
-                          : "bg-transparent text-zinc-900 dark:text-zinc-100 rounded-tl-none border-l-2 border-zinc-200 dark:border-zinc-800 pl-6"
+                          ? "bg-zinc-100 dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 rounded-tr-none border border-zinc-200/50 dark:border-zinc-800/50" 
+                          : "bg-white dark:bg-zinc-900/50 text-zinc-900 dark:text-zinc-100 rounded-tl-none border border-zinc-200 dark:border-zinc-800 shadow-sm"
                       )}>
                         <div className="prose dark:prose-invert prose-sm md:prose-base max-w-none">
                           <ReactMarkdown 
@@ -1622,10 +1626,9 @@ export default function App() {
 
         {/* Input Area */}
         {activeView === 'chat' && (
-          <div className="relative p-3 md:p-6 bg-white dark:bg-zinc-950">
+          <div className="relative p-6 md:p-8 bg-white dark:bg-zinc-950 border-t border-zinc-100 dark:border-zinc-900/50">
             <div className="max-w-4xl mx-auto space-y-4 md:space-y-6">
-              {/* Input Area Group */}
-              <div className="bg-zinc-50 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-[1.5rem] md:rounded-[2.5rem] shadow-xl md:shadow-2xl transition-all focus-within:ring-1 focus-within:ring-zinc-200 dark:focus-within:ring-zinc-800 relative z-20 overflow-hidden">
+              <div className="bg-zinc-50 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-[2rem] md:rounded-[2.5rem] shadow-xl md:shadow-2xl focus-within:ring-2 focus-within:ring-zinc-900/5 dark:focus-within:ring-white/5 transition-all relative z-20 overflow-hidden">
                 <AnimatePresence>
                   {selectedAttachment && (
                     <motion.div 
@@ -1687,27 +1690,27 @@ export default function App() {
                       className="w-full bg-transparent border-none rounded-none px-2 md:px-4 py-4 md:py-5 pr-20 md:pr-28 focus:ring-0 outline-none resize-none transition-all min-h-[56px] md:min-h-[64px] max-h-[200px] text-sm md:text-base font-medium placeholder:text-zinc-400"
                     />
                     
-                    <div className="absolute right-0 flex items-center gap-1 md:gap-2 mr-1">
+            <div className="absolute right-0 flex items-center gap-1.5 md:gap-3 mr-2">
                       <button 
                         onClick={() => {
                           setShowVoiceMode(true);
                           toggleListening();
                         }}
-                        className="p-2 md:p-3 text-zinc-400 hover:text-zinc-900 dark:hover:text-white hover:bg-white dark:hover:bg-zinc-800 transition-all rounded-xl md:rounded-2xl"
+                        className="p-3 md:p-4 text-zinc-400 hover:text-zinc-900 dark:hover:text-white hover:bg-white dark:hover:bg-zinc-800 transition-all rounded-2xl md:rounded-full"
                       >
-                        <Waves className="w-4 h-4 md:w-5 md:h-5" />
+                        <Waves className="w-5 h-5" />
                       </button>
                       <button 
                         onClick={() => sendMessage(input)}
                         disabled={(!input.trim() && !selectedAttachment) || isLoading}
                         className={cn(
-                          "p-2 md:p-3 rounded-xl md:rounded-2xl transition-all shadow-lg md:shadow-xl flex items-center justify-center transform active:scale-95",
+                          "p-3 md:p-4 rounded-2xl md:rounded-full transition-all shadow-xl flex items-center justify-center transform active:scale-95",
                           input.trim() || selectedAttachment
                             ? "bg-zinc-900 dark:bg-white text-white dark:text-zinc-900" 
-                            : "text-zinc-300 dark:text-zinc-700 cursor-not-allowed"
+                            : "text-zinc-300 dark:text-zinc-700 cursor-not-allowed border border-zinc-200 dark:border-zinc-800"
                         )}
                       >
-                        <Send className="w-4 h-4 md:w-5 md:h-5" />
+                        <Send className="w-5 h-5" />
                       </button>
                     </div>
                   </div>
@@ -1730,25 +1733,16 @@ export default function App() {
           <Settings 
             profile={profile} 
             onClose={() => setShowSettings(false)} 
-            voiceOption={voiceOption}
-            onVoiceOptionChange={setVoiceOption}
-            autoPlayVoice={autoPlayVoice}
-            onToggleAutoPlay={() => setAutoPlayVoice(!autoPlayVoice)}
+            onUpdateProfile={updateProfile}
             onShowLegal={setShowLegal}
-            onApplyKey={async (key) => {
-              try {
-                await updateProfile({ plan: 'pro' });
-                toast.success('Pro activated successfully!');
-              } catch (e) {
-                toast.error('Invalid key or failed to activate');
-              }
-            }}
             onUpgrade={() => {
               setUpgradeReason('manual');
               setShowUpgradeModal(true);
             }}
             isDarkMode={isDarkMode}
             onToggleTheme={() => setIsDarkMode(!isDarkMode)}
+            autoPlayVoice={autoPlayVoice}
+            onToggleAutoPlay={() => setAutoPlayVoice(!autoPlayVoice)}
           />
         )}
         {showContextForm && (
