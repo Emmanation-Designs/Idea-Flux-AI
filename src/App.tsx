@@ -181,12 +181,6 @@ export default function App() {
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
       setUser(session?.user ?? null);
-      
-      if (event === 'PASSWORD_RECOVERY') {
-        setShowSettings(true);
-        // Dispatch custom event to tell Settings component to show reset form
-        window.dispatchEvent(new CustomEvent('supabase-password-reset'));
-      }
     });
 
     return () => subscription.unsubscribe();
@@ -962,7 +956,7 @@ export default function App() {
       setMessages(finalMessages);
       setStreamingMessage('');
 
-      if (conv.type === 'voice' || shouldPlayVoice || autoPlayVoice) {
+      if ((conv.type === 'voice' || showVoiceMode) && (shouldPlayVoice || autoPlayVoice)) {
         playVoice(fullContent);
         setShouldPlayVoice(false);
       }
@@ -1207,7 +1201,23 @@ export default function App() {
       >
         {isDarkMode ? <Sun className="w-5 h-5" /> : <Moon className="w-5 h-5" />}
       </button>
-      <Toaster position="top-center" theme={isDarkMode ? 'dark' : 'light'} />
+      <Toaster 
+        position="top-center" 
+        theme={isDarkMode ? 'dark' : 'light'} 
+        toastOptions={{
+          style: {
+            background: isDarkMode ? '#09090b' : 'white',
+            color: isDarkMode ? '#f4f4f5' : '#18181b',
+            border: `1px solid ${isDarkMode ? '#27272a' : '#e4e4e7'}`,
+            borderRadius: '16px',
+            fontSize: '11px',
+            fontWeight: '800',
+            textTransform: 'uppercase',
+            letterSpacing: '0.1em',
+            boxShadow: isDarkMode ? '0 10px 30px -10px rgba(0,0,0,0.5)' : '0 10px 30px -10px rgba(0,0,0,0.1)'
+          }
+        }}
+      />
     </div>
   );
 
@@ -1827,7 +1837,23 @@ export default function App() {
         )}
       </AnimatePresence>
 
-      <Toaster position="top-center" theme={isDarkMode ? 'dark' : 'light'} />
+      <Toaster 
+        position="top-center" 
+        theme={isDarkMode ? 'dark' : 'light'} 
+        toastOptions={{
+          style: {
+            background: isDarkMode ? '#09090b' : 'white',
+            color: isDarkMode ? '#f4f4f5' : '#18181b',
+            border: `1px solid ${isDarkMode ? '#27272a' : '#e4e4e7'}`,
+            borderRadius: '16px',
+            fontSize: '11px',
+            fontWeight: '800',
+            textTransform: 'uppercase',
+            letterSpacing: '0.1em',
+            boxShadow: isDarkMode ? '0 10px 30px -10px rgba(0,0,0,0.5)' : '0 10px 30px -10px rgba(0,0,0,0.1)'
+          }
+        }}
+      />
     </div>
   );
 }

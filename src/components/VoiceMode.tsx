@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
   X, 
@@ -7,8 +7,10 @@ import {
   Volume2, 
   VolumeX, 
   PhoneOff,
-  Settings as SettingsIcon,
-  Sparkles
+  ChevronRight,
+  PlayCircle,
+  Zap,
+  Globe
 } from 'lucide-react';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
@@ -16,6 +18,13 @@ import { twMerge } from 'tailwind-merge';
 function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }
+
+const VOICES = [
+  { id: 'alloy', name: 'Alloy', desc: 'Neutral & Professional', preview: 'https://cdn.openai.com/api/voices/alloy.wav' },
+  { id: 'echo', name: 'Echo', desc: 'Warm & Authoritative', preview: 'https://cdn.openai.com/api/voices/echo.wav' },
+  { id: 'fable', name: 'Fable', desc: 'British & Eloquent', preview: 'https://cdn.openai.com/api/voices/fable.wav' },
+  { id: 'onyx', name: 'Onyx', desc: 'Deep & Resonant', preview: 'https://cdn.openai.com/api/voices/onyx.wav' },
+];
 
 export const VoiceMode = ({ 
   isOpen, 
@@ -40,11 +49,35 @@ export const VoiceMode = ({
   voiceOption: string;
   onVoiceOptionChange: (voice: string) => void;
 }) => {
-  const [showVoiceSettings, setShowVoiceSettings] = useState(false);
+  const [isStarted, setIsStarted] = useState(false);
+  const [previewingVoice, setPreviewingVoice] = useState<string | null>(null);
+  const previewAudioRef = useRef<HTMLAudioElement | null>(null);
 
   // Derived state for the UI
   const state = isLoading ? 'thinking' : isPlaying ? 'speaking' : isListening ? 'listening' : 'idle';
-  const volume = isPlaying || isListening ? 0.6 : 0; 
+  const volume = isPlaying || isListening ? 0.6 : 0.05; 
+
+  const handlePreviewVoice = (id: string, url: string) => {
+    if (previewAudioRef.current) {
+      previewAudioRef.current.pause();
+    }
+    setPreviewingVoice(id);
+    const audio = new Audio(url);
+    previewAudioRef.current = audio;
+    audio.play().catch(() => {
+      // Browsers might block auto-play without user interaction on the specific element
+      // But since they clicked the preview button, it should be fine.
+    });
+    audio.onended = () => setPreviewingVoice(null);
+  };
+
+  useEffect(() => {
+    if (!isOpen) {
+      setIsStarted(false);
+      setPreviewingVoice(null);
+      if (previewAudioRef.current) previewAudioRef.current.pause();
+    }
+  }, [isOpen]);
 
   return (
     <AnimatePresence>
@@ -53,255 +86,224 @@ export const VoiceMode = ({
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}
-          className="fixed inset-0 z-50 bg-[#020202] text-white flex flex-col items-center justify-between p-6 md:p-12 overflow-hidden font-sans"
+          className="fixed inset-0 z-[100] bg-[#020202] text-white flex flex-col items-center overflow-hidden font-sans"
         >
-          {/* 1. Cinematic Aura Background */}
+          {/* 1. Atmospheric Glows (Green theme as requested) */}
           <div className="absolute inset-0 z-0 pointer-events-none">
-            {/* Floating Particles */}
-            {[...Array(25)].map((_, i) => (
-              <motion.div
-                key={`particle-${i}`}
-                initial={{ 
-                  x: Math.random() * window.innerWidth, 
-                  y: Math.random() * window.innerHeight,
-                  opacity: Math.random() * 0.2
-                }}
-                animate={{ 
-                  y: [null, Math.random() * (state === 'speaking' ? -300 : -100)],
-                  opacity: [null, 0]
-                }}
-                transition={{ 
-                  duration: (state === 'speaking' ? 3 : 8) + Math.random() * 10, 
-                  repeat: Infinity, 
-                  delay: Math.random() * 5 
-                }}
-                className="absolute w-[1.5px] h-[1.5px] bg-white rounded-full"
-              />
-            ))}
-            
-            {/* Primary Glow */}
-            <motion.div 
+             {/* Bottom Radiance */}
+             <motion.div 
               animate={{
-                scale: state === 'speaking' ? [1, 1.2, 1] : [1, 1.05, 1],
-                opacity: state === 'idle' ? 0.03 : 0.1,
-                x: state === 'speaking' ? [0, 20, -20, 0] : 0,
-                y: state === 'speaking' ? [0, -20, 20, 0] : 0,
+                scale: state === 'speaking' ? [1, 1.1, 1] : 1,
+                opacity: isStarted ? (state === 'speaking' ? 0.4 : 0.2) : 0.05,
               }}
-              transition={{ duration: 10, repeat: Infinity, ease: "linear" }}
-              className={cn(
-                "absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[90%] h-[90%] rounded-full blur-[160px] transition-colors duration-[2000ms]",
-                state === 'speaking' ? "bg-blue-500/30" : 
-                state === 'listening' ? "bg-white/5" : 
-                state === 'thinking' ? "bg-purple-500/10" : "bg-blue-500/5"
-              )}
+              transition={{ duration: 4, repeat: Infinity }}
+              className="absolute bottom-[-10%] left-1/2 -translate-x-1/2 w-full max-w-4xl h-[60%] bg-emerald-500/15 blur-[120px] rounded-full transition-all duration-1000"
             />
-            {/* Master horizontal line - cinematic style */}
-            <div className="absolute top-1/2 left-0 w-full h-[1px] bg-white/[0.03]" />
+            {/* Fine Dust/Static */}
+            <div className="absolute inset-0 opacity-[0.03] bg-[url('https://grainy-gradients.vercel.app/noise.svg')] pointer-events-none" />
           </div>
 
-          {/* 2. Professional Header */}
-          <div className="w-full flex items-center justify-between z-20">
-            <div className="flex flex-col gap-1">
-              <div className="flex items-center gap-2.5">
-                <Sparkles className="w-3.5 h-3.5 text-zinc-500" />
-                <span className="text-[10px] font-black tracking-[0.4em] uppercase text-zinc-600">
-                  Adaptive Intelligence
-                </span>
-              </div>
-              <div className="flex items-center gap-2 mt-1 px-3 py-1.5 bg-white/[0.02] rounded-full border border-white/[0.03]">
-                <div className={cn(
-                  "w-1 h-1 rounded-full transition-all duration-500",
-                  state === 'speaking' ? "bg-blue-400 shadow-[0_0_10px_#60a5fa]" : 
-                  state === 'listening' ? "bg-white shadow-[0_0_10px_#fff]" :
-                  state === 'thinking' ? "bg-amber-400 animate-pulse" : "bg-zinc-800"
-                )} />
-                <span className="text-[9px] font-bold text-zinc-500 uppercase tracking-widest">
-                  {state === 'thinking' ? "Synthesizing" : state === 'speaking' ? "Transmitting" : state === 'listening' ? "Active Listening" : "Sync Ready"}
-                </span>
-              </div>
-            </div>
-
-            <div className="flex items-center gap-2">
-              <button 
-                onClick={() => setShowVoiceSettings(!showVoiceSettings)}
-                className={cn(
-                  "p-3 rounded-2xl transition-all duration-300 backdrop-blur-3xl border border-white/[0.03]",
-                  showVoiceSettings ? "bg-white text-black" : "bg-white/[0.02] text-zinc-500 hover:text-white"
-                )}
-              >
-                <SettingsIcon className="w-5 h-5" />
-              </button>
-              <button 
-                onClick={onClose}
-                className="p-3 bg-white/[0.02] hover:bg-white/[0.05] rounded-2xl transition-all text-zinc-500 hover:text-white backdrop-blur-3xl border border-white/[0.03]"
-              >
-                <X className="w-6 h-6" />
-              </button>
-            </div>
-          </div>
-
-          {/* 3. Settings Overlay */}
-          <AnimatePresence>
-            {showVoiceSettings && (
-              <motion.div
-                initial={{ opacity: 0, scale: 0.95, y: -10 }}
-                animate={{ opacity: 1, scale: 1, y: 0 }}
-                exit={{ opacity: 0, scale: 0.95, y: -10 }}
-                className="absolute top-28 right-6 md:right-12 z-50 bg-zinc-900/95 backdrop-blur-[40px] border border-white/[0.05] rounded-[2rem] p-6 w-80 shadow-3xl"
-              >
-                <h3 className="text-[10px] font-black uppercase tracking-widest text-zinc-500 mb-6 px-1">Audio Profile</h3>
-                <div className="space-y-1.5">
-                  {([
-                    { id: 'alloy', name: 'Alloy', desc: 'Balanced / Professional' },
-                    { id: 'echo', name: 'Echo', desc: 'Warm / Authoritative' }
-                  ] as const).map((v) => (
-                    <button
-                      key={`voice-${v.id}`}
-                      onClick={() => {
-                        onVoiceOptionChange(v.id);
-                        setShowVoiceSettings(false);
-                      }}
-                      className={cn(
-                        "w-full flex items-center justify-between px-5 py-4 rounded-2xl text-left transition-all",
-                        voiceOption === v.id ? "bg-white text-black shadow-xl" : "hover:bg-white/5 border border-transparent text-zinc-400"
-                      )}
-                    >
-                      <div className="flex flex-col">
-                        <span className="text-sm font-bold">{v.name}</span>
-                        <span className={cn("text-[10px] font-medium opacity-60")}>{v.desc}</span>
-                      </div>
-                      {voiceOption === v.id && <div className="w-1.5 h-1.5 rounded-full bg-black/80" />}
-                    </button>
-                  ))}
-                </div>
-              </motion.div>
-            )}
-          </AnimatePresence>
-
-          {/* 4. The Energy Core */}
-          <div className="flex-1 flex flex-col items-center justify-center w-full max-w-2xl relative">
-            
-            {/* The Ethereal Waveform */}
-            <div className="relative w-full h-40 flex items-center justify-center">
-              <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-                
-                {/* Grok-inspired Energy Strings (Refined) */}
-                {[...Array(5)].map((_, i) => (
-                  <motion.div
-                    key={`ethereal-string-${i}`}
-                    animate={{
-                      scaleY: state === 'speaking' || state === 'listening' ? [1, 2 + (Math.random() * 2), 1] : 1,
-                      opacity: state === 'speaking' ? [0.1, 0.4, 0.1] : 0.05,
-                      translateY: state === 'speaking' ? [0, (i % 2 === 0 ? 10 : -10), 0] : 0,
-                    }}
-                    transition={{
-                      duration: 0.8 + (i * 0.2),
-                      repeat: Infinity,
-                      ease: "easeInOut"
-                    }}
-                    className={cn(
-                      "absolute w-[95%] rounded-full blur-[30px] mix-blend-screen transition-colors duration-1000",
-                      i === 0 ? "bg-white h-[2px]" : 
-                      i === 1 ? "bg-blue-400 h-[1.5px]" : 
-                      i === 2 ? "bg-indigo-600 h-[1px]" : 
-                      "bg-zinc-800 h-[12px]"
-                    )}
-                  />
-                ))}
-
-                {/* High-Resolution Signal Core */}
-                <div className="absolute w-[95%] flex items-center justify-between pointer-events-none">
-                  {[...Array(180)].map((_, i) => (
-                    <motion.div
-                      key={`micro-pulse-${i}`}
-                      animate={{
-                        height: state === 'speaking' || state === 'listening' 
-                          ? [
-                              1.5,
-                              1.5 + (Math.sin(i * 0.05 + Date.now() / 100) * 45 * volume) + (Math.random() * 6),
-                              1.5
-                            ]
-                          : 1,
-                        opacity: state === 'idle' ? 0.02 : [0.3, 0.6, 0.3]
-                      }}
-                      transition={{
-                        duration: 0.35,
-                        repeat: Infinity,
-                        ease: "linear"
-                      }}
-                      className={cn(
-                        "w-[0.5px] rounded-full transition-colors duration-300",
-                        state === 'speaking' ? "bg-white/90 shadow-[0_0_8px_white/20]" : "bg-zinc-800"
-                      )}
-                    />
-                  ))}
-                </div>
-              </div>
-            </div>
-
-            {/* Cinematic Typography & Status */}
-            <div className="mt-24 text-center space-y-6">
-              <AnimatePresence mode="wait">
-                <motion.div
-                  key={state}
-                  initial={{ opacity: 0, y: 10 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  exit={{ opacity: 0, y: -10 }}
-                  className="flex flex-col items-center gap-3"
-                >
-                   <h2 className="text-3xl md:text-4xl font-light tracking-tight text-white/95">
-                    {state === 'speaking' ? "Assistant" : 
-                     state === 'listening' ? "Listening" : 
-                     state === 'thinking' ? "Processing" : "Connected"}
-                  </h2>
-                  <div className="flex items-center gap-4">
-                    <div className="h-[1px] w-8 bg-white/5" />
-                    <span className="text-[10px] font-black text-zinc-600 uppercase tracking-[0.5em]">
-                      Neural Audio Stream
-                    </span>
-                    <div className="h-[1px] w-8 bg-white/5" />
+          {!isStarted ? (
+            /* --- STEP 1: VOICE SELECTION --- */
+            <motion.div 
+              initial={{ opacity: 0, scale: 0.98 }}
+              animate={{ opacity: 1, scale: 1 }}
+              className="relative z-10 w-full max-w-md flex-1 flex flex-col items-center justify-center p-6 space-y-12"
+            >
+              <div className="text-center space-y-3">
+                <div className="flex items-center justify-center gap-2 mb-6">
+                  <div className="px-3 py-1 bg-emerald-500/10 border border-emerald-500/20 rounded-full">
+                    <span className="text-[10px] font-black uppercase tracking-[0.3em] text-emerald-400">Live Config</span>
                   </div>
-                </motion.div>
-              </AnimatePresence>
-            </div>
-          </div>
+                </div>
+                <h2 className="text-3xl font-bold tracking-tight">Select a Voice</h2>
+                <p className="text-zinc-500 text-sm font-medium">Choose who you'll be speaking with today.</p>
+              </div>
 
-          {/* 5. Minimal High-End Controls */}
-          <div className="w-full max-w-lg flex items-center justify-between z-20 pb-12">
-            <button 
-              onClick={onToggleSpeaker}
-              className={cn(
-                "w-16 h-16 rounded-full flex items-center justify-center transition-all duration-300 backdrop-blur-2xl border",
-                !isSpeakerOn 
-                  ? "bg-red-500/10 text-red-500 border-red-500/20" 
-                  : "bg-white/[0.02] text-zinc-500 hover:text-white border-white/[0.05]"
-              )}
+              <div className="w-full space-y-2">
+                {VOICES.map((v) => (
+                  <button
+                    key={v.id}
+                    onClick={() => onVoiceOptionChange(v.id)}
+                    className={cn(
+                      "w-full flex items-center justify-between p-4 rounded-[2rem] transition-all duration-500 border",
+                      voiceOption === v.id 
+                        ? "bg-white text-black border-white shadow-2xl scale-[1.02]" 
+                        : "bg-white/[0.03] border-white/5 hover:bg-white/[0.06] text-zinc-400"
+                    )}
+                  >
+                    <div className="flex items-center gap-4">
+                      <button 
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handlePreviewVoice(v.id, v.preview);
+                        }}
+                        className={cn(
+                          "w-11 h-11 rounded-2xl flex items-center justify-center transition-all",
+                          previewingVoice === v.id ? "bg-emerald-500 text-white shadow-lg shadow-emerald-500/30" : "bg-white/5"
+                        )}
+                      >
+                        <PlayCircle className={cn("w-5 h-5", previewingVoice === v.id && "animate-pulse")} />
+                      </button>
+                      <div className="text-left">
+                        <div className="text-[14px] font-bold tracking-tight">{v.name}</div>
+                        <div className="text-[11px] opacity-60 font-medium">{v.desc}</div>
+                      </div>
+                    </div>
+                    {voiceOption === v.id && <ChevronRight className="w-4 h-4 mr-2" />}
+                  </button>
+                ))}
+              </div>
+
+              <div className="w-full pt-4 space-y-3">
+                <button 
+                  onClick={() => setIsStarted(true)}
+                  className="w-full py-5 rounded-[2rem] bg-emerald-500 text-black font-black text-xs uppercase tracking-[0.25em] shadow-2xl shadow-emerald-500/20 hover:bg-emerald-400 transition-all active:scale-95"
+                >
+                  Start Discussion
+                </button>
+                <button 
+                  onClick={onClose}
+                  className="w-full py-4 text-[11px] font-bold uppercase tracking-widest text-zinc-500 hover:text-zinc-300 transition-colors"
+                >
+                  Cancel
+                </button>
+              </div>
+            </motion.div>
+          ) : (
+            /* --- STEP 2: LIVE MODE (Green Aesthetic) --- */
+            <motion.div 
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              className="relative z-10 w-full h-full flex flex-col items-center justify-between p-6 md:p-12"
             >
-              {!isSpeakerOn ? <VolumeX className="w-6 h-6" /> : <Volume2 className="w-6 h-6" />}
-            </button>
+              <div className="w-full flex items-center justify-between">
+                <div className="flex items-center gap-4">
+                  <div className="flex items-center gap-2.5 px-4 py-2 bg-white/[0.03] backdrop-blur-3xl rounded-full border border-white/5">
+                    <div className={cn(
+                      "w-1.5 h-1.5 rounded-full transition-all duration-1000",
+                      state === 'speaking' ? "bg-emerald-400 shadow-[0_0_12px_#34d399]" : 
+                      state === 'listening' ? "bg-white" : "bg-zinc-800"
+                    )} />
+                    <span className="text-[10px] font-black tracking-[0.4em] uppercase text-zinc-500">Live</span>
+                  </div>
+                  <div className="hidden md:flex items-center gap-2 group cursor-pointer" onClick={() => setIsStarted(false)}>
+                    <Globe className="w-3.5 h-3.5 text-zinc-600 group-hover:text-emerald-500 transition-colors" />
+                    <span className="text-[10px] font-bold text-zinc-600 uppercase tracking-widest group-hover:text-emerald-500 transition-colors">{voiceOption}</span>
+                  </div>
+                </div>
+                <button 
+                  onClick={onClose} 
+                  className="p-3 text-zinc-500 hover:text-white transition-all bg-white/[0.02] hover:bg-white/10 rounded-2xl border border-white/5"
+                >
+                  <X className="w-6 h-6" />
+                </button>
+              </div>
 
-            <div className="relative group">
-              <div className="absolute inset-0 bg-white/10 blur-2xl rounded-full scale-0 group-hover:scale-100 transition-transform duration-500 opacity-20" />
-              <button 
-                onClick={onClose}
-                className="w-20 h-20 rounded-full bg-white text-black flex items-center justify-center hover:scale-110 active:scale-95 transition-all shadow-3xl shadow-white/10 border-8 border-[#020202] relative z-10"
-              >
-                <PhoneOff className="w-8 h-8" />
-              </button>
-            </div>
+              {/* Central Visualization Stage */}
+              <div className="flex-1 flex flex-col items-center justify-center w-full max-w-2xl relative">
+                <div className="relative w-full h-72 flex items-center justify-center">
+                  <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+                    {/* Energy Rings / Waves */}
+                    {[...Array(3)].map((_, i) => (
+                      <motion.div
+                        key={`wave-${i}`}
+                        animate={{
+                          scaleY: state === 'speaking' || state === 'listening' ? [1, 2.5 + (Math.random() * 2), 1] : 1,
+                          opacity: state === 'speaking' ? [0.1, 0.4, 0.1] : 0.05,
+                          translateY: state === 'speaking' ? [0, (i % 2 === 0 ? 10 : -10), 0] : 0,
+                        }}
+                        transition={{ duration: 1 + (i * 0.3), repeat: Infinity, ease: "easeInOut" }}
+                        className={cn(
+                          "absolute w-full rounded-full blur-[40px] mix-blend-screen transition-colors duration-2000",
+                          i === 0 ? "bg-emerald-400 h-[2px]" : 
+                          i === 1 ? "bg-emerald-600 h-[1.5px]" : "bg-white/5 h-[30px]"
+                        )}
+                      />
+                    ))}
 
-            <button 
-              onClick={onToggleListening}
-              className={cn(
-                "w-16 h-16 rounded-full flex items-center justify-center transition-all duration-300 backdrop-blur-2xl border",
-                !isListening 
-                  ? "bg-white/[0.01] text-zinc-600 border-white/[0.03]" 
-                  : "bg-blue-600 text-white border-blue-500 shadow-[0_0_30px_rgba(37,99,235,0.3)]"
-              )}
-            >
-              {isListening ? <Mic className="w-6 h-6" /> : <MicOff className="w-6 h-6" />}
-            </button>
-          </div>
+                    {/* Grok-style pulse lines */}
+                    <div className="absolute w-full flex items-center justify-between gap-[2px]">
+                      {[...Array(140)].map((_, i) => (
+                        <motion.div
+                          key={`pulse-${i}`}
+                          animate={{
+                            height: state === 'speaking' || state === 'listening' 
+                              ? [4, 4 + (Math.sin(i * 0.1 + Date.now() / 200) * 80 * volume) + (Math.random() * 15), 4]
+                              : 2,
+                            opacity: state === 'idle' ? 0.05 : [0.2, 0.6, 0.2]
+                          }}
+                          transition={{ duration: 0.5, repeat: Infinity, ease: "linear" }}
+                          className={cn(
+                            "w-[1px] md:w-[2px] rounded-full transition-colors duration-500",
+                            state === 'speaking' ? "bg-emerald-400" : "bg-zinc-800"
+                          )}
+                        />
+                      ))}
+                    </div>
+                  </div>
+                </div>
+
+                <div className="mt-20 text-center space-y-5">
+                  <AnimatePresence mode="wait">
+                    <motion.div
+                      key={state}
+                      initial={{ opacity: 0, y: 15 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      exit={{ opacity: 0, y: -15 }}
+                      className="flex flex-col items-center gap-3"
+                    >
+                      <h2 className="text-4xl md:text-5xl font-light tracking-tight text-white/95">
+                        {state === 'speaking' ? "AI Speaking" : 
+                         state === 'listening' ? "Listening" : 
+                         state === 'thinking' ? "Neural Sync" : "Connected"}
+                      </h2>
+                      <div className="flex items-center gap-4">
+                        <div className="h-[1px] w-6 bg-emerald-500/20" />
+                        <span className="text-[10px] font-black text-emerald-500/40 uppercase tracking-[0.5em]">
+                          {voiceOption} Engine Active
+                        </span>
+                        <div className="h-[1px] w-6 bg-emerald-500/20" />
+                      </div>
+                    </motion.div>
+                  </AnimatePresence>
+                </div>
+              </div>
+
+              {/* Bottom Responsive Controls (Matching screenshot vibe) */}
+              <div className="w-full max-w-lg grid grid-cols-4 gap-4 items-center pb-10">
+                <button 
+                  onClick={onToggleSpeaker}
+                  className={cn(
+                    "w-full aspect-square md:w-16 md:h-16 mx-auto rounded-[2.5rem] flex items-center justify-center transition-all bg-white/[0.03] border border-white/5",
+                    !isSpeakerOn ? "text-red-500 bg-red-500/5" : "text-zinc-500 hover:text-white"
+                  )}
+                >
+                  {!isSpeakerOn ? <VolumeX className="w-6 h-6" /> : <Volume2 className="w-6 h-6" />}
+                </button>
+
+                <div className="col-span-2 flex justify-center">
+                  <button 
+                    onClick={onToggleListening}
+                    className={cn(
+                      "w-20 h-20 md:w-24 md:h-24 rounded-[3rem] flex items-center justify-center transition-all duration-500 relative group",
+                      isListening ? "bg-emerald-500 text-black shadow-[0_0_50px_rgba(16,185,129,0.3)]" : "bg-white/[0.05] text-zinc-500 border border-white/10"
+                    )}
+                  >
+                    <div className="absolute inset-0 bg-emerald-400 blur-xl opacity-0 group-hover:opacity-20 transition-opacity rounded-full" />
+                    {isListening ? <Mic className="w-8 h-8 relative z-10" /> : <MicOff className="w-8 h-8 relative z-10" />}
+                  </button>
+                </div>
+
+                <button 
+                  onClick={onClose}
+                  className="w-full aspect-square md:w-16 md:h-16 mx-auto rounded-[2.5rem] bg-red-500 text-white flex items-center justify-center hover:scale-110 active:scale-95 transition-all shadow-2xl shadow-red-500/20"
+                >
+                  <PhoneOff className="w-6 h-6" />
+                </button>
+              </div>
+            </motion.div>
+          )}
         </motion.div>
       )}
     </AnimatePresence>

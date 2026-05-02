@@ -148,43 +148,49 @@ export const Sidebar = ({
                     exit={{ opacity: 0, scale: 0.95 }}
                     className="group relative"
                   >
-                    <button
-                      onClick={() => onSelectConversation(conv.id)}
-                      className={cn(
-                        "w-full text-left px-4 py-2.5 rounded-xl text-sm transition-all flex items-center gap-3 relative pr-12",
-                        currentConversationId === conv.id
-                          ? "bg-white dark:bg-zinc-900 text-zinc-900 dark:text-white shadow-sm border border-zinc-200 dark:border-zinc-800"
-                          : "text-zinc-500 hover:bg-zinc-100/80 dark:hover:bg-zinc-900/80"
-                      )}
-                    >
-                      <MessageSquare className={cn(
-                        "w-3.5 h-3.5 shrink-0 transition-transform group-hover:scale-110",
-                        currentConversationId === conv.id ? "text-emerald-500" : "text-zinc-400"
-                      )} />
-                      <div className="flex-1 min-w-0">
-                        <p className="font-medium truncate">{conv.title || 'Untitled Chat'}</p>
+                    <div className="flex items-center w-full gap-1">
+                      <button
+                        onClick={() => onSelectConversation(conv.id)}
+                        className={cn(
+                          "flex-1 text-left px-4 py-2.5 rounded-xl text-sm transition-all flex items-center gap-3 relative min-w-0",
+                          currentConversationId === conv.id
+                            ? "bg-white dark:bg-zinc-900 text-zinc-900 dark:text-white shadow-sm border border-zinc-200 dark:border-zinc-800"
+                            : "text-zinc-500 hover:bg-zinc-100/80 dark:hover:bg-zinc-900/80"
+                        )}
+                      >
+                        <MessageSquare className={cn(
+                          "w-3.5 h-3.5 shrink-0 transition-transform group-hover:scale-110",
+                          currentConversationId === conv.id ? "text-emerald-500" : "text-zinc-400"
+                        )} />
+                        <div className="flex-1 min-w-0">
+                          <p className="font-medium truncate">{conv.title || 'Untitled Chat'}</p>
+                        </div>
+                      </button>
+                      
+                      <div className={cn(
+                        "flex items-center gap-1 transition-all duration-300 shrink-0",
+                        "md:opacity-0 md:group-hover:opacity-100 md:translate-x-2 md:group-hover:translate-x-0"
+                      )}>
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            const newTitle = prompt('Rename conversation:', conv.title);
+                            if (newTitle) onRenameConversation(conv.id, newTitle);
+                          }}
+                          className="p-2 text-zinc-400 hover:text-emerald-500 rounded-xl hover:bg-emerald-50 dark:hover:bg-emerald-950/20 transition-all"
+                        >
+                          <Edit2 className="w-3.5 h-3.5" />
+                        </button>
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            onDeleteConversation(conv.id);
+                          }}
+                          className="p-2 text-zinc-300 hover:text-red-500 rounded-xl hover:bg-red-50 dark:hover:bg-red-950/20 transition-all"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
                       </div>
-                    </button>
-                    <div className="absolute right-2 top-1/2 -translate-y-1/2 flex items-center gap-1 opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-all">
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          const newTitle = prompt('Rename conversation:', conv.title);
-                          if (newTitle) onRenameConversation(conv.id, newTitle);
-                        }}
-                        className="p-1.5 text-zinc-400 hover:text-emerald-500 rounded-lg hover:bg-emerald-50 dark:hover:bg-emerald-950/20 transition-all"
-                      >
-                        <Edit2 className="w-3.5 h-3.5" />
-                      </button>
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          onDeleteConversation(conv.id);
-                        }}
-                        className="p-1.5 text-zinc-300 hover:text-red-500 rounded-lg hover:bg-red-50 dark:hover:bg-red-950/20 transition-all"
-                      >
-                        <Trash2 className="w-3.5 h-3.5" />
-                      </button>
                     </div>
                   </motion.div>
                 ))}
