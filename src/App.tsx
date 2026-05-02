@@ -160,8 +160,25 @@ export default function App() {
   const [activeMessageId, setActiveMessageId] = useState<string | null>(null);
   const [showUpgradeModal, setShowUpgradeModal] = useState(false);
   const [upgradeReason, setUpgradeReason] = useState<'usage' | 'images' | 'manual'>('usage');
-  
+  const [loadingTimer, setLoadingTimer] = useState(0);
+  const [hasError, setHasError] = useState(false);
+  const [lastFailedRequest, setLastFailedRequest] = useState<{content: string, conv?: any} | null>(null);
+  const loadingIntervalRef = useRef<any>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  
+  useEffect(() => {
+    if (isLoading) {
+      setLoadingTimer(0);
+      loadingIntervalRef.current = setInterval(() => {
+        setLoadingTimer(prev => prev + 1);
+      }, 1000);
+    } else {
+      if (loadingIntervalRef.current) clearInterval(loadingIntervalRef.current);
+    }
+    return () => {
+      if (loadingIntervalRef.current) clearInterval(loadingIntervalRef.current);
+    };
+  }, [isLoading]);
   const recognitionRef = useRef<any>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const voiceAbortControllerRef = useRef<AbortController | null>(null);
@@ -240,8 +257,17 @@ export default function App() {
         const currentResult = event.results[event.results.length - 1];
         
         if (currentResult.isFinal) {
-          transcriptRef.current += currentResult[0].transcript;
+          const finalResult = currentResult[0].transcript;
+          transcriptRef.current += finalResult;
           setCurrentTranscript(transcriptRef.current);
+          
+          // If not in voice mode, we are in "dictation" mode - populate input
+          if (!showVoiceMode) {
+            setInput(prev => {
+              const base = prev.trim();
+              return base + (base ? ' ' : '') + finalResult.trim();
+            });
+          }
           
           // Reset silence timer on every final result too
           if (silenceTimer) clearTimeout(silenceTimer);
@@ -275,22 +301,27 @@ export default function App() {
         }
 
         function handleSpeechEnd() {
+          const finalSpeech = (transcriptRef.current + interimTranscript).trim();
+          if (finalSpeech.length < 1) return;
+
           if (showVoiceMode) {
-            const finalSpeech = (transcriptRef.current + interimTranscript).trim();
-            if (finalSpeech.length > 1) {
-              transcriptRef.current = '';
-              setCurrentTranscript('');
-              setStreamingMessage('');
-              setShouldPlayVoice(true);
-              
-              // Use convOverride to bypass potential isLoading blocks if we are starting a fresh query
-              sendMessage(finalSpeech);
-              
-              // We don't always need to stop recognition if it's truly continuous, 
-              // but many browsers handle it better if we cycle it or pause it.
-              // For "Interrupt capability", we actually WANT it to keep going, 
-              // but we need to prevent it from hearing the AI.
-              try { recognitionRef.current?.stop(); } catch(e) {}
+            transcriptRef.current = '';
+            setCurrentTranscript('');
+            setStreamingMessage('');
+            setShouldPlayVoice(true);
+            sendMessage(finalSpeech);
+            try { recognitionRef.current?.stop(); } catch(e) {}
+          } else {
+            // For regular input "handsfree", we might want to auto-send if it's a significant pause
+            // but let's keep it just as dictation for now unless it's a very long pause
+            // Actually, "handfree" usually means auto-send.
+            if (finalSpeech.length > 5) {
+               // Auto-send in handsfree mode if the user stops for a long time
+               // For now, let's just leave it in the input box so they can see it "typed"
+               // and if they want absolute handsfree they can go to Voice Mode.
+               // Update: The user said "types handfree", so let's just make it fill the box.
+               transcriptRef.current = '';
+               setStreamingMessage('');
             }
           }
         }
@@ -861,18 +892,27 @@ export default function App() {
       
       if (isImageIntent) {
         if (profile.images_used_today >= limits.images) {
+          toast.error('DAILY IMAGE LIMIT REACHED', {
+            description: 'You have used all your image generation credits for today.'
+          });
           setUpgradeReason('images');
           setShowUpgradeModal(true);
           return;
         }
       } else if (isAnalysisIntent) {
         if (profile.analysis_used_today >= (limits.analysis || 0)) {
+          toast.error('ANALYSIS LIMIT REACHED', {
+            description: 'You have reached your daily limit for file analysis.'
+          });
           setUpgradeReason('usage');
           setShowUpgradeModal(true);
           return;
         }
       } else {
         if (profile.messages_used_today >= limits.messages) {
+          toast.error('DAILY MESSAGE LIMIT REACHED', {
+            description: 'Upgrade for unlimited conversations and faster responses.'
+          });
           setUpgradeReason('usage');
           setShowUpgradeModal(true);
           return;
@@ -888,6 +928,8 @@ export default function App() {
     clearAttachment(); 
     setIsLoading(true);
     setStreamingMessage('');
+    setHasError(false);
+    setLastFailedRequest(null);
     if (showVoiceMode) {
       setCurrentResponse('');
     }
@@ -1030,11 +1072,34 @@ export default function App() {
       clearTimeout(timeoutId);
       console.error("[Chat] Request Error:", error);
       
+      setHasError(true);
+      setLastFailedRequest({ content: lastInput, conv });
       toast.error(error.message || 'Connection failed. Please try again.');
       
-      // Allow user to try again
-      setInput(lastInput); 
       setIsLoading(false);
+    }
+  };
+
+  const handleRetry = async (messageId?: string) => {
+    if (messageId) {
+      // Find the user's message just before this assistant message
+      const msgIdx = messages.findIndex(m => m.id === messageId);
+      if (msgIdx > 0) {
+        const userMsg = messages[msgIdx - 1];
+        if (userMsg.role === 'user') {
+          // Remove all messages from this idx onwards
+          const truncatedMessages = messages.slice(0, msgIdx);
+          setMessages(truncatedMessages);
+          
+          // Re-send
+          sendMessage(userMsg.content);
+          return;
+        }
+      }
+    }
+
+    if (lastFailedRequest) {
+      sendMessage(lastFailedRequest.content, lastFailedRequest.conv);
     }
   };
 
@@ -1155,11 +1220,28 @@ export default function App() {
       
       const isRemoving = messages.find(m => m.id === messageId)?.feedback === feedback;
       if (!isRemoving) {
-        toast.success(feedback === 'like' ? 'Liked' : 'Disliked');
+        toast.success(feedback === 'like' ? 'Response Liked' : 'Response Disliked');
       }
     } catch (error) {
       console.error("Error saving feedback:", error);
       toast.error('Failed to save feedback');
+    }
+  };
+
+  const handleShareMessage = async (m: Message) => {
+    try {
+      if (navigator.share) {
+        await navigator.share({
+          title: 'Trelvix AI Response',
+          text: m.content,
+          url: window.location.href
+        });
+      } else {
+        const shareText = `Check out this AI response from Trelvix:\n\n${m.content}\n\nGenerated by Trelvix AI`;
+        copyToClipboard(shareText);
+      }
+    } catch (err) {
+      console.error("Share failed:", err);
     }
   };
 
@@ -1544,54 +1626,70 @@ export default function App() {
                             {new Date(m.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                           </div>
                           <div className={cn(
-                            "flex items-center gap-2 transition-all duration-200",
+                            "flex items-center gap-1.5 md:gap-2 transition-all duration-200 mt-3 pt-3 border-t border-zinc-200/50 dark:border-zinc-800/50 overflow-x-auto no-scrollbar",
                             activeMessageId === m.id ? "opacity-100 translate-y-0" : "opacity-0 md:group-hover:opacity-100 translate-y-1 md:translate-y-0"
                           )}>
                             <button 
                               onClick={(e) => { e.stopPropagation(); copyToClipboard(m.content); }}
-                              className="p-1.5 hover:bg-zinc-200 dark:hover:bg-zinc-800 rounded-lg text-zinc-500 hover:text-zinc-900 dark:hover:text-white transition-colors"
+                              className="p-1.5 hover:bg-zinc-200 dark:hover:bg-zinc-800 rounded-lg text-zinc-500 hover:text-zinc-900 dark:hover:text-white transition-colors shrink-0"
                               title="Copy to clipboard"
                             >
                               <Copy className="w-3.5 h-3.5" />
                             </button>
+                            
+                            <button 
+                              onClick={(e) => { e.stopPropagation(); handleShareMessage(m); }}
+                              className="p-1.5 hover:bg-zinc-200 dark:hover:bg-zinc-800 rounded-lg text-zinc-500 hover:text-zinc-500 dark:hover:text-zinc-400 transition-colors shrink-0"
+                              title="Share message"
+                            >
+                              <ExternalLink className="w-4 h-4" />
+                            </button>
+
                             {m.role === 'assistant' && (
                               <>
+                                <div className="h-4 w-[1px] bg-zinc-200 dark:bg-zinc-800 mx-0.5 shrink-0" />
+                                
+                                <button 
+                                  onClick={(e) => { e.stopPropagation(); handleFeedback(m.id, 'like'); }}
+                                  className={cn(
+                                    "p-1.5 hover:bg-zinc-200 dark:hover:bg-zinc-800 rounded-lg transition-colors shrink-0",
+                                    m.feedback === 'like' ? "text-emerald-600 bg-emerald-50 dark:bg-emerald-900/20" : "text-zinc-500 hover:text-zinc-900 dark:hover:text-white"
+                                  )}
+                                  title="Like response"
+                                >
+                                  <ThumbsUp className="w-3.5 h-3.5" />
+                                </button>
+                                
+                                <button 
+                                  onClick={(e) => { e.stopPropagation(); handleFeedback(m.id, 'dislike'); }}
+                                  className={cn(
+                                    "p-1.5 hover:bg-zinc-200 dark:hover:bg-zinc-800 rounded-lg transition-colors shrink-0",
+                                    m.feedback === 'dislike' ? "text-rose-600 bg-rose-50 dark:bg-rose-950/20" : "text-zinc-500 hover:text-zinc-900 dark:hover:text-white"
+                                  )}
+                                  title="Dislike response"
+                                >
+                                  <ThumbsDown className="w-3.5 h-3.5" />
+                                </button>
+
+                                <button 
+                                  onClick={(e) => { e.stopPropagation(); handleRetry(m.id); }}
+                                  className="p-1.5 hover:bg-zinc-200 dark:hover:bg-zinc-800 rounded-lg text-zinc-500 hover:text-zinc-900 dark:hover:text-white transition-colors shrink-0"
+                                  title="Retry response"
+                                >
+                                  <Plus className="w-4 h-4 rotate-45" />
+                                </button>
+                                
+                                <div className="h-4 w-[1px] bg-zinc-200 dark:bg-zinc-800 mx-0.5 shrink-0" />
+
                                 <button 
                                   onClick={(e) => { e.stopPropagation(); playVoice(m.content, m.id); }}
                                   className={cn(
-                                    "p-1.5 hover:bg-zinc-200 dark:hover:bg-zinc-800 rounded-lg transition-colors",
+                                    "p-1.5 hover:bg-zinc-200 dark:hover:bg-zinc-800 rounded-lg transition-colors shrink-0",
                                     currentlyPlayingMessageId === m.id ? "text-blue-600 bg-blue-50 dark:bg-blue-900/20" : "text-zinc-500 hover:text-zinc-900 dark:hover:text-white"
                                   )}
                                   title={currentlyPlayingMessageId === m.id && isPlaying ? "Pause voice" : "Listen to response"}
                                 >
                                   {currentlyPlayingMessageId === m.id && isPlaying ? <Pause className="w-3.5 h-3.5" /> : <Volume2 className="w-3.5 h-3.5" />}
-                                </button>
-                                <button 
-                                  onClick={(e) => { e.stopPropagation(); handleDownloadMessage(m.content, m.id); }}
-                                  className="p-1.5 hover:bg-zinc-200 dark:hover:bg-zinc-800 rounded-lg text-zinc-500 hover:text-zinc-900 dark:hover:text-white transition-colors"
-                                  title="Download answer"
-                                >
-                                  <FileDown className="w-3.5 h-3.5" />
-                                </button>
-                                <button 
-                                  onClick={(e) => { e.stopPropagation(); handleFeedback(m.id, 'like'); }}
-                                  className={cn(
-                                    "p-1.5 hover:bg-zinc-200 dark:hover:bg-zinc-800 rounded-lg transition-colors",
-                                    m.feedback === 'like' ? "text-green-600 bg-green-50 dark:bg-green-900/20" : "text-zinc-500 hover:text-zinc-900 dark:hover:text-white"
-                                  )}
-                                  title="Like"
-                                >
-                                  <ThumbsUp className="w-3.5 h-3.5" />
-                                </button>
-                                <button 
-                                  onClick={(e) => { e.stopPropagation(); handleFeedback(m.id, 'dislike'); }}
-                                  className={cn(
-                                    "p-1.5 hover:bg-zinc-200 dark:hover:bg-zinc-800 rounded-lg transition-colors",
-                                    m.feedback === 'dislike' ? "text-red-600 bg-red-50 dark:bg-red-900/20" : "text-zinc-500 hover:text-zinc-900 dark:hover:text-white"
-                                  )}
-                                  title="Dislike"
-                                >
-                                  <ThumbsDown className="w-3.5 h-3.5" />
                                 </button>
                               </>
                             )}
@@ -1600,56 +1698,63 @@ export default function App() {
                       </div>
                     </div>
                   ))}
-                  
-                  {streamingMessage && (
-                    <div className="flex justify-start w-full">
-                      <div className="max-w-[85%] md:max-w-[75%] p-4 rounded-2xl text-sm md:text-base bg-transparent text-zinc-900 dark:text-zinc-100 rounded-tl-none border-l-2 border-zinc-200 dark:border-zinc-800 pl-6">
-                        <div className="prose dark:prose-invert prose-sm md:prose-base max-w-none">
-                          <ReactMarkdown 
-                            remarkPlugins={[remarkGfm]}
-                            components={{
-                              code({ node, inline, className, children, ...props }: any) {
-                                return (
-                                  <CodeBlock inline={inline} className={className}>
-                                    {children}
-                                  </CodeBlock>
-                                );
-                              }
-                            }}
-                          >
-                            {streamingMessage}
-                          </ReactMarkdown>
-                        </div>
-                        <motion.div 
-                          animate={{ opacity: [0.4, 1, 0.4] }}
-                          transition={{ repeat: Infinity, duration: 1.5 }}
-                          className="w-2 h-4 bg-zinc-400 dark:bg-zinc-600 inline-block ml-1 align-middle"
-                        />
+
+                  {/* Streaming & Loading Indicator */}
+                  {(isLoading || streamingMessage) && (
+                    <div className="flex justify-start">
+                      <div className={cn(
+                        "max-w-[85%] md:max-w-[75%] p-4 rounded-2xl bg-white dark:bg-zinc-900/50 text-zinc-900 dark:text-zinc-100 rounded-tl-none border border-zinc-200 dark:border-zinc-800 shadow-sm relative",
+                        !streamingMessage && "min-w-[200px]"
+                      )}>
+                        {streamingMessage ? (
+                          <div className="prose dark:prose-invert prose-sm md:prose-base max-w-none">
+                            <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                              {streamingMessage}
+                            </ReactMarkdown>
+                            <span className="inline-block w-2 h-4 ml-1 bg-zinc-900 dark:bg-white animate-pulse" />
+                          </div>
+                        ) : (
+                          <div className="flex flex-col gap-3">
+                             <div className="flex items-center gap-3">
+                              <div className="flex gap-1">
+                                <span className="w-1.5 h-1.5 bg-zinc-900 dark:bg-white rounded-full animate-bounce [animation-delay:-0.3s]" />
+                                <span className="w-1.5 h-1.5 bg-zinc-900 dark:bg-white rounded-full animate-bounce [animation-delay:-0.15s]" />
+                                <span className="w-1.5 h-1.5 bg-zinc-900 dark:bg-white rounded-full animate-bounce" />
+                              </div>
+                              <p className="text-sm font-medium opacity-70">Thinking... {loadingTimer}s</p>
+                            </div>
+                            <div className="h-1 w-full bg-zinc-100 dark:bg-zinc-800 rounded-full overflow-hidden">
+                              <motion.div 
+                                className="h-full bg-zinc-900 dark:bg-white"
+                                initial={{ width: "0%" }}
+                                animate={{ width: "100%" }}
+                                transition={{ duration: 45, ease: "linear" }}
+                              />
+                            </div>
+                          </div>
+                        )}
                       </div>
                     </div>
                   )}
 
-                  {isLoading && !streamingMessage && (
-                    <div className="flex justify-start w-full">
-                      <div className="max-w-[85%] md:max-w-[75%] p-4 rounded-2xl text-sm md:text-base bg-transparent text-zinc-900 dark:text-zinc-100 rounded-tl-none border-l-2 border-zinc-200 dark:border-zinc-800 pl-6">
-                        <div className="flex items-center gap-2 text-zinc-500">
-                          <motion.div
-                            animate={{ scale: [1, 1.2, 1] }}
-                            transition={{ repeat: Infinity, duration: 1, delay: 0 }}
-                            className="w-1.5 h-1.5 bg-zinc-400 dark:bg-zinc-600 rounded-full"
-                          />
-                          <motion.div
-                            animate={{ scale: [1, 1.2, 1] }}
-                            transition={{ repeat: Infinity, duration: 1, delay: 0.2 }}
-                            className="w-1.5 h-1.5 bg-zinc-400 dark:bg-zinc-600 rounded-full"
-                          />
-                          <motion.div
-                            animate={{ scale: [1, 1.2, 1] }}
-                            transition={{ repeat: Infinity, duration: 1, delay: 0.4 }}
-                            className="w-1.5 h-1.5 bg-zinc-400 dark:bg-zinc-600 rounded-full"
-                          />
-                          <span className="text-xs font-medium ml-1">Trelvix is thinking...</span>
+                  {/* Error State */}
+                  {hasError && !isLoading && (
+                    <div className="flex justify-center py-8">
+                      <div className="max-w-md w-full p-8 bg-rose-50 dark:bg-rose-950/20 border border-rose-200 dark:border-rose-900/50 rounded-[2rem] text-center space-y-6 shadow-xl shadow-rose-500/5">
+                        <div className="flex flex-col items-center gap-3">
+                          <div className="w-16 h-16 bg-rose-100 dark:bg-rose-900/30 rounded-full flex items-center justify-center mb-2">
+                             <X className="w-8 h-8 text-rose-500" />
+                          </div>
+                          <h3 className="text-xl font-bold text-rose-900 dark:text-rose-100">Generation Failed</h3>
+                          <p className="text-zinc-600 dark:text-zinc-400 font-medium">Couldn't fetch result. This might be due to a connection error or server overload.</p>
                         </div>
+                        <button 
+                          onClick={() => handleRetry()}
+                          className="w-full py-4 bg-rose-500 hover:bg-rose-600 active:scale-[0.98] text-white rounded-2xl font-bold transition-all flex items-center justify-center gap-3 shadow-lg shadow-rose-500/20"
+                        >
+                          <Plus className="w-5 h-5 rotate-45" />
+                          Retry Request
+                        </button>
                       </div>
                     </div>
                   )}
@@ -1722,19 +1827,26 @@ export default function App() {
                           sendMessage(input);
                         }
                       }}
-                      placeholder={selectedAttachment ? `Ask about this ${selectedAttachment.type}...` : "Message Trelvix AI..."}
+                      placeholder={ 
+                        profile && profile.messages_used_today >= (PLAN_LIMITS[profile.plan as keyof typeof PLAN_LIMITS] || PLAN_LIMITS.free).messages
+                          ? "Daily limit reached. Click to upgrade." 
+                          : (selectedAttachment ? `Ask about this ${selectedAttachment.type}...` : "Message Trelvix AI...")
+                      }
                       className="w-full bg-transparent border-none rounded-none px-2 md:px-4 py-4 md:py-5 pr-20 md:pr-28 focus:ring-0 outline-none resize-none transition-all min-h-[56px] md:min-h-[64px] max-h-[200px] text-sm md:text-base font-medium placeholder:text-zinc-400"
                     />
                     
-            <div className="absolute right-0 flex items-center gap-1.5 md:gap-3 mr-2">
+                    <div className="absolute right-0 flex items-center gap-1.5 md:gap-3 mr-2">
                       <button 
-                        onClick={() => {
-                          setShowVoiceMode(true);
-                          toggleListening();
-                        }}
-                        className="p-3 md:p-4 text-zinc-400 hover:text-zinc-900 dark:hover:text-white hover:bg-white dark:hover:bg-zinc-800 transition-all rounded-2xl md:rounded-full"
+                        onClick={toggleListening}
+                        className={cn(
+                          "p-3 md:p-4 transition-all rounded-2xl md:rounded-full",
+                          isListening 
+                            ? "bg-emerald-500/10 text-emerald-500 animate-pulse ring-2 ring-emerald-500/20" 
+                            : "text-zinc-400 hover:text-zinc-900 dark:hover:text-white hover:bg-white dark:hover:bg-zinc-800"
+                        )}
+                        title="Hands-free typing"
                       >
-                        <Waves className="w-5 h-5" />
+                        <Mic className={cn("w-5 h-5", isListening && "fill-emerald-500/20")} />
                       </button>
                       <button 
                         onClick={() => sendMessage(input)}
@@ -1874,16 +1986,29 @@ export default function App() {
                     e.stopPropagation();
                     handleDownloadImage(expandedImage.url, 'expanded-image.png');
                   }}
-                  className="flex items-center gap-2 px-8 py-3 bg-white text-black rounded-full font-bold hover:bg-zinc-200 transition-colors shadow-lg"
+                  className="flex items-center gap-2 px-6 md:px-8 py-3 bg-white text-black rounded-full font-bold hover:bg-zinc-200 transition-colors shadow-lg"
                 >
                   <Download className="w-5 h-5" />
-                  Download High Res
+                  <span className="hidden md:inline">Download High Res</span>
+                  <span className="md:hidden">Download</span>
+                </button>
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    handleShareMessage({ content: expandedImage.title, role: 'assistant', id: 'img-share' } as any);
+                  }}
+                  className="flex items-center gap-2 px-6 md:px-8 py-3 bg-white/10 text-white rounded-full font-bold hover:bg-white/20 transition-colors border border-white/10"
+                >
+                  <ExternalLink className="w-5 h-5" />
+                  <span className="hidden md:inline">Share Artwork</span>
+                  <span className="md:hidden">Share</span>
                 </button>
                 <button
                   onClick={() => setExpandedImage(null)}
-                  className="flex items-center gap-2 px-8 py-3 bg-white/10 text-white rounded-full font-bold hover:bg-white/20 transition-colors border border-white/10"
+                  className="flex items-center gap-2 px-6 md:px-8 py-3 bg-zinc-800 text-white rounded-full font-bold hover:bg-zinc-700 transition-colors"
                 >
-                  Close
+                  <X className="w-5 h-5" />
+                  <span className="hidden md:inline">Close</span>
                 </button>
               </div>
             </motion.div>

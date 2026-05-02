@@ -224,7 +224,7 @@ async function handleGenerate(req: express.Request, res: express.Response) {
       const tavilyKey = process.env.TAVILY_API_KEY;
       if (!tavilyKey) {
         console.warn("[Search] No TAVILY_API_KEY found");
-        return "Search failed: No API key configured.";
+        return "Search failed: No TAVILY_API_KEY configured in environment.";
       }
       try {
         console.log(`[Search] Query: ${query}`);
@@ -236,33 +236,68 @@ async function handleGenerate(req: express.Request, res: express.Response) {
             query,
             search_depth: "advanced",
             include_answer: true,
-            max_results: 5
+            max_results: 6
           })
         });
         const data = await response.json();
-        return JSON.stringify(data.results.map((r: any) => ({
+        
+        if (!data.results || data.results.length === 0) {
+          return "No real-time search results found for this query.";
+        }
+
+        const results = data.results.map((r: any) => ({
           title: r.title,
           url: r.url,
           content: r.content
-        })));
+        }));
+
+        return `Search Results:\n${JSON.stringify(results)}\n\nPlease provide a detailed response with citations where applicable.`;
       } catch (err) {
-        console.error("[Search] Error:", err);
-        return "Search failed due to an error.";
+        console.error("[Search] Tavily Error:", err);
+        return "Search failed due to a technical error with the search engine.";
       }
+    };
+
+    const needsWebSearch = (text: string) => {
+      const searchKeywords = [
+        "news", "weather", "price", "today", "latest", "current", 
+        "politics", "who is", "what happened", "stock", "dollar", 
+        "exchange rate", "score", "match", "result", "live", "now",
+        "happening", "event", "crypto", "bitcoin", "forecast"
+      ];
+      const lower = text.toLowerCase();
+      return searchKeywords.some(k => lower.includes(k));
     };
 
     // 1. Image Generation (DALL-E 3)
     if (type === "image") {
       let enhancedPrompt = prompt;
-      const isLogo = prompt.toLowerCase().includes("logo");
-      const isFlyer = prompt.toLowerCase().includes("flyer") || prompt.toLowerCase().includes("poster");
+      const lowerPrompt = prompt.toLowerCase();
+      const isLogo = lowerPrompt.includes("logo");
+      const isPoster = lowerPrompt.includes("flyer") || lowerPrompt.includes("poster") || lowerPrompt.includes("political");
+      const isPeople = lowerPrompt.includes("man") || lowerPrompt.includes("woman") || lowerPrompt.includes("person") || lowerPrompt.includes("people") || lowerPrompt.includes("face") || lowerPrompt.includes("portrait");
+      const isArtisticRequested = lowerPrompt.includes("artistic") || lowerPrompt.includes("illustration") || lowerPrompt.includes("silhouette") || lowerPrompt.includes("drawing") || lowerPrompt.includes("painting") || lowerPrompt.includes("sketch");
+
+      // Default Realism Keywords
+      const realismKeywords = "highly detailed, photorealistic, realistic photography, sharp focus, 8k, natural lighting, professional studio portrait, real human faces with accurate details, authentic skin tones, lifelike textures";
 
       if (isLogo) {
         enhancedPrompt = `${prompt}, clean vector logo, professional, minimalist, high resolution, white background, masterpiece, 4k`;
-      } else if (isFlyer) {
-        enhancedPrompt = `${prompt}, professional graphic design, modern layout, vibrant colors, high resolution, sharp focus, marketing material`;
+      } else if (isPoster) {
+        // For flyers and posters, still aim for realism unless artistic is specified
+        if (isArtisticRequested) {
+          enhancedPrompt = `${prompt}, professional graphic design, artistic illustration, creative layout, vibrant colors, marketing material`;
+        } else {
+          enhancedPrompt = `${prompt}, professional graphic design, realistic photography elements, high-quality stock photo style, real human faces with accurate details, authentic skin tones, realistic clothing textures and expressions, professional lighting, 8k, sharp focus`;
+        }
+      } else if (isArtisticRequested) {
+        enhancedPrompt = `${prompt}, high resolution, masterpiece, artistically detailed style`;
+      } else if (isPeople) {
+        // Specific person realism
+        enhancedPrompt = `${prompt}, highly detailed realistic portrait, realistic photography, sharp focus on eyes, real human faces with accurate details, authentic skin tones and micro-textures, realistic hair, professional studio lighting, 8k resolution, cinematic depth of field`;
       } else {
-        enhancedPrompt = `${prompt}, highly realistic, photorealistic, detailed, sharp focus, natural lighting, 8k resolution, cinematic lighting`;
+        // Default to high realism
+        enhancedPrompt = `${prompt}, ${realismKeywords}, cinematic lighting, masterpiece, ultra-realistic texture, high resolution photography`;
       }
 
       console.log(`[Generate] Generating image with prompt: ${enhancedPrompt}`);
@@ -306,7 +341,11 @@ async function handleGenerate(req: express.Request, res: express.Response) {
 
     let systemInstruction = `You are Trelvix AI, a high-performance AI toolkit. ${attributionRules} 
     Personality: ${personalityPrompts[personality as keyof typeof personalityPrompts] || personalityPrompts.professional}
-    Always prioritize professionalism, creativity, and accuracy.`;
+    Always prioritize professionalism, creativity, and accuracy. 
+    When users request images, you prioritize extreme photographic realism and photorealistic details unless artistic styles are explicitly requested.
+    
+    CRITICAL: For queries about current events, news, weather, stock prices, or any real-time data, you MUST use web search. 
+    Always provide citations and sources for information retrieved from the web in a clean, readable format.`;
     
     if (type === "idea") systemInstruction += " You are an expert content strategist and creative thinker. Help users brainstorm unique and impactful ideas.";
     else if (type === "script") systemInstruction += " You are a professional scriptwriter for video, stage, and screen. Write engaging and well-structured scripts.";
@@ -334,8 +373,40 @@ async function handleGenerate(req: express.Request, res: express.Response) {
       })
     ];
 
-    console.log(`[Generate] Starting chat completion with search tools for gpt-4o-mini`);
+    console.log(`[Generate] Starting completion. Detecting search intent...`);
     
+    const lastMessage = messages[messages.length - 1]?.content || prompt || "";
+    const searchNeeded = needsWebSearch(lastMessage);
+    let searchResponse = null;
+
+    // Primary: Attempt OpenAI's native search model if intent detected
+    if (searchNeeded) {
+      console.log(`[Generate] Search intent detected. Attempting native OpenAI search...`);
+      try {
+        const nativeSearchCompletion = await openai.chat.completions.create({
+          model: "gpt-4o-search-preview",
+          messages: openAiMessages,
+          stream: true,
+        });
+
+        res.setHeader("Content-Type", "text/plain; charset=utf-8");
+        res.setHeader("Transfer-Encoding", "chunked");
+        res.setHeader("Cache-Control", "no-cache");
+        res.setHeader("Connection", "keep-alive");
+
+        for await (const chunk of nativeSearchCompletion) {
+          const content = chunk.choices[0]?.delta?.content || "";
+          if (content) res.write(content);
+        }
+        res.end();
+        console.log(`[Generate] Native search completion successful`);
+        return;
+      } catch (searchError: any) {
+        console.warn(`[Generate] Native search failed, falling back to Tavily: ${searchError.message}`);
+        // Model not found or other error, fallback to standard completion with Tavily tool
+      }
+    }
+
     const tools: OpenAI.Chat.Completions.ChatCompletionTool[] = [
       {
         type: "function",
@@ -381,7 +452,7 @@ async function handleGenerate(req: express.Request, res: express.Response) {
         }
       }
 
-      // Second completion with search results
+      // Final completion with search results
       const finalResponse = await openai.chat.completions.create({
         model: "gpt-4o-mini",
         messages: openAiMessages,
