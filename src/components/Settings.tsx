@@ -9,7 +9,7 @@ import {
   MessageSquare,
   FileText,
   Hash,
-  Image as ImageIcon,
+  ImageIcon,
   Check,
   Briefcase,
   PenTool,
@@ -33,6 +33,7 @@ import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 import type { Profile, PersonalityType } from '../types';
 import { toast } from 'sonner';
+import { supabase } from '../lib/supabase';
 
 function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
@@ -113,6 +114,11 @@ export const Settings = (props: {
   const [localAvatarPreview, setLocalAvatarPreview] = React.useState<string | null>(null);
   const [billingPeriod, setBillingPeriod] = React.useState<'month' | 'year'>('month');
   const [isSubscribing, setIsSubscribing] = React.useState<string | null>(null);
+  
+  const [showResetForm, setShowResetForm] = React.useState(false);
+  const [newPassword, setNewPassword] = React.useState('');
+  const [isResetting, setIsResetting] = React.useState(false);
+
   const fileInputRef = React.useRef<HTMLInputElement>(null);
 
   React.useEffect(() => {
@@ -123,7 +129,42 @@ export const Settings = (props: {
       const newUrl = window.location.pathname;
       window.history.replaceState({}, '', newUrl);
     }
+    
+    if (urlParams.get('reset') === 'true') {
+      setShowResetForm(true);
+      setActiveSection('account');
+      // Remove query param without refreshing
+      const newUrl = window.location.pathname;
+      window.history.replaceState({}, '', newUrl);
+    }
+
+    const handleResetEvent = () => {
+      setShowResetForm(true);
+      setActiveSection('account');
+    };
+
+    window.addEventListener('supabase-password-reset', handleResetEvent);
+    return () => window.removeEventListener('supabase-password-reset', handleResetEvent);
   }, []);
+
+  const handleUpdatePassword = async () => {
+    if (!newPassword || newPassword.length < 6) {
+      toast.error('Password must be at least 6 characters');
+      return;
+    }
+    setIsResetting(true);
+    try {
+      const { error } = await supabase.auth.updateUser({ password: newPassword });
+      if (error) throw error;
+      toast.success('Password updated successfully');
+      setShowResetForm(false);
+      setNewPassword('');
+    } catch (err: any) {
+      toast.error(err.message || 'Failed to update password');
+    } finally {
+      setIsResetting(false);
+    }
+  };
 
   const handleUpdateName = async () => {
     try {
@@ -416,10 +457,46 @@ export const Settings = (props: {
                             <div className="text-[11px] text-zinc-500 mt-0.5">Your account is secured with password authentication.</div>
                           </div>
                         </div>
-                        <button className="px-5 py-2.5 text-[11px] font-black uppercase tracking-widest text-zinc-400 hover:text-zinc-900 dark:hover:text-white bg-zinc-50 dark:bg-zinc-800/50 rounded-xl transition-all border border-zinc-100 dark:border-zinc-800">
+                        <button 
+                          onClick={async () => {
+                            if (!profile?.email) return;
+                            try {
+                              const { error } = await supabase.auth.resetPasswordForEmail(profile.email, {
+                                redirectTo: `${window.location.origin}/settings?reset=true`
+                              });
+                              if (error) throw error;
+                              toast.success('Password reset email sent. Please check your inbox.');
+                            } catch (err: any) {
+                              toast.error(err.message || 'Failed to send reset email');
+                            }
+                          }}
+                          className="px-5 py-2.5 text-[11px] font-black uppercase tracking-widest text-zinc-400 hover:text-zinc-900 dark:hover:text-white bg-zinc-50 dark:bg-zinc-800/50 rounded-xl transition-all border border-zinc-100 dark:border-zinc-800"
+                        >
                           Reset Password
                         </button>
                       </div>
+
+                      {showResetForm && (
+                        <div className="mt-4 p-4 bg-blue-50 dark:bg-blue-900/20 rounded-xl border border-blue-100 dark:border-blue-800/50">
+                          <h4 className="text-[11px] font-black uppercase tracking-widest text-blue-600 dark:text-blue-400 mb-2">Setup New Password</h4>
+                          <div className="flex gap-2">
+                            <input 
+                              type="password"
+                              value={newPassword}
+                              onChange={(e) => setNewPassword(e.target.value)}
+                              placeholder="Min. 6 characters"
+                              className="flex-1 px-4 py-2 text-xs bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                            />
+                            <button
+                              onClick={handleUpdatePassword}
+                              disabled={isResetting}
+                              className="px-4 py-2 bg-blue-600 text-white text-[10px] font-black uppercase tracking-widest rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50"
+                            >
+                              {isResetting ? 'Updating...' : 'Update'}
+                            </button>
+                          </div>
+                        </div>
+                      )}
 
                       <div className="p-6 rounded-2xl border border-zinc-100 dark:border-zinc-800/50 bg-white dark:bg-zinc-900 flex flex-col sm:flex-row sm:items-center justify-between gap-4 transition-all">
                         <div className="flex items-center gap-5">

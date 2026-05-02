@@ -179,8 +179,14 @@ export default function App() {
       setUser(session?.user ?? null);
     });
 
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
       setUser(session?.user ?? null);
+      
+      if (event === 'PASSWORD_RECOVERY') {
+        setShowSettings(true);
+        // Dispatch custom event to tell Settings component to show reset form
+        window.dispatchEvent(new CustomEvent('supabase-password-reset'));
+      }
     });
 
     return () => subscription.unsubscribe();
@@ -219,85 +225,67 @@ export default function App() {
     const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
     if (SpeechRecognition) {
       recognitionRef.current = new SpeechRecognition();
-      recognitionRef.current.continuous = false; // Faster end-of-speech detection
+      recognitionRef.current.continuous = true; // Use continuous for better control
       recognitionRef.current.interimResults = true;
       recognitionRef.current.lang = 'en-US';
 
+      let silenceTimer: any = null;
+
       recognitionRef.current.onstart = () => {
         setIsListening(true);
-        // Barge-in: Stop AI if user starts talking
         if (currentAudio) {
-          console.log("Barge-in: Stopping AI audio because user started talking");
           currentAudio.pause();
           setIsPlaying(false);
           setCurrentlyPlayingMessageId(null);
         }
-        console.log("Speech recognition started");
       };
 
       recognitionRef.current.onresult = (event: any) => {
         let interimTranscript = '';
-        let finalTranscript = '';
-
-        for (let i = event.resultIndex; i < event.results.length; ++i) {
-          if (event.results[i].isFinal) {
-            finalTranscript += event.results[i][0].transcript;
-          } else {
-            interimTranscript += event.results[i][0].transcript;
-          }
-        }
-
-        if (finalTranscript) {
-          console.log("Speech recognition final result:", finalTranscript);
-          transcriptRef.current += finalTranscript;
-          setCurrentTranscript(transcriptRef.current);
-        }
+        const currentResult = event.results[event.results.length - 1];
         
-        if (interimTranscript) {
+        if (currentResult.isFinal) {
+          transcriptRef.current += currentResult[0].transcript;
+          setCurrentTranscript(transcriptRef.current);
+        } else {
+          interimTranscript = currentResult[0].transcript;
           setStreamingMessage(interimTranscript);
         }
+
+        // Fast silence detection: If no new speech for 1 second, assume end of turn
+        if (silenceTimer) clearTimeout(silenceTimer);
+        silenceTimer = setTimeout(() => {
+          if (showVoiceMode && (transcriptRef.current.trim() || interimTranscript.trim())) {
+            const finalSpeech = (transcriptRef.current + interimTranscript).trim();
+            if (finalSpeech.length > 2) {
+              transcriptRef.current = '';
+              setCurrentTranscript('');
+              setStreamingMessage('');
+              setShouldPlayVoice(true);
+              sendMessage(finalSpeech);
+              try { recognitionRef.current?.stop(); } catch(e) {}
+            }
+          }
+        }, 650); // Lowered to 650ms for hyper-snappy response
       };
 
       recognitionRef.current.onerror = (event: any) => {
-        if (event.error !== 'no-speech') {
-          console.error("Speech recognition error:", event.error);
-        }
+        if (event.error !== 'no-speech') console.error("Speech error:", event.error);
         setIsListening(false);
-        
-        if (event.error === 'no-speech') {
-          // Restart if in voice mode and not busy
-          if (showVoiceMode && !isPlaying && !isLoading) {
-            setTimeout(() => {
-              try { recognitionRef.current?.start(); } catch(e) {}
-            }, 100);
-          }
-        } else if (event.error === 'not-allowed') {
-          toast.error("Microphone access denied.");
-        }
       };
 
       recognitionRef.current.onend = () => {
         setIsListening(false);
-        setStreamingMessage('');
-        
-        // Auto-send if we have content
-        if (transcriptRef.current.trim() && showVoiceMode) {
-          const textToSend = transcriptRef.current;
-          transcriptRef.current = '';
-          setCurrentTranscript('');
-          setCurrentResponse('');
-          setShouldPlayVoice(true);
-          sendMessage(textToSend);
-        } else if (showVoiceMode && !isPlaying && !isLoading && !isMuted) {
-          // Restart listening if we stopped without content and aren't busy
+        if (showVoiceMode && !isPlaying && !isLoading && !isMuted) {
           setTimeout(() => {
             try { recognitionRef.current?.start(); } catch(e) {}
-          }, 100);
+          }, 300);
         }
       };
-    } else {
-      console.warn("SpeechRecognition API not supported in this browser.");
     }
+    return () => {
+      recognitionRef.current?.stop();
+    };
   }, [showVoiceMode, isPlaying, isLoading, isMuted, currentAudio]);
 
   useEffect(() => {
@@ -308,29 +296,13 @@ export default function App() {
     }
   }, [currentResponse]);
 
-  // Handle auto-sending when recognition ends
-  useEffect(() => {
-    if (!isListening && transcriptRef.current.trim() && showVoiceMode) {
-      const textToSend = transcriptRef.current;
-      console.log("Auto-sending transcript after recognition ended:", textToSend);
-      
-      // Reset for next turn
-      transcriptRef.current = '';
-      setCurrentTranscript('');
-      setCurrentResponse('');
-      setShouldPlayVoice(true);
-      
-      sendMessage(textToSend);
-    }
-  }, [isListening, showVoiceMode]);
-
   useEffect(() => {
     if (showVoiceMode && !isListening && !isPlaying && !isLoading && !isMuted) {
       setTimeout(() => {
         try { recognitionRef.current?.start(); } catch(e) {}
       }, 500);
     }
-  }, [showVoiceMode]);
+  }, [showVoiceMode, isListening, isPlaying, isLoading, isMuted]);
 
   const toggleListening = () => {
     if (isListening) {
@@ -1368,7 +1340,7 @@ export default function App() {
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pb-12">
                     {conversations.map((conv, idx) => (
                       <div
-                        key={conv.id || `history-conv-${idx}-${conv.created_at}`}
+                        key={conv.id ? `history-conv-${conv.id}` : `history-conv-idx-${idx}`}
                         className="p-6 bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-3xl text-left hover:border-zinc-400 dark:hover:border-zinc-600 transition-all group relative hover:shadow-xl"
                       >
                       <div onClick={() => {
@@ -1415,7 +1387,7 @@ export default function App() {
                 <div className="max-w-4xl mx-auto w-full p-4 md:p-8 space-y-8 pb-32">
                   {messages.map((m, idx) => (
                     <div 
-                      key={m.id || `chat-msg-${idx}-${m.created_at}`} 
+                      key={m.id ? `chat-msg-${m.id}` : `chat-msg-idx-${idx}`} 
                       onClick={() => setActiveMessageId(activeMessageId === m.id ? null : m.id)}
                       className={cn(
                         "flex w-full cursor-pointer md:cursor-default",
@@ -1785,14 +1757,10 @@ export default function App() {
           isPlaying={isPlaying}
           isLoading={isLoading}
           onToggleListening={toggleListening}
-          transcript={streamingMessage || currentTranscript}
-          response={currentResponse}
-          isMuted={isMuted}
-          onToggleMute={() => setIsMuted(!isMuted)}
           isSpeakerOn={isSpeakerOn}
           onToggleSpeaker={() => setIsSpeakerOn(!isSpeakerOn)}
           voiceOption={voiceOption}
-          onVoiceOptionChange={setVoiceOption}
+          onVoiceOptionChange={(voice) => setVoiceOption(voice as any)}
         />
       </AnimatePresence>
 

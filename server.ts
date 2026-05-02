@@ -219,6 +219,38 @@ async function handleGenerate(req: express.Request, res: express.Response) {
 
     const openai = new OpenAI({ apiKey });
 
+    // Helper for Tavily Search
+    const searchTavily = async (query: string) => {
+      const tavilyKey = process.env.TAVILY_API_KEY;
+      if (!tavilyKey) {
+        console.warn("[Search] No TAVILY_API_KEY found");
+        return "Search failed: No API key configured.";
+      }
+      try {
+        console.log(`[Search] Query: ${query}`);
+        const response = await fetch("https://api.tavily.com/search", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            api_key: tavilyKey,
+            query,
+            search_depth: "advanced",
+            include_answer: true,
+            max_results: 5
+          })
+        });
+        const data = await response.json();
+        return JSON.stringify(data.results.map((r: any) => ({
+          title: r.title,
+          url: r.url,
+          content: r.content
+        })));
+      } catch (err) {
+        console.error("[Search] Error:", err);
+        return "Search failed due to an error.";
+      }
+    };
+
     // 1. Image Generation (DALL-E 3)
     if (type === "image") {
       let enhancedPrompt = prompt;
@@ -302,7 +334,75 @@ async function handleGenerate(req: express.Request, res: express.Response) {
       })
     ];
 
-    console.log(`[Generate] Starting chat completion stream with model gpt-4o-mini`);
+    console.log(`[Generate] Starting chat completion with search tools for gpt-4o-mini`);
+    
+    const tools: OpenAI.Chat.Completions.ChatCompletionTool[] = [
+      {
+        type: "function",
+        function: {
+          name: "search_web",
+          description: "Search the internet for real-time, live information, news, and current events.",
+          parameters: {
+            type: "object",
+            properties: {
+              query: { type: "string", description: "The search query to look up." }
+            },
+            required: ["query"]
+          }
+        }
+      }
+    ];
+
+    let response = await openai.chat.completions.create({
+      model: "gpt-4o-mini",
+      messages: openAiMessages,
+      tools,
+      tool_choice: "auto",
+    });
+
+    const responseMessage = response.choices[0].message;
+
+    if (responseMessage.tool_calls) {
+      console.log(`[Generate] Tool call detected: ${responseMessage.tool_calls[0].function.name}`);
+      const toolCalls = responseMessage.tool_calls;
+      
+      openAiMessages.push(responseMessage);
+
+      for (const toolCall of toolCalls) {
+        if (toolCall.function.name === "search_web") {
+          const args = JSON.parse(toolCall.function.arguments);
+          const searchResult = await searchTavily(args.query);
+          
+          openAiMessages.push({
+            tool_call_id: toolCall.id,
+            role: "tool",
+            content: searchResult,
+          } as any);
+        }
+      }
+
+      // Second completion with search results
+      const finalResponse = await openai.chat.completions.create({
+        model: "gpt-4o-mini",
+        messages: openAiMessages,
+        stream: true,
+      });
+
+      res.setHeader("Content-Type", "text/plain; charset=utf-8");
+      res.setHeader("Transfer-Encoding", "chunked");
+      res.setHeader("Cache-Control", "no-cache");
+      res.setHeader("Connection", "keep-alive");
+
+      for await (const chunk of finalResponse) {
+        const content = chunk.choices[0]?.delta?.content || "";
+        if (content) res.write(content);
+      }
+      res.end();
+      return;
+    }
+
+    // If no tool call, just standard stream
+    console.log(`[Generate] No tool call, streaming standard response`);
     const stream = await openai.chat.completions.create({
       model: "gpt-4o-mini",
       messages: openAiMessages,
