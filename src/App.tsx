@@ -244,14 +244,25 @@ export default function App() {
         } else {
           interimTranscript = currentResult[0].transcript;
           setStreamingMessage(interimTranscript);
+          
+          // Barge-in sensing: If user speaks meaningfully while AI is playing, stop AI
+          if (interimTranscript.trim().length > 3 && isPlaying) {
+             if (currentAudio) {
+               currentAudio.pause();
+               setIsPlaying(false);
+               setCurrentlyPlayingMessageId(null);
+               // Give visual feedback that we heard the interruption
+               setCurrentTranscript('Listening...');
+             }
+          }
         }
 
-        // Fast silence detection: If no new speech for 1 second, assume end of turn
+        // Fast silence detection: If no new speech for ~1 second, assume end of turn
         if (silenceTimer) clearTimeout(silenceTimer);
         silenceTimer = setTimeout(() => {
           if (showVoiceMode && (transcriptRef.current.trim() || interimTranscript.trim())) {
             const finalSpeech = (transcriptRef.current + interimTranscript).trim();
-            if (finalSpeech.length > 2) {
+            if (finalSpeech.length > 1) {
               transcriptRef.current = '';
               setCurrentTranscript('');
               setStreamingMessage('');
@@ -260,7 +271,7 @@ export default function App() {
               try { recognitionRef.current?.stop(); } catch(e) {}
             }
           }
-        }, 650); // Lowered to 650ms for hyper-snappy response
+        }, 1000); // 1s silence detection as requested for natural flow
       };
 
       recognitionRef.current.onerror = (event: any) => {

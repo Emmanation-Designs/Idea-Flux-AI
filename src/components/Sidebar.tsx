@@ -9,8 +9,11 @@ import {
   MessageSquare,
   Trash2,
   Clock,
-  Edit2
+  Edit2,
+  Search,
+  MoreVertical
 } from 'lucide-react';
+import React, { useState } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
@@ -52,6 +55,13 @@ export const Sidebar = ({
   onDeleteConversation: (id: string) => void;
   onRenameConversation: (id: string, newTitle: string) => void;
 }) => {
+  const [searchQuery, setSearchQuery] = useState('');
+  const [revealedActionsId, setRevealedActionsId] = useState<string | null>(null);
+
+  const filteredConversations = conversations.filter(conv => 
+    (conv.title || 'Untitled Chat').toLowerCase().includes(searchQuery.toLowerCase())
+  );
+
   return (
     <motion.aside
       initial={false}
@@ -86,6 +96,17 @@ export const Sidebar = ({
 
       <div className="flex-1 px-4 space-y-1 overflow-y-auto scrollbar-hide py-2">
         <div className="space-y-1 mb-8">
+          <div className="relative mb-6">
+            <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-zinc-400" />
+            <input 
+              type="text"
+              placeholder="Search chats..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              className="w-full bg-zinc-100 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-xl pl-10 pr-4 py-2.5 text-[11px] font-bold uppercase tracking-wider text-zinc-900 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 transition-all placeholder:text-zinc-400 placeholder:font-black placeholder:tracking-widest"
+            />
+          </div>
+
           <button 
             onClick={onOpenImages}
             className={cn(
@@ -133,13 +154,15 @@ export const Sidebar = ({
             Recent
           </div>
           <div className="space-y-1">
-            {conversations.length === 0 ? (
+            {filteredConversations.length === 0 ? (
               <div className="px-4 py-8 text-center bg-zinc-100/50 dark:bg-zinc-900/30 rounded-2xl border border-dashed border-zinc-200 dark:border-zinc-800">
-                <p className="text-[10px] font-bold text-zinc-400 uppercase tracking-widest">No recent chats</p>
+                <p className="text-[10px] font-bold text-zinc-400 uppercase tracking-widest">
+                  {searchQuery ? 'No matches found' : 'No recent chats'}
+                </p>
               </div>
             ) : (
               <AnimatePresence mode="popLayout">
-                {conversations.map((conv, idx) => (
+                {filteredConversations.map((conv, idx) => (
                   <motion.div
                     layout
                     key={conv.id ? `side-conv-${conv.id}` : `side-conv-idx-${idx}`}
@@ -167,29 +190,54 @@ export const Sidebar = ({
                         </div>
                       </button>
                       
-                      <div className={cn(
-                        "flex items-center gap-1 transition-all duration-300 shrink-0",
-                        "md:opacity-0 md:group-hover:opacity-100 md:translate-x-2 md:group-hover:translate-x-0"
-                      )}>
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            const newTitle = prompt('Rename conversation:', conv.title);
-                            if (newTitle) onRenameConversation(conv.id, newTitle);
-                          }}
-                          className="p-2 text-zinc-400 hover:text-emerald-500 rounded-xl hover:bg-emerald-50 dark:hover:bg-emerald-950/20 transition-all"
-                        >
-                          <Edit2 className="w-3.5 h-3.5" />
-                        </button>
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            onDeleteConversation(conv.id);
-                          }}
-                          className="p-2 text-zinc-300 hover:text-red-500 rounded-xl hover:bg-red-50 dark:hover:bg-red-950/20 transition-all"
-                        >
-                          <Trash2 className="w-3.5 h-3.5" />
-                        </button>
+                      <div className="flex items-center shrink-0">
+                        {revealedActionsId === conv.id ? (
+                          <motion.div 
+                            initial={{ opacity: 0, x: 10 }}
+                            animate={{ opacity: 1, x: 0 }}
+                            className="flex items-center gap-1 bg-zinc-100 dark:bg-zinc-900 rounded-xl p-1 border border-zinc-200 dark:border-zinc-800"
+                          >
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                const newTitle = prompt('Rename conversation:', conv.title);
+                                if (newTitle) {
+                                  onRenameConversation(conv.id, newTitle);
+                                  setRevealedActionsId(null);
+                                }
+                              }}
+                              className="p-1.5 text-zinc-400 hover:text-emerald-500 rounded-lg hover:bg-emerald-50 dark:hover:bg-emerald-950/20 transition-all"
+                            >
+                              <Edit2 className="w-3.5 h-3.5" />
+                            </button>
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                onDeleteConversation(conv.id);
+                                setRevealedActionsId(null);
+                              }}
+                              className="p-1.5 text-zinc-300 hover:text-red-500 rounded-lg hover:bg-red-50 dark:hover:bg-red-950/20 transition-all"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                            <button
+                               onClick={() => setRevealedActionsId(null)}
+                               className="p-1.5 text-zinc-300 hover:text-zinc-500 rounded-lg transition-all"
+                             >
+                               <CloseIcon className="w-3.5 h-3.5" />
+                             </button>
+                          </motion.div>
+                        ) : (
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setRevealedActionsId(conv.id);
+                            }}
+                            className="p-2.5 text-zinc-300 hover:text-zinc-500 rounded-xl transition-all opacity-0 group-hover:opacity-100"
+                          >
+                            <MoreVertical className="w-4 h-4" />
+                          </button>
+                        )}
                       </div>
                     </div>
                   </motion.div>

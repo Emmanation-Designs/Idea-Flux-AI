@@ -20,10 +20,12 @@ function cn(...inputs: ClassValue[]) {
 }
 
 const VOICES = [
-  { id: 'alloy', name: 'Alloy', desc: 'Neutral & Professional', preview: 'https://cdn.openai.com/api/voices/alloy.wav' },
-  { id: 'echo', name: 'Echo', desc: 'Warm & Authoritative', preview: 'https://cdn.openai.com/api/voices/echo.wav' },
-  { id: 'fable', name: 'Fable', desc: 'British & Eloquent', preview: 'https://cdn.openai.com/api/voices/fable.wav' },
-  { id: 'onyx', name: 'Onyx', desc: 'Deep & Resonant', preview: 'https://cdn.openai.com/api/voices/onyx.wav' },
+  { id: 'onyx', name: 'Onyx', desc: 'Deep & Resonant', gender: 'male' },
+  { id: 'echo', name: 'Echo', desc: 'Warm & Authoritative', gender: 'male' },
+  { id: 'atlas', name: 'Atlas', desc: 'Confident & Crisp', gender: 'male' },
+  { id: 'fable', name: 'Fable', desc: 'British & Eloquent', gender: 'female' },
+  { id: 'nova', name: 'Nova', desc: 'Energetic & Bright', gender: 'female' },
+  { id: 'shimmer', name: 'Shimmer', desc: 'Soft & Ethereal', gender: 'female' },
 ];
 
 export const VoiceMode = ({ 
@@ -57,18 +59,79 @@ export const VoiceMode = ({
   const state = isLoading ? 'thinking' : isPlaying ? 'speaking' : isListening ? 'listening' : 'idle';
   const volume = isPlaying || isListening ? 0.6 : 0.05; 
 
-  const handlePreviewVoice = (id: string, url: string) => {
+  const handlePreviewVoice = (id: string) => {
     if (previewAudioRef.current) {
       previewAudioRef.current.pause();
     }
+    
+    // Stop any existing speech
+    window.speechSynthesis.cancel();
+    
     setPreviewingVoice(id);
-    const audio = new Audio(url);
-    previewAudioRef.current = audio;
-    audio.play().catch(() => {
-      // Browsers might block auto-play without user interaction on the specific element
-      // But since they clicked the preview button, it should be fine.
-    });
-    audio.onended = () => setPreviewingVoice(null);
+    
+    const message = "Hey Welcome to Trelvix Live mode, what do you want to talk about.";
+    const utterance = new SpeechSynthesisUtterance(message);
+    
+    // Attempt to find a suitable voice based on the name/ID
+    const voices = window.speechSynthesis.getVoices();
+    const voiceData = VOICES.find(v => v.id === id);
+    
+    let selectedVoice = voices.find(v => v.name.toLowerCase().includes(id.toLowerCase()));
+    
+    if (!selectedVoice) {
+      if (voiceData?.gender === 'male' || id === 'onyx' || id === 'echo' || id === 'atlas') {
+        // Look for common male voice names or keywords
+        selectedVoice = voices.find(v => {
+          const name = v.name.toLowerCase();
+          return name.includes('male') || 
+                 name.includes('david') || 
+                 name.includes('mark') || 
+                 name.includes('guy') ||
+                 name.includes('daniel') ||
+                 name.includes('alex');
+        });
+      } else if (voiceData?.gender === 'female' || id === 'fable' || id === 'nova' || id === 'shimmer') {
+        // Look for common female voice names or keywords
+        selectedVoice = voices.find(v => {
+          const name = v.name.toLowerCase();
+          return name.includes('female') || 
+                 name.includes('zira') || 
+                 name.includes('samantha') || 
+                 name.includes('victoria') ||
+                 name.includes('susan') ||
+                 name.includes('amy');
+        });
+      }
+    }
+    
+    // If still not found, try to find ANY voice that matches the gender if possible
+    if (!selectedVoice && voiceData?.gender) {
+      selectedVoice = voices.find(v => v.name.toLowerCase().includes(voiceData.gender)) || voices[0];
+    } else if (!selectedVoice) {
+      selectedVoice = voices[0];
+    }
+    
+    if (selectedVoice) utterance.voice = selectedVoice;
+    
+    // Adjust pitch/rate based on voice type
+    if (id === 'onyx' || id === 'echo' || id === 'atlas') {
+      utterance.pitch = id === 'onyx' ? 0.8 : id === 'echo' ? 0.85 : 0.95;
+      utterance.rate = 0.95;
+    } else if (id === 'fable') {
+      utterance.pitch = 1.05;
+      utterance.rate = 1.0;
+    } else if (id === 'shimmer') {
+      utterance.pitch = 1.25;
+      utterance.rate = 1.1;
+    } else if (id === 'nova') {
+      utterance.pitch = 1.15;
+      utterance.rate = 1.05;
+    }
+
+    utterance.onend = () => setPreviewingVoice(null);
+    utterance.onerror = () => setPreviewingVoice(null);
+
+    window.speechSynthesis.speak(utterance);
   };
 
   useEffect(() => {
@@ -76,6 +139,7 @@ export const VoiceMode = ({
       setIsStarted(false);
       setPreviewingVoice(null);
       if (previewAudioRef.current) previewAudioRef.current.pause();
+      window.speechSynthesis.cancel();
     }
   }, [isOpen]);
 
@@ -108,10 +172,10 @@ export const VoiceMode = ({
             <motion.div 
               initial={{ opacity: 0, scale: 0.98 }}
               animate={{ opacity: 1, scale: 1 }}
-              className="relative z-10 w-full max-w-md flex-1 flex flex-col items-center justify-center p-6 space-y-12"
+              className="relative z-10 w-full max-w-md flex-1 flex flex-col items-center justify-center p-6 space-y-8 overflow-hidden"
             >
-              <div className="text-center space-y-3">
-                <div className="flex items-center justify-center gap-2 mb-6">
+              <div className="text-center space-y-3 shrink-0">
+                <div className="flex items-center justify-center gap-2 mb-4">
                   <div className="px-3 py-1 bg-emerald-500/10 border border-emerald-500/20 rounded-full">
                     <span className="text-[10px] font-black uppercase tracking-[0.3em] text-emerald-400">Live Config</span>
                   </div>
@@ -120,11 +184,17 @@ export const VoiceMode = ({
                 <p className="text-zinc-500 text-sm font-medium">Choose who you'll be speaking with today.</p>
               </div>
 
-              <div className="w-full space-y-2">
+              <div className="w-full space-y-2 overflow-y-auto pr-2 max-h-[50vh] scrollbar-thin scrollbar-thumb-white/10 scrollbar-track-transparent">
                 {VOICES.map((v) => (
                   <button
                     key={v.id}
-                    onClick={() => onVoiceOptionChange(v.id)}
+                    onClick={() => {
+                      if (voiceOption === v.id) {
+                        setIsStarted(true);
+                      } else {
+                        onVoiceOptionChange(v.id);
+                      }
+                    }}
                     className={cn(
                       "w-full flex items-center justify-between p-4 rounded-[2rem] transition-all duration-500 border",
                       voiceOption === v.id 
@@ -136,7 +206,7 @@ export const VoiceMode = ({
                       <button 
                         onClick={(e) => {
                           e.stopPropagation();
-                          handlePreviewVoice(v.id, v.preview);
+                          handlePreviewVoice(v.id);
                         }}
                         className={cn(
                           "w-11 h-11 rounded-2xl flex items-center justify-center transition-all",
@@ -146,16 +216,30 @@ export const VoiceMode = ({
                         <PlayCircle className={cn("w-5 h-5", previewingVoice === v.id && "animate-pulse")} />
                       </button>
                       <div className="text-left">
-                        <div className="text-[14px] font-bold tracking-tight">{v.name}</div>
+                        <div className="flex items-center gap-2">
+                          <div className="text-[14px] font-bold tracking-tight">{v.name}</div>
+                          <div className={cn(
+                            "px-1.5 py-0.5 rounded-md text-[8px] font-black uppercase tracking-wider border",
+                            v.gender === 'male' 
+                              ? "bg-blue-500/10 border-blue-500/20 text-blue-500" 
+                              : "bg-pink-500/10 border-pink-500/20 text-pink-500"
+                          )}>
+                            {v.gender}
+                          </div>
+                        </div>
                         <div className="text-[11px] opacity-60 font-medium">{v.desc}</div>
                       </div>
                     </div>
-                    {voiceOption === v.id && <ChevronRight className="w-4 h-4 mr-2" />}
+                    {voiceOption === v.id && (
+                      <div className="bg-emerald-500/10 p-2 rounded-xl">
+                        <ChevronRight className="w-4 h-4 text-emerald-600" />
+                      </div>
+                    )}
                   </button>
                 ))}
               </div>
 
-              <div className="w-full pt-4 space-y-3">
+              <div className="w-full pt-4 space-y-3 shrink-0">
                 <button 
                   onClick={() => setIsStarted(true)}
                   className="w-full py-5 rounded-[2rem] bg-emerald-500 text-black font-black text-xs uppercase tracking-[0.25em] shadow-2xl shadow-emerald-500/20 hover:bg-emerald-400 transition-all active:scale-95"
@@ -254,9 +338,9 @@ export const VoiceMode = ({
                       className="flex flex-col items-center gap-3"
                     >
                       <h2 className="text-4xl md:text-5xl font-light tracking-tight text-white/95">
-                        {state === 'speaking' ? "AI Speaking" : 
-                         state === 'listening' ? "Listening" : 
-                         state === 'thinking' ? "Neural Sync" : "Connected"}
+                        {state === 'thinking' ? "Thinking..." : 
+                         state === 'speaking' ? "Speaking..." : 
+                         state === 'listening' ? "Listening..." : "Connected"}
                       </h2>
                       <div className="flex items-center gap-4">
                         <div className="h-[1px] w-6 bg-emerald-500/20" />

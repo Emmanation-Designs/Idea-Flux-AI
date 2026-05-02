@@ -127,25 +127,6 @@ export const Settings = (props: {
     }
   }, []);
 
-  const handleUpdatePassword = async () => {
-    if (!newPassword || newPassword.length < 6) {
-      toast.error('Password must be at least 6 characters');
-      return;
-    }
-    setIsResetting(true);
-    try {
-      const { error } = await supabase.auth.updateUser({ password: newPassword });
-      if (error) throw error;
-      toast.success('Password updated successfully');
-      setShowResetForm(false);
-      setNewPassword('');
-    } catch (err: any) {
-      toast.error(err.message || 'Failed to update password');
-    } finally {
-      setIsResetting(false);
-    }
-  };
-
   const handleUpdateName = async () => {
     try {
       await onUpdateProfile({ name: newName });
