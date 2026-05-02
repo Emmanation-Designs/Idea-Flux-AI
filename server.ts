@@ -263,10 +263,13 @@ async function handleGenerate(req: express.Request, res: express.Response) {
         "news", "weather", "price", "today", "latest", "current", 
         "politics", "who is", "what happened", "stock", "dollar", 
         "exchange rate", "score", "match", "result", "live", "now",
-        "happening", "event", "crypto", "bitcoin", "forecast"
+        "happening", "event", "crypto", "bitcoin", "forecast", "naira",
+        "rate", "market", "president", "minister", "ceo", "launch", "release date"
       ];
       const lower = text.toLowerCase();
-      return searchKeywords.some(k => lower.includes(k));
+      // Also trigger if it looks like a question about a specific person or current entity
+      return searchKeywords.some(k => lower.includes(k)) || 
+             (lower.includes("?") && (lower.includes("who") || lower.includes("price of") || lower.includes("what's the")));
     };
 
     // 1. Image Generation (DALL-E 3)
@@ -275,29 +278,26 @@ async function handleGenerate(req: express.Request, res: express.Response) {
       const lowerPrompt = prompt.toLowerCase();
       const isLogo = lowerPrompt.includes("logo");
       const isPoster = lowerPrompt.includes("flyer") || lowerPrompt.includes("poster") || lowerPrompt.includes("political");
-      const isPeople = lowerPrompt.includes("man") || lowerPrompt.includes("woman") || lowerPrompt.includes("person") || lowerPrompt.includes("people") || lowerPrompt.includes("face") || lowerPrompt.includes("portrait");
-      const isArtisticRequested = lowerPrompt.includes("artistic") || lowerPrompt.includes("illustration") || lowerPrompt.includes("silhouette") || lowerPrompt.includes("drawing") || lowerPrompt.includes("painting") || lowerPrompt.includes("sketch");
+      const isPeople = lowerPrompt.includes("man") || lowerPrompt.includes("woman") || lowerPrompt.includes("person") || lowerPrompt.includes("people") || lowerPrompt.includes("face") || lowerPrompt.includes("portrait") || lowerPrompt.includes("girl") || lowerPrompt.includes("boy");
+      const isArtisticRequested = lowerPrompt.includes("artistic") || lowerPrompt.includes("illustration") || lowerPrompt.includes("silhouette") || lowerPrompt.includes("drawing") || lowerPrompt.includes("painting") || lowerPrompt.includes("sketch") || lowerPrompt.includes("cartoon") || lowerPrompt.includes("anime") || lowerPrompt.includes("3d");
 
-      // Default Realism Keywords
-      const realismKeywords = "highly detailed, photorealistic, realistic photography, sharp focus, 8k, natural lighting, professional studio portrait, real human faces with accurate details, authentic skin tones, lifelike textures";
+      // Default Realism Keywords - Extreme Photography Focus
+      const realismKeywords = "raw photo, masterpiece, 8k uhd, dslr, high quality, Fujifilm XT4, highly detailed, photorealistic, sharp focus, natural lighting, subsurface scattering, realistic skin texture, pore detail, authentic human features, realistic shadows and highlights";
 
       if (isLogo) {
-        enhancedPrompt = `${prompt}, clean vector logo, professional, minimalist, high resolution, white background, masterpiece, 4k`;
+        enhancedPrompt = `Professional vector logo, minimalist, clean lines, high resolution, white background, masterpiece, 4k. Subject: ${prompt}`;
       } else if (isPoster) {
-        // For flyers and posters, still aim for realism unless artistic is specified
         if (isArtisticRequested) {
-          enhancedPrompt = `${prompt}, professional graphic design, artistic illustration, creative layout, vibrant colors, marketing material`;
+          enhancedPrompt = `Creative graphic design, artistic illustration, modern aesthetic, vibrant colors, marketing material. Subject: ${prompt}`;
         } else {
-          enhancedPrompt = `${prompt}, professional graphic design, realistic photography elements, high-quality stock photo style, real human faces with accurate details, authentic skin tones, realistic clothing textures and expressions, professional lighting, 8k, sharp focus`;
+          enhancedPrompt = `Candid photography style, high-end commercial photography, real human faces with accurate details, authentic skin tones and micro-textures, 8k, sharp focus, magazine quality. Subject: ${prompt}`;
         }
       } else if (isArtisticRequested) {
-        enhancedPrompt = `${prompt}, high resolution, masterpiece, artistically detailed style`;
+        enhancedPrompt = `Magical realism, masterpiece, highly detailed artistic style, high resolution. Subject: ${prompt}`;
       } else if (isPeople) {
-        // Specific person realism
-        enhancedPrompt = `${prompt}, highly detailed realistic portrait, realistic photography, sharp focus on eyes, real human faces with accurate details, authentic skin tones and micro-textures, realistic hair, professional studio lighting, 8k resolution, cinematic depth of field`;
+        enhancedPrompt = `Hyper-realistic portrait, shot on 35mm lens, f/1.8, realistic photography, sharp focus on eyes, authentic skin micro-textures, realistic hair strands, natural depth of field, cinematic lighting, 8k resolution, absolutely no cartoon or 3d render. Subject: ${prompt}`;
       } else {
-        // Default to high realism
-        enhancedPrompt = `${prompt}, ${realismKeywords}, cinematic lighting, masterpiece, ultra-realistic texture, high resolution photography`;
+        enhancedPrompt = `${realismKeywords}, cinematic lighting, masterpiece, ultra-realistic texture, high resolution photography, shot on Sony A7R IV. Subject: ${prompt}`;
       }
 
       console.log(`[Generate] Generating image with prompt: ${enhancedPrompt}`);
@@ -307,6 +307,7 @@ async function handleGenerate(req: express.Request, res: express.Response) {
         n: 1,
         size: "1024x1024",
         quality: "hd",
+        style: "vivid", // "vivid" can be better for realism than "natural" in some DALL-E 3 contexts if prompt is right
         response_format: "b64_json"
       });
 
@@ -377,14 +378,16 @@ async function handleGenerate(req: express.Request, res: express.Response) {
     
     const lastMessage = messages[messages.length - 1]?.content || prompt || "";
     const searchNeeded = needsWebSearch(lastMessage);
-    let searchResponse = null;
+    
+    // Check if user is asking for image generation via chat (smart agent)
+    const isImageIntent = lastMessage.toLowerCase().includes("generate") && (lastMessage.toLowerCase().includes("image") || lastMessage.toLowerCase().includes("picture") || lastMessage.toLowerCase().includes("photo"));
 
-    // Primary: Attempt OpenAI's native search model if intent detected
-    if (searchNeeded) {
+    // Primary: Attempt OpenAI's native tools model if intent detected
+    if (searchNeeded && !isImageIntent) {
       console.log(`[Generate] Search intent detected. Attempting native OpenAI search...`);
       try {
         const nativeSearchCompletion = await openai.chat.completions.create({
-          model: "gpt-4o-search-preview",
+          model: "gpt-4o", // Stronger model for better tool usage and search
           messages: openAiMessages,
           stream: true,
         });
@@ -425,7 +428,7 @@ async function handleGenerate(req: express.Request, res: express.Response) {
     ];
 
     let response = await openai.chat.completions.create({
-      model: "gpt-4o-mini",
+      model: "gpt-4o", // Use gpt-4o for better tool calling reliability
       messages: openAiMessages,
       tools,
       tool_choice: "auto",
@@ -454,7 +457,7 @@ async function handleGenerate(req: express.Request, res: express.Response) {
 
       // Final completion with search results
       const finalResponse = await openai.chat.completions.create({
-        model: "gpt-4o-mini",
+        model: "gpt-4o",
         messages: openAiMessages,
         stream: true,
       });

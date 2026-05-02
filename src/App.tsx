@@ -1832,27 +1832,35 @@ export default function App() {
                           ? "Daily limit reached. Click to upgrade." 
                           : (selectedAttachment ? `Ask about this ${selectedAttachment.type}...` : "Message Trelvix AI...")
                       }
-                      className="w-full bg-transparent border-none rounded-none px-2 md:px-4 py-4 md:py-5 pr-20 md:pr-28 focus:ring-0 outline-none resize-none transition-all min-h-[56px] md:min-h-[64px] max-h-[200px] text-sm md:text-base font-medium placeholder:text-zinc-400"
+                      className="w-full bg-transparent border-none rounded-none px-4 md:px-6 py-4 md:py-5 pr-14 md:pr-28 focus:ring-0 outline-none resize-none transition-all min-h-[56px] md:min-h-[64px] max-h-[200px] text-sm md:text-base font-medium placeholder:text-zinc-400"
                     />
                     
-                    <div className="absolute right-0 flex items-center gap-1.5 md:gap-3 mr-2">
-                      <button 
-                        onClick={toggleListening}
-                        className={cn(
-                          "p-3 md:p-4 transition-all rounded-2xl md:rounded-full",
-                          isListening 
-                            ? "bg-emerald-500/10 text-emerald-500 animate-pulse ring-2 ring-emerald-500/20" 
-                            : "text-zinc-400 hover:text-zinc-900 dark:hover:text-white hover:bg-white dark:hover:bg-zinc-800"
+                    <div className="absolute right-0 flex items-center gap-1 md:gap-2 mr-2">
+                      <AnimatePresence>
+                        {!input.trim() && (
+                          <motion.button 
+                            initial={{ opacity: 0, scale: 0.8, width: 0 }}
+                            animate={{ opacity: 1, scale: 1, width: 'auto' }}
+                            exit={{ opacity: 0, scale: 0.8, width: 0 }}
+                            onClick={toggleListening}
+                            className={cn(
+                              "p-3 md:p-3.5 transition-all rounded-full overflow-hidden flex-shrink-0",
+                              isListening 
+                                ? "bg-emerald-500/10 text-emerald-500 animate-pulse ring-2 ring-emerald-500/20" 
+                                : "text-zinc-400 hover:text-zinc-900 dark:hover:text-white hover:bg-white dark:hover:bg-zinc-800"
+                            )}
+                            title="Hands-free typing"
+                          >
+                            <Mic className={cn("w-4 h-4 md:w-5 md:h-5", isListening && "fill-emerald-500/20")} />
+                          </motion.button>
                         )}
-                        title="Hands-free typing"
-                      >
-                        <Mic className={cn("w-5 h-5", isListening && "fill-emerald-500/20")} />
-                      </button>
+                      </AnimatePresence>
+
                       <button 
                         onClick={() => sendMessage(input)}
                         disabled={(!input.trim() && !selectedAttachment) || isLoading}
                         className={cn(
-                          "p-3 md:p-4 rounded-2xl md:rounded-full transition-all shadow-xl flex items-center justify-center transform active:scale-95",
+                          "p-3 md:p-3.5 rounded-full transition-all shadow-xl flex items-center justify-center transform active:scale-95 flex-shrink-0",
                           input.trim() || selectedAttachment
                             ? "bg-zinc-900 dark:bg-white text-white dark:text-zinc-900" 
                             : "text-zinc-300 dark:text-zinc-700 cursor-not-allowed border border-zinc-200 dark:border-zinc-800"
