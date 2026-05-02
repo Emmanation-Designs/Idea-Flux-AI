@@ -165,6 +165,7 @@ export default function App() {
   const recognitionRef = useRef<any>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const voiceAbortControllerRef = useRef<AbortController | null>(null);
+  const generationAbortControllerRef = useRef<AbortController | null>(null);
 
   useEffect(() => {
     if (textareaRef.current) {
@@ -241,37 +242,58 @@ export default function App() {
         if (currentResult.isFinal) {
           transcriptRef.current += currentResult[0].transcript;
           setCurrentTranscript(transcriptRef.current);
+          
+          // Reset silence timer on every final result too
+          if (silenceTimer) clearTimeout(silenceTimer);
+          silenceTimer = setTimeout(() => {
+            handleSpeechEnd();
+          }, 850); // Slightly lowered for snappier feel
         } else {
           interimTranscript = currentResult[0].transcript;
           setStreamingMessage(interimTranscript);
           
           // Barge-in sensing: If user speaks meaningfully while AI is playing, stop AI
-          if (interimTranscript.trim().length > 3 && isPlaying) {
+          if (interimTranscript.trim().length > 2 && (isPlaying || isLoading)) {
              if (currentAudio) {
                currentAudio.pause();
                setIsPlaying(false);
                setCurrentlyPlayingMessageId(null);
-               // Give visual feedback that we heard the interruption
-               setCurrentTranscript('Listening...');
              }
+             // If we were loading/thinking, abort the active LLM generation
+             if (isLoading && generationAbortControllerRef.current) {
+               generationAbortControllerRef.current.abort("User interrupted during thinking");
+               setIsLoading(false);
+             }
+             setCurrentTranscript('Listening...');
           }
+
+          // Silence detection: Start/Reset timer on interim results
+          if (silenceTimer) clearTimeout(silenceTimer);
+          silenceTimer = setTimeout(() => {
+            handleSpeechEnd();
+          }, 1100); // Wait a bit longer for interim since user might still be talking
         }
 
-        // Fast silence detection: If no new speech for ~1 second, assume end of turn
-        if (silenceTimer) clearTimeout(silenceTimer);
-        silenceTimer = setTimeout(() => {
-          if (showVoiceMode && (transcriptRef.current.trim() || interimTranscript.trim())) {
+        function handleSpeechEnd() {
+          if (showVoiceMode) {
             const finalSpeech = (transcriptRef.current + interimTranscript).trim();
             if (finalSpeech.length > 1) {
               transcriptRef.current = '';
               setCurrentTranscript('');
               setStreamingMessage('');
               setShouldPlayVoice(true);
+              
+              // Use convOverride to bypass potential isLoading blocks if we are starting a fresh query
               sendMessage(finalSpeech);
+              
+              // We don't always need to stop recognition if it's truly continuous, 
+              // but many browsers handle it better if we cycle it or pause it.
+              // For "Interrupt capability", we actually WANT it to keep going, 
+              // but we need to prevent it from hearing the AI.
               try { recognitionRef.current?.stop(); } catch(e) {}
             }
           }
-        }, 1000); // 1s silence detection as requested for natural flow
+        }
       };
 
       recognitionRef.current.onerror = (event: any) => {
@@ -281,10 +303,16 @@ export default function App() {
 
       recognitionRef.current.onend = () => {
         setIsListening(false);
-        if (showVoiceMode && !isPlaying && !isLoading && !isMuted) {
+        // More aggressive restart: restart if voice mode is on and we are not Muted.
+        // We handle isPlaying/isLoading inside onresult to prevent loops.
+        if (showVoiceMode && !isMuted) {
           setTimeout(() => {
-            try { recognitionRef.current?.start(); } catch(e) {}
-          }, 300);
+            try { 
+              if (showVoiceMode && !isListening) {
+                recognitionRef.current?.start(); 
+              }
+            } catch(e) {}
+          }, 200);
         }
       };
     }
@@ -795,8 +823,15 @@ export default function App() {
     if (!conv || (!content.trim() && !selectedAttachment)) return;
     
     if (isLoading && !convOverride) {
-      console.warn("[Chat] Busy generating previous response");
-      return;
+      if (showVoiceMode) {
+        // In voice mode, we allow new messages to abort active ones (barge-in)
+        if (generationAbortControllerRef.current) {
+          generationAbortControllerRef.current.abort("New user query");
+        }
+      } else {
+        console.warn("[Chat] Busy generating previous response");
+        return;
+      }
     }
 
     const userMessage: Message = {
@@ -853,8 +888,16 @@ export default function App() {
     clearAttachment(); 
     setIsLoading(true);
     setStreamingMessage('');
+    if (showVoiceMode) {
+      setCurrentResponse('');
+    }
 
+    if (generationAbortControllerRef.current) {
+      generationAbortControllerRef.current.abort();
+    }
     const controller = new AbortController();
+    generationAbortControllerRef.current = controller;
+
     const timeoutId = setTimeout(() => {
       controller.abort();
       console.warn("[Chat] Timeout reached");

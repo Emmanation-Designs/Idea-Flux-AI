@@ -53,7 +53,19 @@ export const VoiceMode = ({
 }) => {
   const [isStarted, setIsStarted] = useState(false);
   const [previewingVoice, setPreviewingVoice] = useState<string | null>(null);
+  const [availableVoices, setAvailableVoices] = useState<SpeechSynthesisVoice[]>([]);
   const previewAudioRef = useRef<HTMLAudioElement | null>(null);
+
+  useEffect(() => {
+    const updateVoices = () => {
+      setAvailableVoices(window.speechSynthesis.getVoices());
+    };
+    updateVoices();
+    window.speechSynthesis.onvoiceschanged = updateVoices;
+    return () => {
+      window.speechSynthesis.onvoiceschanged = null;
+    };
+  }, []);
 
   // Derived state for the UI
   const state = isLoading ? 'thinking' : isPlaying ? 'speaking' : isListening ? 'listening' : 'idle';
@@ -73,41 +85,40 @@ export const VoiceMode = ({
     const utterance = new SpeechSynthesisUtterance(message);
     
     // Attempt to find a suitable voice based on the name/ID
-    const voices = window.speechSynthesis.getVoices();
+    const voices = availableVoices.length > 0 ? availableVoices : window.speechSynthesis.getVoices();
     const voiceData = VOICES.find(v => v.id === id);
     
     let selectedVoice = voices.find(v => v.name.toLowerCase().includes(id.toLowerCase()));
     
     if (!selectedVoice) {
-      if (voiceData?.gender === 'male' || id === 'onyx' || id === 'echo' || id === 'atlas') {
-        // Look for common male voice names or keywords
-        selectedVoice = voices.find(v => {
-          const name = v.name.toLowerCase();
-          return name.includes('male') || 
-                 name.includes('david') || 
-                 name.includes('mark') || 
-                 name.includes('guy') ||
-                 name.includes('daniel') ||
-                 name.includes('alex');
-        });
-      } else if (voiceData?.gender === 'female' || id === 'fable' || id === 'nova' || id === 'shimmer') {
-        // Look for common female voice names or keywords
-        selectedVoice = voices.find(v => {
-          const name = v.name.toLowerCase();
-          return name.includes('female') || 
-                 name.includes('zira') || 
-                 name.includes('samantha') || 
-                 name.includes('victoria') ||
-                 name.includes('susan') ||
-                 name.includes('amy');
-        });
+      // Priority search for male/female voices if the exact name isn't found
+      const targetGender = voiceData?.gender || (id === 'onyx' || id === 'echo' || id === 'atlas' ? 'male' : 'female');
+      
+      const maleKeywords = ['male', 'david', 'mark', 'guy', 'daniel', 'alex', 'james', 'thomas', 'stefan', 'george', 'paul', 'danny', 'steve'];
+      const femaleKeywords = ['female', 'zira', 'samantha', 'victoria', 'susan', 'amy', 'linda', 'mary', 'karen', 'olivia', 'emma', 'sara', 'anna'];
+      const keywords = targetGender === 'male' ? maleKeywords : femaleKeywords;
+
+      selectedVoice = voices.find(v => {
+        const name = v.name.toLowerCase();
+        return keywords.some(k => name.includes(k));
+      });
+      
+      // Secondary fallback for common system voices
+      if (!selectedVoice) {
+        if (targetGender === 'male') {
+          selectedVoice = voices.find(v => v.name.toLowerCase().includes('en-us') && v.name.toLowerCase().includes('male')) || 
+                          voices.find(v => v.name.toLowerCase().includes('david')) ||
+                          voices.find(v => v.name.toLowerCase().includes('mark'));
+        } else {
+          selectedVoice = voices.find(v => v.name.toLowerCase().includes('en-us') && v.name.toLowerCase().includes('female')) ||
+                          voices.find(v => v.name.toLowerCase().includes('zira')) ||
+                          voices.find(v => v.name.toLowerCase().includes('samantha'));
+        }
       }
     }
     
-    // If still not found, try to find ANY voice that matches the gender if possible
-    if (!selectedVoice && voiceData?.gender) {
-      selectedVoice = voices.find(v => v.name.toLowerCase().includes(voiceData.gender)) || voices[0];
-    } else if (!selectedVoice) {
+    // Final fallback
+    if (!selectedVoice) {
       selectedVoice = voices[0];
     }
     
