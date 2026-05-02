@@ -68,87 +68,132 @@ app.post("/api/generate", async (req, res) => {
 app.post("/api/stripe/checkout", async (req, res) => {
   try {
     const { plan, interval, userId } = req.body;
-    if (!userId) return res.status(400).json({ error: 'User ID is required' });
+    const origin = req.headers.origin || "https://trelvixai.com";
 
-    const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!, {
-      apiVersion: '2024-06-20' as any,
+    if (!userId) return res.status(400).json({ error: 'User ID is required' });
+    if (!plan || !interval) return res.status(400).json({ error: 'Plan and interval are required' });
+
+    const stripeSecretKey = process.env.STRIPE_SECRET_KEY;
+    if (!stripeSecretKey) {
+      console.error('[Stripe] Missing STRIPE_SECRET_KEY');
+      return res.status(500).json({ error: 'Server configuration error: Missing Stripe Secret Key' });
+    }
+
+    const stripe = new Stripe(stripeSecretKey, {
+      apiVersion: '2023-10-16' as any,
     });
+
+    const proMonthly = process.env.STRIPE_PRO_MONTHLY_PRICE_ID;
+    const proYearly = process.env.STRIPE_PRO_YEARLY_PRICE_ID;
+    const plusMonthly = process.env.STRIPE_PLUS_MONTHLY_PRICE_ID;
+    const plusYearly = process.env.STRIPE_PLUS_YEARLY_PRICE_ID;
 
     let priceId = '';
     if (plan === 'pro') {
-      priceId = interval === 'year' 
-        ? process.env.STRIPE_PRO_YEARLY_PRICE_ID! 
-        : process.env.STRIPE_PRO_MONTHLY_PRICE_ID!;
+      priceId = interval === 'year' ? proYearly || '' : proMonthly || '';
     } else if (plan === 'plus') {
-      priceId = interval === 'year' 
-        ? process.env.STRIPE_PLUS_YEARLY_PRICE_ID! 
-        : process.env.STRIPE_PLUS_MONTHLY_PRICE_ID!;
+      priceId = interval === 'year' ? plusYearly || '' : plusMonthly || '';
     }
 
-    if (!priceId) return res.status(400).json({ error: 'Invalid plan or interval' });
+    if (!priceId) {
+      const errorMsg = `No Price ID configured for plan: ${plan}, interval: ${interval}`;
+      console.error(`[Stripe] ${errorMsg}`);
+      return res.status(400).json({ error: errorMsg });
+    }
+
+    if (priceId.startsWith('prod_')) {
+      const errorMsg = `Environment variable for ${plan} ${interval} contains a Product ID (${priceId}) instead of a Price ID (price_...). Please update your environment variables.`;
+      console.error(`[Stripe] ${errorMsg}`);
+      return res.status(400).json({ error: errorMsg });
+    }
+
+    console.log(`[Stripe] Creating checkout session for user:${userId}, plan:${plan}, price:${priceId}`);
 
     const session = await stripe.checkout.sessions.create({
       payment_method_types: ['card'],
       line_items: [{ price: priceId, quantity: 1 }],
       mode: 'subscription',
-      success_url: `https://trelvixai.com/settings?success=true`,
-      cancel_url: `https://trelvixai.com/settings`,
+      success_url: `${origin}/settings?success=true`,
+      cancel_url: `${origin}/settings`,
       client_reference_id: userId,
       metadata: { userId, plan, interval },
+      allow_promotion_codes: true,
+      billing_address_collection: 'auto',
     });
 
     res.json({ url: session.url });
   } catch (error: any) {
     console.error('[Stripe Checkout Error]:', error);
-    res.status(500).json({ error: error.message });
+    res.status(500).json({ 
+      error: error.message || 'An error occurred during Stripe checkout creation',
+      code: error.code || 'checkout_error'
+    });
   }
 });
 
 // Stripe Webhook Route
 app.post("/api/stripe/webhook", async (req: any, res) => {
   const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!, {
-    apiVersion: '2024-06-20' as any,
+    apiVersion: '2023-10-16' as any,
   });
 
   const sig = req.headers['stripe-signature'];
   const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET;
 
+  if (!sig || !webhookSecret) {
+    console.error('[Stripe Webhook] Missing signature or secret');
+    return res.status(400).send('Webhook Error: Missing signature or secret');
+  }
+
   let event: Stripe.Event;
 
   try {
-    event = stripe.webhooks.constructEvent(req.rawBody, sig!, webhookSecret!);
+    event = stripe.webhooks.constructEvent(req.rawBody, sig, webhookSecret);
   } catch (err: any) {
-    console.error(`[Webhook Error]: ${err.message}`);
+    console.error(`[Stripe Webhook Signature Error]: ${err.message}`);
     return res.status(400).send(`Webhook Error: ${err.message}`);
   }
 
-  if (event.type === 'checkout.session.completed') {
-    const session = event.data.object as Stripe.Checkout.Session;
+  console.log(`[Stripe Webhook] Received event: ${event.type}`);
+
+  if (event.type === 'checkout.session.completed' || event.type === 'invoice.paid') {
+    const session = event.data.object as any;
+    
+    // For checkout.session.completed, we use client_reference_id
+    // For invoice.paid, we might need to look up the sub or use metadata if passed
     const userId = session.client_reference_id || session.metadata?.userId;
     const plan = session.metadata?.plan;
     const interval = session.metadata?.interval;
 
-    if (userId && plan) {
+    if (userId && (plan || event.type === 'invoice.paid')) {
       const supabase = createClient(
         process.env.SUPABASE_URL!,
         process.env.SUPABASE_SERVICE_ROLE_KEY!
       );
 
-      const expiresAt = new Date();
-      if (interval === 'year') {
-        expiresAt.setFullYear(expiresAt.getFullYear() + 1);
-      } else {
-        expiresAt.setDate(expiresAt.getDate() + 30);
+      // If it's just a renewal (invoice.paid), we might not have plan in metadata 
+      // depends on how Stripe propagates metadata to invoices (it usually doesn't by default without subscription_data.metadata)
+      
+      let updateData: any = {
+        subscription_expires_at: new Date(Date.now() + (interval === 'year' ? 366 : 31) * 24 * 60 * 60 * 1000).toISOString(),
+        last_usage_reset: new Date().toISOString().split('T')[0]
+      };
+
+      if (plan) {
+        updateData.plan = plan;
       }
 
-      await supabase
+      console.log(`[Stripe Webhook] Updating profile for user:${userId}`, updateData);
+
+      const { error } = await supabase
         .from('profiles')
-        .update({
-          plan: plan,
-          subscription_expires_at: expiresAt.toISOString(),
-          last_usage_reset: new Date().toISOString().split('T')[0]
-        })
+        .update(updateData)
         .eq('id', userId);
+
+      if (error) {
+        console.error(`[Stripe Webhook] Supabase update error:`, error);
+        return res.status(500).send('Internal server error updating profile');
+      }
     }
   }
 

@@ -115,6 +115,16 @@ export const Settings = (props: {
   const [isSubscribing, setIsSubscribing] = React.useState<string | null>(null);
   const fileInputRef = React.useRef<HTMLInputElement>(null);
 
+  React.useEffect(() => {
+    const urlParams = new URLSearchParams(window.location.search);
+    if (urlParams.get('success') === 'true') {
+      toast.success('Payment successful! Your plan has been activated.');
+      // Remove query param without refreshing
+      const newUrl = window.location.pathname;
+      window.history.replaceState({}, '', newUrl);
+    }
+  }, []);
+
   const handleUpdateName = async () => {
     try {
       await onUpdateProfile({ name: newName });
@@ -537,7 +547,7 @@ export const Settings = (props: {
                               disabled={isSubscribing !== null}
                               className="px-8 py-4 bg-zinc-900 dark:bg-zinc-100 text-white dark:text-zinc-900 rounded-xl font-black text-xs uppercase tracking-widest transition-all hover:scale-[1.02] active:scale-95 disabled:opacity-50 shadow-lg h-fit whitespace-nowrap"
                             >
-                              {isSubscribing === id ? 'Processing...' : 'Subscribe ' + plan.name}
+                              {isSubscribing === id ? 'Processing...' : 'Go ' + plan.name}
                             </button>
                           </div>
                         ))}
@@ -545,26 +555,53 @@ export const Settings = (props: {
                     </div>
                   ) : (
                     <div className="space-y-6">
-                      <div className="p-6 bg-zinc-50 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-2xl">
-                        <div className="flex items-center justify-between mb-4">
-                          <div>
-                            <div className="text-[10px] text-zinc-400 font-bold uppercase tracking-wider mb-1">Current Plan</div>
-                            <div className="text-xl font-bold capitalize">{profile?.plan} Plan</div>
+                      <div className="p-8 bg-zinc-50 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-3xl">
+                        <div className="flex items-center justify-between mb-6">
+                          <div className="flex items-center gap-4">
+                            <div className="w-12 h-12 rounded-2xl bg-emerald-500/10 flex items-center justify-center">
+                              <Zap className="w-6 h-6 text-emerald-500" />
+                            </div>
+                            <div>
+                              <div className="text-[10px] text-zinc-400 font-bold uppercase tracking-widest mb-1">Current Active Plan</div>
+                              <div className="text-xl font-black capitalize tracking-tight">{profile?.plan} Plan</div>
+                            </div>
                           </div>
-                          <div className="px-3 py-1 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 text-[10px] font-bold rounded-lg border border-emerald-500/20">
+                          <div className="px-3 py-1 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 text-[10px] font-black rounded-lg border border-emerald-500/20 tracking-widest uppercase">
                             ACTIVE
                           </div>
                         </div>
-                        <p className="text-xs text-zinc-500 leading-relaxed">
-                          Your next billing date is not available in test mode. Manage your subscription details on Stripe.
+                        
+                        <div className="grid grid-cols-2 gap-4">
+                          <div className="p-4 bg-white dark:bg-zinc-950 rounded-2xl border border-zinc-100 dark:border-zinc-800">
+                            <div className="text-[10px] text-zinc-400 font-bold uppercase tracking-wider mb-1">Status</div>
+                            <div className="text-sm font-bold text-emerald-500">Subscription Active</div>
+                          </div>
+                          <div className="p-4 bg-white dark:bg-zinc-950 rounded-2xl border border-zinc-100 dark:border-zinc-800">
+                            <div className="text-[10px] text-zinc-400 font-bold uppercase tracking-wider mb-1">Renewal</div>
+                            <div className="text-sm font-bold">
+                              {profile?.subscription_expires_at ? (
+                                (() => {
+                                  const expiryDate = new Date(profile.subscription_expires_at);
+                                  const now = new Date();
+                                  const diffTime = Math.abs(expiryDate.getTime() - now.getTime());
+                                  const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+                                  return `${diffDays} days left`;
+                                })()
+                              ) : 'N/A'}
+                            </div>
+                          </div>
+                        </div>
+
+                        <p className="text-[11px] text-zinc-500 leading-relaxed mt-6 italic">
+                          Manage your subscription details, update payment methods, or cancel anytime through the Stripe Customer Portal.
                         </p>
                       </div>
                       <button 
                         onClick={() => window.open('https://billing.stripe.com/p/login/test_4gw5lr8Yt4Yt4Yt4Yt', '_blank')}
-                        className="w-full py-4 bg-zinc-900 dark:bg-zinc-100 text-white dark:text-zinc-900 rounded-2xl text-xs font-bold transition-all hover:brightness-110 active:scale-[0.98] shadow-lg flex items-center justify-center gap-2"
+                        className="w-full py-5 bg-zinc-900 dark:bg-zinc-100 text-white dark:text-zinc-900 rounded-2xl text-xs font-black uppercase tracking-widest transition-all hover:scale-[1.01] active:scale-[0.98] shadow-xl flex items-center justify-center gap-2"
                       >
                         <ExternalLink className="w-4 h-4" />
-                        Customer Portal
+                        Manage on Customer Portal
                       </button>
                     </div>
                   )}
