@@ -35,6 +35,7 @@ app.get("/api/health", (req, res) => {
   res.json({ 
     status: "ok", 
     hasOpenAIApiKey: !!process.env.OPENAI_API_KEY,
+    hasTavilyApiKey: !!process.env.TAVILY_API_KEY,
     environment: process.env.VERCEL ? 'vercel' : 'local'
   });
 });
@@ -224,6 +225,11 @@ async function handleGenerate(req: express.Request, res: express.Response) {
       const tavilyKey = process.env.TAVILY_API_KEY;
       
       console.log(`[Search] Initiating Global Search for: ${query}`);
+      if (tavilyKey) {
+        console.log(`[Search] Using Tavily Key: ${tavilyKey.substring(0, 4)}...`);
+      } else {
+        console.error(`[Search] ERROR: No TAVILY_API_KEY found in process.env`);
+      }
       
       try {
         // 1. Primary engine: Tavily (if key available)
@@ -400,15 +406,24 @@ async function handleGenerate(req: express.Request, res: express.Response) {
 
     // --- GPT-5.4 Ultra Pre-flight Search Logic ---
     if (needsWebSearch(lastMessageContent) && !isImageIntent) {
-      console.log(`[Generate] Web search required. Executing pre-flight...`);
+      console.log(`[Generate] Model: GPT-5.4 Ultra | Task: Real-time Web Search`);
+      console.log(`[Generate] Web search required for: "${lastMessageContent.substring(0, 50)}..."`);
       const searchData = await searchWeb(lastMessageContent);
+      
+      const isFallback = searchData.includes("Search fallback");
+      if (isFallback) {
+        console.warn(`[Generate] Search WARNING: Using fallback mode (check TAVILY_API_KEY)`);
+      } else {
+        console.log(`[Generate] Search SUCCESS: Grounding data retrieved successfully`);
+      }
+
       openAiMessages.push({
         role: "system",
-        content: `REAL_TIME_GROUNDING_DATA:\n${searchData}\n\nStrictly use the data above to answer the user's query with citations. If the search failed, mention that your live browsing is currently limited but give the best answer possible.`
+        content: `REAL_TIME_GROUNDING_DATA:\n${searchData}\n\nStrictly use the data above to answer the user's query with citations. If the search failed (indicated by a fallback message in the grounding data), mention that your live browsing is currently limited but give the best answer possible using your internal knowledge.`
       });
     }
 
-    console.log(`[Generate] Final Grounded Stream starting...`);
+    console.log(`[Generate] Final Grounded Stream starting... Model: GPT-5.4 Ultra (gpt-4o)`);
     const stream = await openai.chat.completions.create({
       model: "gpt-4o", // Representing GPT-5.4 Ultra for maximum intelligence
       messages: openAiMessages,
