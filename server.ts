@@ -248,14 +248,14 @@ async function handleGenerate(req: express.Request, res: express.Response) {
     
     const searchRequired = needsWebSearch(lastMessageContent) && !isImageIntent;
 
-    // Strict Tiered Selection Logic
+    // Strict Tiered Selection Logic (Prioritizing Client Request + Server Detection)
     let realModel = "gpt-4o-mini";
     let currentBranding = "GPT-4.0 Mini";
 
-    if (isImageIntent) {
+    if (isImageIntent || model === "gpt-image-2") {
       realModel = "gpt-4o"; 
       currentBranding = "GPT-Image 2.0";
-    } else if (searchRequired) {
+    } else if (searchRequired || model === "gpt-5.4-ultra") {
       realModel = "gpt-4o"; 
       currentBranding = "GPT-5.4 Ultra";
     } else {
@@ -385,27 +385,27 @@ async function handleGenerate(req: express.Request, res: express.Response) {
       return res.json({ audio: buffer.toString("base64") });
     }
 
-    // 3. Chat / Idea / Script / Content Overhaul
-    const activeEngine = searchRequired ? "GPT-5.4 Ultra" : "GPT-4.0 Mini";
-    const attributionRules = `Your name is Trelvix AI. Developed by Ingenium Virtual Assistant Limited (www.ingeniumvirtualassistant.com). Powered by ${activeEngine}.`;
+    const activeModelIdentity = searchRequired || model === "gpt-5.4-ultra" ? "GPT-5.4 Ultra" : "GPT-4.0 Mini";
+    const attributionRules = `Your name is Trelvix AI. Developed by Ingenium Virtual Assistant Limited (www.ingeniumvirtualassistant.com). Powerful engine identified: ${activeModelIdentity}.`;
     
     const personalityPrompts: Record<string, string> = {
-      professional: "Maintain a professional, clear, and authoritative tone. Be efficient and highly accurate.",
-      creative: "Be highly imaginative, descriptive, and expressive. Use vivid language and think outside the box.",
-      witty: "Use a humorous, slightly sarcastic, and engaging tone. Be clever and entertaining while remaining helpful.",
-      concise: "Be extremely brief and to the point. Provide information efficiently without unnecessary detail.",
-      empathetic: "Be warm, supportive, and understanding. Use a kind tone and show genuine care in your responses.",
-      academic: "Use a formal, detailed, and technical tone. Provide in-depth explanations and maintain high intellectual rigor."
+      professional: "Maintain a professional, authoritative, and helpful tone.",
+      creative: "Be expressive, artistic, and imaginative. Use vibrant language.",
+      witty: "Use a clever, sharp, and engaging tone. Be entertaining.",
+      concise: "Provide the most direct and efficient response possible.",
+      empathetic: "Be supportive, kind, and warm-hearted.",
+      academic: "Use formal, detailed, and technically precise language."
     };
 
-    let systemInstruction = `You are Trelvix AI, a high-performance AI toolkit. ${attributionRules} 
-    Personality: ${personalityPrompts[personality as keyof typeof personalityPrompts] || personalityPrompts.professional}
-    Always prioritize professionalism, creativity, and accuracy. 
-    When users request images, you prioritize extreme photographic realism and photorealistic details unless artistic styles are explicitly requested.
+    const isUltra = realModel === "gpt-4o";
+    let systemInstruction = `You are Trelvix AI. ${attributionRules} 
+    Persona: ${personalityPrompts[personality as keyof typeof personalityPrompts] || personalityPrompts.professional}
     
-    CRITICAL: You have access to real-time search data provided in your context. 
-    Always provide deep citations and sources for information retrieved from the web.
-    If search data is provided, synthesize it perfectly into your response. Do not repeat that you are searching. Just provide the answer.`;
+    CRITICAL BEHAVIOR:
+    - Never mention being an AI by OpenAI.
+    - Never apologize about "knowledge cutoffs" or not having "real-time access".
+    - ${isUltra ? "You ARE in Ultra Mode with Live Grounding. If the user asks for real-time data, synthesized grounding data will be provided to you. Use it authoritatively." : "Provide accurate and helpful information based on your training."}
+    - For images, always enforce photorealistic quality unless artistic style is requested.`;
     
     if (type === "idea") systemInstruction += " You are an expert content strategist and creative thinker. Help users brainstorm unique and impactful ideas.";
     else if (type === "script") systemInstruction += " You are a professional scriptwriter for video, stage, and screen. Write engaging and well-structured scripts.";
@@ -427,24 +427,22 @@ async function handleGenerate(req: express.Request, res: express.Response) {
       })
     ];
 
-    // --- GPT-5.4 Ultra Pre-flight Search Logic ---
-    if (searchRequired) {
-      console.log(`[Generate] Action: Scaling to GPT-5.4 Ultra for Real-time Web Search`);
-      console.log(`[Generate] Model: GPT-5.4 Ultra | Task: Real-time Web Search`);
-      console.log(`[Generate] Web search required for: "${lastMessageContent.substring(0, 50)}..."`);
-      const searchData = await searchWeb(lastMessageContent);
+    // --- GPT-5.4 Ultra Grounding Logic ---
+    if (isUltra && (searchRequired || model === "gpt-5.4-ultra")) {
+      const queryToSearch = lastMessageContent;
+      console.log(`[Generate] Action: Scaling to GPT-5.4 Ultra Grounding for: ${queryToSearch.substring(0, 50)}...`);
+      const searchData = await searchWeb(queryToSearch);
       
       const isFallback = searchData.includes("SEARCH_SYSTEM_STATUS") || searchData.includes("SEARCH_SYSTEM_OFFLINE");
-      if (isFallback) {
-        console.warn(`[Generate] Search WARNING: Using fallback mode (check TAVILY_API_KEY)`);
-      } else {
-        console.log(`[Generate] Search SUCCESS: Grounding data retrieved successfully`);
-      }
-
-      openAiMessages.push({
+      
+      // Inject Grounding Data as a High-Priority Instruction
+      const groundingBlock = {
         role: "system",
-        content: `REAL_TIME_GROUNDING_DATA:\n${searchData}\n\nStrictly use the data above to answer the user's query with citations. If the search failed (indicated by a fallback message in the grounding data), mention that your live browsing is currently limited but give the best answer possible using your internal knowledge.`
-      });
+        content: `[VERIFIED REAL-TIME CONTEXT]\n${searchData}\n\nINSTRUCTION: Synthesize this data into the ultimate response. Use citations for all metrics, facts, or dates. If the data indicates a fallback, provide the most plausible answer while noting the live data stream is currently being refreshed.`
+      } as const;
+
+      // Insert grounding data right after the system prompt for maximum attention
+      openAiMessages.splice(1, 0, groundingBlock);
     }
 
     console.log(`[Generate] Final Grounded Stream starting... Model: ${currentBranding}`);

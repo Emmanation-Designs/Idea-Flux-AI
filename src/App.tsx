@@ -971,8 +971,16 @@ export default function App() {
 
     try {
       const lowerInput = content.toLowerCase();
-      const searchKeywords = ["news", "weather", "price", "today", "latest", "current", "politics", "who is", "what happened", "stock", "dollar", "rate", "live", "crypto", "bitcoin", "forecast", "update on", "winner of"];
-      const isSearchIntent = searchKeywords.some(k => lowerInput.includes(k)) || (lowerInput.includes("?") && (lowerInput.includes("who") || lowerInput.includes("is there")));
+      const searchKeywords = [
+        "news", "weather", "price", "today", "latest", "current", 
+        "politics", "who is", "what happened", "stock", "dollar", "usd", "ngn", "naira",
+        "exchange rate", "score", "match", "result", "live", "now", "crypto",
+        "happening", "event", "bitcoin", "forecast", "market", "president", 
+        "how much is", "price of", "time in", "update on", "current time", "inflation",
+        "election", "winner of", "standings in", "scheduled for", "rate in", "worth in"
+      ];
+      const isSearchIntent = searchKeywords.some(k => lowerInput.includes(k)) || 
+                           (lowerInput.includes("?") && (lowerInput.includes("who") || lowerInput.includes("how much") || lowerInput.includes("is there") || lowerInput.includes("what happened")));
       
       let activeModel = 'gpt-4o-mini';
       if (isImageIntent) activeModel = 'gpt-image-2';
