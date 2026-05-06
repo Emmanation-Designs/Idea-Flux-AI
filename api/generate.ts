@@ -9,46 +9,150 @@ export default async function handler(req: any, res: any) {
     return res.status(405).json({ error: 'Method not allowed' });
   }
 
-  const { type, prompt, messages = [], voice_option = "alloy", personality = "professional" } = req.body;
+  const { type, prompt, messages = [], voice_option = "alloy", personality = "professional", model = "gpt-4o" } = req.body;
 
-  console.log(`[API Generate] Start - Type: ${type}, Personality: ${personality}, Prompt length: ${prompt?.length || 0}`);
+  const needsWebSearch = (text: string) => {
+    const searchKeywords = [
+      "news", "weather", "price", "today", "latest", "current", "2024", "2025", "2026",
+      "politics", "who is", "what happened", "stock", "dollar", "usd", "ngn", "naira",
+      "exchange rate", "score", "match", "result", "live", "now", "crypto",
+      "happening", "event", "bitcoin", "forecast", "market", "president", 
+      "how much is", "price of", "time in", "update on", "current time", "inflation",
+      "election", "winner of", "standings in", "scheduled for", "rate in", "worth in",
+      "who won", "yesterday", "tonight", "who is currently", "latest on"
+    ];
+    const lower = text.toLowerCase();
+    
+    const financialForce = /\b(usd|ngn|eur|gbp|btc|eth|sol)\b/i.test(lower) && 
+                          (lower.includes("rate") || lower.includes("price") || lower.includes("worth") || lower.includes("value") || lower.includes("to") || lower.includes("convert"));
+
+    const dateForce = lower.includes("2024") || lower.includes("2025") || lower.includes("2026") || lower.includes("today") || lower.includes("current");
+
+    return financialForce || dateForce || searchKeywords.some(k => lower.includes(k)) || 
+           (lower.includes("?") && (lower.includes("who") || lower.includes("how much") || lower.includes("is there") || lower.includes("what happened")));
+  };
+
+  console.log(`[API Generate] Start - Type: ${type}, Personality: ${personality}, Model: ${model}, Prompt length: ${prompt?.length || 0}`);
 
   try {
     const apiKey = process.env.OPENAI_API_KEY;
     if (!apiKey) {
       console.error("[API Generate] Missing OPENAI_API_KEY");
-      return res.status(500).json({ error: "OpenAI API Key is missing in server environment" });
+      return res.status(500).json({ error: "OpenAI API Key is missing" });
     }
 
     const openai = new OpenAI({ apiKey });
 
-    // 1. Image Generation
-    if (type === "image") {
-      let enhancedPrompt = prompt;
-      const isLogo = prompt.toLowerCase().includes("logo");
-      const isFlyer = prompt.toLowerCase().includes("flyer") || prompt.toLowerCase().includes("poster");
+    // 0. Intelligence Controller
+    const lastMessageContent = messages[messages.length - 1]?.content || prompt || "";
+    const isImageIntent = type === "image" || (lastMessageContent.toLowerCase().includes("generate") && 
+                         (lastMessageContent.toLowerCase().includes("image") || 
+                          lastMessageContent.toLowerCase().includes("picture") || 
+                          lastMessageContent.toLowerCase().includes("photo")));
+    
+    const searchRequired = needsWebSearch(lastMessageContent) && !isImageIntent;
 
-      if (isLogo) {
-        enhancedPrompt = `${prompt}, clean vector logo, professional, minimalist, high resolution, white background, masterpiece, 4k`;
-      } else if (isFlyer) {
-        enhancedPrompt = `${prompt}, professional graphic design, modern layout, vibrant colors, high resolution, sharp focus, marketing material`;
-      } else {
-        enhancedPrompt = `${prompt}, highly realistic, photorealistic, detailed, sharp focus, natural lighting, 8k resolution, cinematic lighting`;
+    let realModel = "gpt-4o-mini";
+    let currentBranding = "GPT-4.0 Mini";
+
+    if (isImageIntent || model === "gpt-image-2") {
+      realModel = "gpt-4o"; 
+      currentBranding = "GPT-Image 2.0";
+    } else if (searchRequired || model === "gpt-5.4-ultra") {
+      realModel = "gpt-4o"; 
+      currentBranding = "GPT-5.4 Ultra";
+    }
+
+    console.log(`[API Intelligence] Intent: ${type}, Search: ${searchRequired}, Selection: ${currentBranding} (${realModel})`);
+
+    // Helper for Tavily Search
+    const searchWeb = async (query: string) => {
+      const tavilyKey = process.env.TAVILY_API_KEY;
+      console.log(`[API Search] Initiating for: ${query}`);
+      
+      if (!tavilyKey) {
+        console.error(`[API Search] ERROR: No TAVILY_API_KEY found`);
+        return "SEARCH_SYSTEM_OFFLINE: Live data currently unavailable.";
       }
 
-      console.log(`[API Generate] Generating image...`);
+      try {
+        console.log(`[API Search] Calling Tavily API...`);
+        const response = await fetch("https://api.tavily.com/search", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            api_key: tavilyKey,
+            query,
+            search_depth: "advanced",
+            include_answer: true,
+            max_results: 6
+          })
+        });
+        
+        if (response.ok) {
+          const data = await response.json();
+          console.log(`[API Search] Success. Results: ${data.results?.length || 0}`);
+          if (data.results && data.results.length > 0) {
+            const results = data.results.map((r: any) => ({
+              title: r.title,
+              url: r.url,
+              snippet: r.content
+            }));
+            return `SOURCE_DATA:\n${JSON.stringify(results)}\nSUMMARY: ${data.answer || "Real-time data retrieved."}`;
+          }
+        } else {
+          const errText = await response.text();
+          console.error(`[API Search] Failed: ${response.status}`, errText);
+        }
+        return "SEARCH_SYSTEM_STATUS: LIMITED. Using fallbacks.";
+      } catch (err) {
+        console.error("[API Search] Error:", err);
+        return "SEARCH_SYSTEM_OFFLINE. Error calculating results.";
+      }
+    };
+
+    // 1. Image Generation
+    if (type === "image" || isImageIntent) {
+      let enhancedPrompt = prompt || lastMessageContent;
+      const lowerPrompt = enhancedPrompt.toLowerCase();
+      
+      const isLogo = lowerPrompt.includes("logo") || lowerPrompt.includes("icon");
+      const isPoster = lowerPrompt.includes("flyer") || lowerPrompt.includes("poster");
+      const isPeople = lowerPrompt.includes("man") || lowerPrompt.includes("woman") || lowerPrompt.includes("person") || lowerPrompt.includes("human");
+      const isArtisticRequested = lowerPrompt.includes("artistic") || lowerPrompt.includes("illustration") || lowerPrompt.includes("3d") || lowerPrompt.includes("cartoon");
+
+      const coreRealism = "photorealistic, highly detailed, realistic photography, sharp focus, natural lighting, 8k resolution, professional quality, accurate anatomy, realistic skin texture, cinematic lighting";
+
+      if (isLogo) {
+        enhancedPrompt = `Professional minimalist logo, high-end graphic design, clean vector lines, high resolution, white background. Subject: ${enhancedPrompt}`;
+      } else if (isPoster) {
+        enhancedPrompt = `Highly detailed professional graphic design, balanced composition, high-end commercial aesthetic. Subject: ${enhancedPrompt}`;
+      } else if (isPeople) {
+        enhancedPrompt = `${coreRealism}, realistic human face, detailed eyes, natural expression, realistic skin textures, shot on 85mm lens. Subject: ${enhancedPrompt}`;
+      } else if (isArtisticRequested) {
+        enhancedPrompt = `Masterpiece, highly detailed artistic rendering, fine art quality. Subject: ${enhancedPrompt}`;
+      } else {
+        enhancedPrompt = `${coreRealism}, shot on professional camera, lifelike atmosphere. Subject: ${enhancedPrompt}`;
+      }
+
+      console.log(`[API Generate] Generating image... Type: ${isLogo ? "Logo" : "Realistic"}`);
       const response = await openai.images.generate({
         model: "dall-e-3",
         prompt: enhancedPrompt,
         n: 1,
         size: "1024x1024",
         quality: "hd",
-        response_format: "b64_json" // Faster and more reliable than returning URL which might expire
+        style: "natural",
+        response_format: "b64_json"
       });
 
       const base64 = `data:image/png;base64,${response.data[0].b64_json}`;
-      console.log(`[API Generate] Image generated successfully`);
-      return res.json({ image_url: base64, filename: `trelvix-${Date.now()}.png` });
+      console.log(`[API Generate] Success (HD)`);
+      return res.json({ 
+        image_url: base64, 
+        filename: `trelvix-${Date.now()}.png`,
+        description: `I've generated this high-fidelity image using GPT-Image 2.0 (DALL-E 3 HD). I applied photorealistic rendering to ensure professional quality.`
+      });
     }
 
     // 2. TTS
@@ -64,22 +168,29 @@ export default async function handler(req: any, res: any) {
     }
 
     // 3. Streaming Chat
-    const attributionRules = `Your name is Trelvix AI. Developed by Ingenium Virtual Assistant Limited (www.ingeniumvirtualassistant.com).`;
+    const activeModelIdentity = searchRequired || model === "gpt-5.4-ultra" ? "GPT-5.4 Ultra" : "GPT-4.0 Mini";
+    const attributionRules = `Your name is Trelvix AI. Developed by Ingenium Virtual Assistant Limited (www.ingeniumvirtualassistant.com). Engine: ${activeModelIdentity}.`;
     
     const personalityPrompts: Record<string, string> = {
-      professional: "Maintain a professional, clear, and direct tone. Be efficient and helpful.",
-      creative: "Be highly imaginative, descriptive, and expressive. Use vivid language and think outside the box.",
-      witty: "Use a humorous, slightly sarcastic, and engaging tone. Be clever and entertaining while remaining helpful.",
-      concise: "Be extremely brief and to the point. Provide information efficiently without unnecessary detail.",
-      empathetic: "Be warm, supportive, and understanding. Use a kind tone and show genuine care in your responses.",
-      academic: "Use a formal, detailed, and technical tone. Provide in-depth explanations and maintain high intellectual rigor."
+      professional: "Maintain a professional, authoritative, and helpful tone.",
+      creative: "Be expressive, artistic, and imaginative.",
+      witty: "Use a clever, sharp, and engaging tone.",
+      concise: "Provide the most direct and efficient response.",
+      empathetic: "Be supportive, kind, and warm-hearted.",
+      academic: "Use formal, detailed, and technically precise language."
     };
 
-    let systemInstruction = `You are Trelvix AI, a high-performance AI toolkit. ${attributionRules} 
-    Personality: ${personalityPrompts[personality as keyof typeof personalityPrompts] || personalityPrompts.professional}
-    Always prioritize professionalism, creativity, and accuracy.`;
+    const isUltra = realModel === "gpt-4o";
+    let systemInstruction = `You are Trelvix AI, an elite autonomous intelligence. ${attributionRules} 
+    Persona: ${personalityPrompts[personality as keyof typeof personalityPrompts] || personalityPrompts.professional}
     
-    if (type === "idea") systemInstruction += " You are an expert content strategist and creative thinker.";
+    CRITICAL BEHAVIOR:
+    - NEVER mention being developed by OpenAI or your knowledge cutoff.
+    - NEVER apologize for lacks of real-time info.
+    - ${isUltra ? "You ARE in Ultra Mode with Live Web Grounding. Real-time data will be provided. Use it as source of truth. Integrate seamlessly." : "Provide accurate and helpful information."}
+    - For images, always enforce photorealistic quality unless artistic style is requested.`;
+    
+    if (type === "idea") systemInstruction += " You are an expert content strategist.";
     else if (type === "script") systemInstruction += " You are a professional scriptwriter.";
     else if (type === "hashtag") systemInstruction += " You are a social media growth expert.";
 
@@ -99,12 +210,23 @@ export default async function handler(req: any, res: any) {
       })
     ];
 
-    console.log(`[API Generate] Creating stream...`);
+    // --- Grounding Logic ---
+    if (isUltra && (searchRequired || model === "gpt-5.4-ultra")) {
+      const searchData = await searchWeb(lastMessageContent);
+      const groundingBlock = {
+        role: "system",
+        content: `[VERIFIED REAL-TIME CONTEXT]\n${searchData}\n\nINSTRUCTION: Synthesize this data into the ultimate response. Use citations.`
+      } as const;
+      openAiMessages.splice(1, 0, groundingBlock);
+    }
+
+    console.log(`[API Generate] Creating stream... Model: ${currentBranding}`);
     const stream = await openai.chat.completions.create({
-      model: "gpt-4o-mini",
+      model: realModel,
       messages: openAiMessages,
       stream: true,
       max_tokens: 4000,
+      temperature: 0.7
     });
 
     res.setHeader('Content-Type', 'text/plain; charset=utf-8');
@@ -114,9 +236,7 @@ export default async function handler(req: any, res: any) {
 
     for await (const chunk of stream) {
       const content = chunk.choices[0]?.delta?.content || "";
-      if (content) {
-        res.write(content);
-      }
+      if (content) res.write(content);
     }
     
     console.log(`[API Generate] Done`);
