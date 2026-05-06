@@ -211,20 +211,23 @@ async function handleGenerate(req: express.Request, res: express.Response) {
 
   const needsWebSearch = (text: string) => {
     const searchKeywords = [
-      "news", "weather", "price", "today", "latest", "current", 
+      "news", "weather", "price", "today", "latest", "current", "2024", "2025", "2026",
       "politics", "who is", "what happened", "stock", "dollar", "usd", "ngn", "naira",
       "exchange rate", "score", "match", "result", "live", "now", "crypto",
       "happening", "event", "bitcoin", "forecast", "market", "president", 
       "how much is", "price of", "time in", "update on", "current time", "inflation",
-      "election", "winner of", "standings in", "scheduled for", "rate in", "worth in"
+      "election", "winner of", "standings in", "scheduled for", "rate in", "worth in",
+      "who won", "yesterday", "tonight", "who is currently", "latest on"
     ];
     const lower = text.toLowerCase();
     
     // Force search for financial symbols or currency pairs
     const financialForce = /\b(usd|ngn|eur|gbp|btc|eth|sol)\b/i.test(lower) && 
-                          (lower.includes("rate") || lower.includes("price") || lower.includes("worth") || lower.includes("value") || lower.includes("to"));
+                          (lower.includes("rate") || lower.includes("price") || lower.includes("worth") || lower.includes("value") || lower.includes("to") || lower.includes("convert"));
 
-    return financialForce || searchKeywords.some(k => lower.includes(k)) || 
+    const dateForce = lower.includes("2024") || lower.includes("2025") || lower.includes("2026") || lower.includes("today") || lower.includes("current");
+
+    return financialForce || dateForce || searchKeywords.some(k => lower.includes(k)) || 
            (lower.includes("?") && (lower.includes("who") || lower.includes("how much") || lower.includes("is there") || lower.includes("what happened")));
   };
 
@@ -279,6 +282,7 @@ async function handleGenerate(req: express.Request, res: express.Response) {
       try {
         // 1. Primary engine: Tavily (if key available)
         if (tavilyKey) {
+          console.log(`[Search] Calling Tavily API for query: "${query}"`);
           const response = await fetch("https://api.tavily.com/search", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
@@ -293,6 +297,7 @@ async function handleGenerate(req: express.Request, res: express.Response) {
           
           if (response.ok) {
             const data = await response.json();
+            console.log(`[Search] Tavily response received. Results count: ${data.results?.length || 0}`);
             if (data.results && data.results.length > 0) {
               const results = data.results.map((r: any) => ({
                 title: r.title,
@@ -300,9 +305,12 @@ async function handleGenerate(req: express.Request, res: express.Response) {
                 snippet: r.content
               }));
               return `SOURCE_DATA:\n${JSON.stringify(results)}\nSUMMARY: ${data.answer || "Real-time data retrieved."}`;
+            } else {
+              console.warn(`[Search] Tavily returned no results for query: "${query}"`);
             }
           } else {
-            console.error(`[Search] Primary search failed with status: ${response.status}`);
+            const errorText = await response.text();
+            console.error(`[Search] Tavily API failed: ${response.status} ${response.statusText}`, errorText);
           }
         }
 
@@ -398,13 +406,14 @@ async function handleGenerate(req: express.Request, res: express.Response) {
     };
 
     const isUltra = realModel === "gpt-4o";
-    let systemInstruction = `You are Trelvix AI. ${attributionRules} 
+    let systemInstruction = `You are Trelvix AI, an elite autonomous intelligence. ${attributionRules} 
     Persona: ${personalityPrompts[personality as keyof typeof personalityPrompts] || personalityPrompts.professional}
     
     CRITICAL BEHAVIOR:
-    - Never mention being an AI by OpenAI.
-    - Never apologize about "knowledge cutoffs" or not having "real-time access".
-    - ${isUltra ? "You ARE in Ultra Mode with Live Grounding. If the user asks for real-time data, synthesized grounding data will be provided to you. Use it authoritatively." : "Provide accurate and helpful information based on your training."}
+    - NEVER mention being an AI developed by OpenAI or your knowledge cutoff (e.g., "October 2023").
+    - NEVER apologize for not having real-time access.
+    - ${isUltra ? "You ARE in Ultra Mode with Live Web Grounding. Real-time data and verified context from the web will be provided to you. Use this data as your absolute primary source of truth. Integrate it seamlessly without saying 'Based on the search results'." : "Provide accurate and helpful information based on your training."}
+    - If the user asks for current dates, prices, or events, use the [VERIFIED REAL-TIME CONTEXT] provided.
     - For images, always enforce photorealistic quality unless artistic style is requested.`;
     
     if (type === "idea") systemInstruction += " You are an expert content strategist and creative thinker. Help users brainstorm unique and impactful ideas.";
