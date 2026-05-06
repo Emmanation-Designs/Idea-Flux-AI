@@ -212,15 +212,19 @@ async function handleGenerate(req: express.Request, res: express.Response) {
   const needsWebSearch = (text: string) => {
     const searchKeywords = [
       "news", "weather", "price", "today", "latest", "current", 
-      "politics", "who is", "what happened", "stock", "dollar", 
-      "exchange rate", "score", "match", "result", "live", "now",
-      "happening", "event", "crypto", "bitcoin", "forecast", "naira",
-      "rate", "market", "president", "minister", "ceo", "launch", "release date",
+      "politics", "who is", "what happened", "stock", "dollar", "usd", "ngn", "naira",
+      "exchange rate", "score", "match", "result", "live", "now", "crypto",
+      "happening", "event", "bitcoin", "forecast", "market", "president", 
       "how much is", "price of", "time in", "update on", "current time", "inflation",
-      "election", "winner of", "standings in", "scheduled for"
+      "election", "winner of", "standings in", "scheduled for", "rate in", "worth in"
     ];
     const lower = text.toLowerCase();
-    return searchKeywords.some(k => lower.includes(k)) || 
+    
+    // Force search for financial symbols or currency pairs
+    const financialForce = /\b(usd|ngn|eur|gbp|btc|eth|sol)\b/i.test(lower) && 
+                          (lower.includes("rate") || lower.includes("price") || lower.includes("worth") || lower.includes("value") || lower.includes("to"));
+
+    return financialForce || searchKeywords.some(k => lower.includes(k)) || 
            (lower.includes("?") && (lower.includes("who") || lower.includes("how much") || lower.includes("is there") || lower.includes("what happened")));
   };
 
@@ -297,6 +301,8 @@ async function handleGenerate(req: express.Request, res: express.Response) {
               }));
               return `SOURCE_DATA:\n${JSON.stringify(results)}\nSUMMARY: ${data.answer || "Real-time data retrieved."}`;
             }
+          } else {
+            console.error(`[Search] Primary search failed with status: ${response.status}`);
           }
         }
 
@@ -428,7 +434,7 @@ async function handleGenerate(req: express.Request, res: express.Response) {
       console.log(`[Generate] Web search required for: "${lastMessageContent.substring(0, 50)}..."`);
       const searchData = await searchWeb(lastMessageContent);
       
-      const isFallback = searchData.includes("Search fallback");
+      const isFallback = searchData.includes("SEARCH_SYSTEM_STATUS") || searchData.includes("SEARCH_SYSTEM_OFFLINE");
       if (isFallback) {
         console.warn(`[Generate] Search WARNING: Using fallback mode (check TAVILY_API_KEY)`);
       } else {
