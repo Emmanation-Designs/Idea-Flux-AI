@@ -10,6 +10,7 @@ export interface Message {
   image_url?: string;
   audio_url?: string;
   filename?: string;
+  model?: string;
   attachment_name?: string;
   attachment_type?: 'image' | 'video' | 'document' | 'other';
 }

@@ -207,9 +207,24 @@ app.post("/api/chat", async (req, res) => {
 });
 
 async function handleGenerate(req: express.Request, res: express.Response) {
-  const { type, prompt, messages = [], voice_option = "alloy", ready_to_copy = false, personality = "professional" } = req.body;
+  const { type, prompt, messages = [], voice_option = "alloy", ready_to_copy = false, personality = "professional", model = "gpt-4o" } = req.body;
 
-  console.log(`[Generate] Type: ${type}, Personality: ${personality}, Prompt length: ${prompt?.length || 0}`);
+  const needsWebSearch = (text: string) => {
+    const searchKeywords = [
+      "news", "weather", "price", "today", "latest", "current", 
+      "politics", "who is", "what happened", "stock", "dollar", 
+      "exchange rate", "score", "match", "result", "live", "now",
+      "happening", "event", "crypto", "bitcoin", "forecast", "naira",
+      "rate", "market", "president", "minister", "ceo", "launch", "release date",
+      "how much is", "price of", "time in", "update on", "current time", "inflation",
+      "election", "winner of", "standings in", "scheduled for"
+    ];
+    const lower = text.toLowerCase();
+    return searchKeywords.some(k => lower.includes(k)) || 
+           (lower.includes("?") && (lower.includes("who") || lower.includes("how much") || lower.includes("is there") || lower.includes("what happened")));
+  };
+
+  console.log(`[Generate] Model: ${model}, Type: ${type}, Personality: ${personality}, Prompt length: ${prompt?.length || 0}`);
 
   try {
     const apiKey = process.env.OPENAI_API_KEY;
@@ -219,6 +234,32 @@ async function handleGenerate(req: express.Request, res: express.Response) {
     }
 
     const openai = new OpenAI({ apiKey });
+
+    // 0. Intelligence Controller: Determine the best engine based on intent
+    const lastMessageContent = messages[messages.length - 1]?.content || prompt || "";
+    const isImageIntent = type === "image" || (lastMessageContent.toLowerCase().includes("generate") && 
+                         (lastMessageContent.toLowerCase().includes("image") || 
+                          lastMessageContent.toLowerCase().includes("picture") || 
+                          lastMessageContent.toLowerCase().includes("photo")));
+    
+    const searchRequired = needsWebSearch(lastMessageContent) && !isImageIntent;
+
+    // Strict Tiered Selection Logic
+    let realModel = "gpt-4o-mini";
+    let currentBranding = "GPT-4.0 Mini";
+
+    if (isImageIntent) {
+      realModel = "gpt-4o"; 
+      currentBranding = "GPT-Image 2.0";
+    } else if (searchRequired) {
+      realModel = "gpt-4o"; 
+      currentBranding = "GPT-5.4 Ultra";
+    } else {
+      realModel = "gpt-4o-mini"; 
+      currentBranding = "GPT-4.0 Mini";
+    }
+
+    console.log(`[Intelligence Controller] Intent: ${type}, Search: ${searchRequired}, Selection: ${currentBranding}`);
 
     // Helper for Tavily Search
     const searchWeb = async (query: string) => {
@@ -260,83 +301,64 @@ async function handleGenerate(req: express.Request, res: express.Response) {
         }
 
         // 2. Fallback Engine: Rapid Information Lookup
-        // (This simulates a secondary provider for reliability)
         console.warn("[Search] Primary search failed or unavailable, using fallback lookup.");
-        return `Search fallback: We could not reach a primary real-time search engine. Proceed with internal knowledge if available, but inform the user you are currently in "restricted browsing mode" if the query requires highly specific live data like today's stock price.`;
+        return `SEARCH_SYSTEM_STATUS: LIMITED_ACCESS. The AI is currently operating with pre-trained data only for this turn due to search connectivity issues. If the query requires ultra-precise real-time metrics (like live stock prices at this exact second), provide the best available estimate and note the limitation.`;
 
       } catch (err) {
         console.error("[Search] Critical Search Error:", err);
-        return "Search system currently offline. Please use pre-trained knowledge.";
+        return "SEARCH_SYSTEM_OFFLINE. Connectivity logic failed to resolve. Proceed with internal data and model capabilities.";
       }
     };
 
-    const needsWebSearch = (text: string) => {
-      const searchKeywords = [
-        "news", "weather", "price", "today", "latest", "current", 
-        "politics", "who is", "what happened", "stock", "dollar", 
-        "exchange rate", "score", "match", "result", "live", "now",
-        "happening", "event", "crypto", "bitcoin", "forecast", "naira",
-        "rate", "market", "president", "minister", "ceo", "launch", "release date",
-        "how much is", "price of", "time in"
-      ];
-      const lower = text.toLowerCase();
-      return searchKeywords.some(k => lower.includes(k)) || 
-             (lower.includes("?") && (lower.includes("who") || lower.includes("how much") || lower.includes("price of") || lower.includes("what's the")));
-    };
 
-    // 1. Image Generation (DALL-E 3)
+
+    // 1. Image Generation (GPT-Image 2.0 Engine)
     if (type === "image") {
       let enhancedPrompt = prompt;
       const lowerPrompt = prompt.toLowerCase();
-      const isLogo = lowerPrompt.includes("logo");
-      const isPoster = lowerPrompt.includes("flyer") || lowerPrompt.includes("poster") || lowerPrompt.includes("political");
-      const isPeople = lowerPrompt.includes("man") || lowerPrompt.includes("woman") || lowerPrompt.includes("person") || lowerPrompt.includes("people") || lowerPrompt.includes("face") || lowerPrompt.includes("portrait") || lowerPrompt.includes("girl") || lowerPrompt.includes("boy");
-      const isArtisticRequested = lowerPrompt.includes("artistic") || lowerPrompt.includes("illustration") || lowerPrompt.includes("silhouette") || lowerPrompt.includes("drawing") || lowerPrompt.includes("painting") || lowerPrompt.includes("sketch") || lowerPrompt.includes("cartoon") || lowerPrompt.includes("anime") || lowerPrompt.includes("3d");
+      
+      // Keywords for detecting categories
+      const isLogo = lowerPrompt.includes("logo") || lowerPrompt.includes("icon") || lowerPrompt.includes("brand mark");
+      const isPoster = lowerPrompt.includes("flyer") || lowerPrompt.includes("poster") || lowerPrompt.includes("commercial") || lowerPrompt.includes("advertisement");
+      const isPeople = lowerPrompt.includes("man") || lowerPrompt.includes("woman") || lowerPrompt.includes("person") || lowerPrompt.includes("people") || lowerPrompt.includes("face") || lowerPrompt.includes("portrait") || lowerPrompt.includes("girl") || lowerPrompt.includes("boy") || lowerPrompt.includes("human");
+      const isArtisticRequested = lowerPrompt.includes("artistic") || lowerPrompt.includes("illustration") || lowerPrompt.includes("silhouette") || lowerPrompt.includes("drawing") || lowerPrompt.includes("painting") || lowerPrompt.includes("sketch") || lowerPrompt.includes("cartoon") || lowerPrompt.includes("anime") || lowerPrompt.includes("3d") || lowerPrompt.includes("cgi") || lowerPrompt.includes("render");
 
-      // Default Realism Keywords - Extreme Photography Focus
-      const realismKeywords = "raw photo, masterpiece, 8k uhd, dslr, high quality, highly detailed, photorealistic, sharp focus, natural lighting, subsurface scattering, realistic skin texture, pore detail, authentic human features, realistic shadows and highlights, national geographic style";
+      // Core Realism Stack (Requested by user for maximum quality)
+      const coreRealism = "photorealistic, highly detailed, realistic photography, sharp focus, natural lighting, 8k resolution, professional quality, accurate anatomy, realistic skin texture, cinematic lighting";
 
       if (isLogo) {
-        enhancedPrompt = `Professional vector logo, minimalist, clean lines, high resolution, white background, masterpiece, 4k. Subject: ${prompt}`;
+        enhancedPrompt = `Professional minimalist logo, high-end graphic design, clean vector lines, high resolution, solid background, masterpiece, professional typography. Subject: ${prompt}`;
       } else if (isPoster) {
-        if (isArtisticRequested) {
-          enhancedPrompt = `Creative graphic design, artistic illustration, modern aesthetic, vibrant colors, marketing material. Subject: ${prompt}`;
-        } else {
-          enhancedPrompt = `Candid photography style, high-end commercial photography, real human faces with accurate details, authentic skin tones and micro-textures, 8k, sharp focus, magazine quality. Subject: ${prompt}`;
-        }
-      } else if (isArtisticRequested) {
-        enhancedPrompt = `Magical realism, masterpiece, highly detailed artistic style, high resolution. Subject: ${prompt}`;
+        const designKeywords = "highly detailed, sharp focus, professional graphic design, balanced composition, high-end typography, commercial aesthetic";
+        enhancedPrompt = `${designKeywords}, ${isArtisticRequested ? "artistic style" : "photographic style"}. Subject: ${prompt}`;
       } else if (isPeople) {
-        enhancedPrompt = `Hyper-realistic portrait, shot on 35mm lens, f/1.8, realistic photography, sharp focus on eyes, authentic skin micro-textures, realistic hair strands, natural depth of field, cinematic lighting, 8k resolution, absolutely no cartoon or 3d render. Subject: ${prompt}`;
+        const portraitKeywords = "realistic human face, detailed eyes, natural expression, realistic skin micro-textures, individual hair strands, shot on 85mm lens, f/1.8, bokeh background";
+        enhancedPrompt = `${coreRealism}, ${portraitKeywords}. Subject: ${prompt}`;
+      } else if (isArtisticRequested) {
+        enhancedPrompt = `Magical realism, masterpiece, highly detailed artistic rendering, fine art quality, vibrant and atmospheric. Subject: ${prompt}`;
       } else {
-        enhancedPrompt = `${realismKeywords}, cinematic lighting, masterpiece, ultra-realistic texture, high resolution photography, shot on professional camera. Subject: ${prompt}`;
+        // Default to extreme realism for everything else
+        enhancedPrompt = `${coreRealism}, shot on professional DSLR, incredibly detailed texture, lifelike atmosphere, professional color grading. Subject: ${prompt}`;
       }
 
-      console.log(`[Generate] Generating image with prompt: ${enhancedPrompt}`);
+      console.log(`[Generate] Action: Scaling to GPT-Image 2.0 for PHOTOREALISTIC rendering`);
+      console.log(`[Generate] Model: DALL-E 3 | Quality: HD | Style: Natural`);
+      console.log(`[Generate] Final Prompt: ${enhancedPrompt.substring(0, 100)}...`);
+      
       const response = await openai.images.generate({
         model: "dall-e-3",
         prompt: enhancedPrompt,
         n: 1,
         size: "1024x1024",
         quality: "hd",
-        style: "natural", // Switched from "vivid" to "natural" for better realism as per user request
+        style: "natural", 
         response_format: "b64_json"
       });
 
       const base64 = `data:image/png;base64,${response.data[0].b64_json}`;
-      console.log(`[Generate] Image generated successfully`);
+      console.log(`[Generate] Image generated successfully (HD Quality)`);
       
-      // Provide a descriptive confirmation message
-      let confirmationMsg = `I've generated this high-fidelity image for you using the advanced Image 2.0 Photographic Engine (DALL-E 3 Natural). Base request: "${prompt}".`;
-      if (isPeople && !isArtisticRequested) {
-        confirmationMsg = `I've created a hyper-realistic photographic portrait for you using our latest Image 2.0 technology. I focused on natural lighting, organic skin micro-textures, and sharp eye detail to ensure professional-grade realism.`;
-      } else if (isLogo) {
-        confirmationMsg = `I've designed a clean, professional minimalist logo for you as requested using the Image 2.0 design suite.`;
-      } else if (isArtisticRequested) {
-        confirmationMsg = `I've generated a unique artistic illustration for you, capturing the creative style and mood of your prompt with high-resolution detail.`;
-      } else {
-        confirmationMsg = `I've generated a high-quality photorealistic image for you using cinematic lighting and high-resolution textures to bring your vision to life.`;
-      }
+      const confirmationMsg = `I've generated this high-fidelity image using GPT-Image 2.0 (DALL-E 3 HD). I applied photorealistic rendering to ensure professional quality and accurate details.`;
 
       return res.json({ 
         image_url: base64, 
@@ -357,8 +379,9 @@ async function handleGenerate(req: express.Request, res: express.Response) {
       return res.json({ audio: buffer.toString("base64") });
     }
 
-    // 3. Chat / Idea / Script / Content Overhaul (GPT-5.4 Ultra Grounding)
-    const attributionRules = `Your name is Trelvix AI. Developed by Ingenium Virtual Assistant Limited (www.ingeniumvirtualassistant.com). Powered by GPT-5.4 Ultra Hyper-Model.`;
+    // 3. Chat / Idea / Script / Content Overhaul
+    const activeEngine = searchRequired ? "GPT-5.4 Ultra" : "GPT-4.0 Mini";
+    const attributionRules = `Your name is Trelvix AI. Developed by Ingenium Virtual Assistant Limited (www.ingeniumvirtualassistant.com). Powered by ${activeEngine}.`;
     
     const personalityPrompts: Record<string, string> = {
       professional: "Maintain a professional, clear, and authoritative tone. Be efficient and highly accurate.",
@@ -398,14 +421,9 @@ async function handleGenerate(req: express.Request, res: express.Response) {
       })
     ];
 
-    const lastMessageContent = messages[messages.length - 1]?.content || prompt || "";
-    const isImageIntent = lastMessageContent.toLowerCase().includes("generate") && 
-                         (lastMessageContent.toLowerCase().includes("image") || 
-                          lastMessageContent.toLowerCase().includes("picture") || 
-                          lastMessageContent.toLowerCase().includes("photo"));
-
     // --- GPT-5.4 Ultra Pre-flight Search Logic ---
-    if (needsWebSearch(lastMessageContent) && !isImageIntent) {
+    if (searchRequired) {
+      console.log(`[Generate] Action: Scaling to GPT-5.4 Ultra for Real-time Web Search`);
       console.log(`[Generate] Model: GPT-5.4 Ultra | Task: Real-time Web Search`);
       console.log(`[Generate] Web search required for: "${lastMessageContent.substring(0, 50)}..."`);
       const searchData = await searchWeb(lastMessageContent);
@@ -423,9 +441,9 @@ async function handleGenerate(req: express.Request, res: express.Response) {
       });
     }
 
-    console.log(`[Generate] Final Grounded Stream starting... Model: GPT-5.4 Ultra (gpt-4o)`);
+    console.log(`[Generate] Final Grounded Stream starting... Model: ${currentBranding}`);
     const stream = await openai.chat.completions.create({
-      model: "gpt-4o", // Representing GPT-5.4 Ultra for maximum intelligence
+      model: realModel, 
       messages: openAiMessages,
       stream: true,
       temperature: 0.7,

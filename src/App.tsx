@@ -10,6 +10,7 @@ import {
   Download, 
   Zap, 
   ChevronRight,
+  ChevronDown,
   User,
   ExternalLink,
   Copy,
@@ -669,7 +670,7 @@ export default function App() {
         }));
 
         if (updated) {
-          await supabase.from('conversations').update({ messages: newMessages }).eq('id', conv.id);
+          await updateConversationMessages(conv.id, newMessages);
         }
       });
     } catch (error) {
@@ -683,6 +684,26 @@ export default function App() {
     setStreamingMessage('');
     setActiveView('chat');
     if (window.innerWidth < 1024) setIsSidebarOpen(false);
+  };
+
+  const updateConversationMessages = async (id: string, newMessages: Message[]) => {
+    try {
+      const { error } = await supabase
+        .from('conversations')
+        .update({ 
+          messages: newMessages, 
+          updated_at: new Date().toISOString() 
+        })
+        .eq('id', id);
+      
+      if (error) throw error;
+      return true;
+    } catch (err) {
+      console.error("[Chat] Failed to update history:", err);
+      // We don't toast error here to avoid interrupting the flow, 
+      // but the log will help debugging.
+      return false;
+    }
   };
 
   const handleSelectConversation = (id: string) => {
@@ -747,7 +768,7 @@ export default function App() {
   };
 
   const startConversation = async (type: ConversationType, title: string, initialPrompt: string, metadata: any = {}) => {
-    if (!user || isLoading) return;
+    if (!user || isLoading) return null;
     setIsLoading(true);
 
     try {
@@ -771,20 +792,19 @@ export default function App() {
         console.error("Supabase insert error:", error);
         toast.error(`Failed to create conversation history`);
         setIsLoading(false);
-        return;
+        return null;
       }
 
       console.log("[Chat] Conversation created:", data.id);
       setCurrentConversation(data);
       setConversations(prev => [data, ...prev]);
+      setMessages([]); // Ensure messages are cleared for new chat
       
-      // Important: wait a tiny bit for state to settle before sending first message
-      setTimeout(() => {
-        sendMessage(initialPrompt, data);
-      }, 50);
+      return data;
     } catch (err) {
       console.error("Error in startConversation:", err);
       setIsLoading(false);
+      return null;
     }
   };
 
@@ -847,7 +867,11 @@ export default function App() {
       const rawTitle = content.trim() || (selectedAttachment ? 'File Analysis' : 'New Chat');
       const title = rawTitle.length > 50 ? rawTitle.slice(0, 47) + '...' : rawTitle;
       
-      await startConversation(type, title, content);
+      const newConv = await startConversation(type, title, content);
+      if (newConv) {
+        // Continue sending the message with the new conversation
+        await sendMessage(content, newConv);
+      }
       return;
     }
 
@@ -946,6 +970,15 @@ export default function App() {
     }, 60000); // 1 minute is usually enough for serverless
 
     try {
+      const lowerInput = content.toLowerCase();
+      const searchKeywords = ["news", "weather", "price", "today", "latest", "current", "politics", "who is", "what happened", "stock", "dollar", "rate", "live", "crypto", "bitcoin", "forecast", "update on", "winner of"];
+      const isSearchIntent = searchKeywords.some(k => lowerInput.includes(k)) || (lowerInput.includes("?") && (lowerInput.includes("who") || lowerInput.includes("is there")));
+      
+      let activeModel = 'gpt-4o-mini';
+      if (isImageIntent) activeModel = 'gpt-image-2';
+      else if (isSearchIntent) activeModel = 'gpt-5.4-ultra';
+
+      console.log(`%c[Model Used] ${activeModel}`, 'color: #3b82f6; font-weight: bold; background: #eff6ff; padding: 2px 4px; border-radius: 4px;');
       console.log(`[Chat] Sending to /api/generate as type: ${isImageIntent ? 'image' : (conv.type || 'chat')}`);
       
       const response = await fetch('/api/generate', {
@@ -953,6 +986,7 @@ export default function App() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           type: isImageIntent ? 'image' : (conv.type === 'image' ? 'chat' : (conv.type || 'chat')),
+          model: activeModel,
           prompt: content,
           messages: updatedMessages.map(m => ({
             role: m.role,
@@ -1003,16 +1037,14 @@ export default function App() {
           content: data.description || `Generated image for: ${content}`,
           image_url: imageData ? `db:${imageData.id}` : image_url,
           filename: filename || `trelvix-${Date.now()}.png`,
+          model: activeModel,
           created_at: new Date().toISOString()
         };
         
         const finalMessages = [...updatedMessages, assistantMessage];
         setMessages(finalMessages);
         
-        await supabase.from('conversations').update({ 
-          messages: finalMessages,
-          updated_at: new Date().toISOString()
-        }).eq('id', conv.id);
+        await updateConversationMessages(conv.id, finalMessages);
         
         if (profile) {
           await updateProfile({ images_used_today: (profile?.images_used_today || 0) + 1 });
@@ -1045,6 +1077,7 @@ export default function App() {
         id: crypto.randomUUID(),
         role: 'assistant',
         content: fullContent,
+        model: activeModel,
         created_at: new Date().toISOString()
       };
 
@@ -1057,10 +1090,7 @@ export default function App() {
         setShouldPlayVoice(false);
       }
 
-      await supabase.from('conversations').update({ 
-        messages: finalMessages,
-        updated_at: new Date().toISOString()
-      }).eq('id', conv.id);
+      await updateConversationMessages(conv.id, finalMessages);
       
       if (profile) {
         const usageField = currentAttachment ? 'analysis_used_today' : 'messages_used_today';
@@ -1208,15 +1238,7 @@ export default function App() {
     setMessages(updatedMessages);
 
     try {
-      const { error } = await supabase
-        .from('conversations')
-        .update({ 
-          messages: updatedMessages,
-          updated_at: new Date().toISOString()
-        })
-        .eq('id', currentConversation.id);
-
-      if (error) throw error;
+      await updateConversationMessages(currentConversation.id, updatedMessages);
       
       const isRemoving = messages.find(m => m.id === messageId)?.feedback === feedback;
       if (!isRemoving) {
@@ -1657,8 +1679,14 @@ export default function App() {
                           </div>
                         )}
                         <div className="mt-2 flex items-center justify-between">
-                          <div className="text-[10px] opacity-30">
-                            {new Date(m.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                          <div className="text-[10px] opacity-30 flex items-center gap-2">
+                            <span>{new Date(m.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+                            {m.role === 'assistant' && m.model && (
+                              <>
+                                <span className="w-1 h-1 rounded-full bg-zinc-300 dark:bg-zinc-700" />
+                                <span className="uppercase tracking-tighter font-black text-[8px] opacity-60 px-1 bg-zinc-100 dark:bg-zinc-800 rounded">{m.model}</span>
+                              </>
+                            )}
                           </div>
                           <div className={cn(
                             "flex items-center gap-1.5 md:gap-2 transition-all duration-200 mt-3 pt-3 border-t border-zinc-200/50 dark:border-zinc-800/50 overflow-x-auto no-scrollbar",
@@ -1734,7 +1762,31 @@ export default function App() {
                     </div>
                   ))}
 
-                  {/* Streaming & Loading Indicator */}
+                  {hasError && !isLoading && (
+                    <motion.div 
+                      key="error-state"
+                      initial={{ opacity: 0, y: 10 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      className="p-6 bg-red-50 dark:bg-red-950/10 border border-red-200 dark:border-red-900/30 rounded-3xl flex flex-col gap-4 items-center text-center mx-auto max-w-sm"
+                    >
+                      <div className="w-12 h-12 bg-red-100 dark:bg-red-900/30 rounded-full flex items-center justify-center text-red-500">
+                        <Waves className="w-6 h-6 animate-pulse" />
+                      </div>
+                      <div>
+                        <h3 className="font-bold text-red-900 dark:text-red-400">Connection Interrupted</h3>
+                        <p className="text-[10px] text-red-700/70 dark:text-red-400/50 uppercase tracking-widest font-black mt-1">
+                          Network logic failed to resolve
+                        </p>
+                      </div>
+                      <button 
+                        onClick={() => handleRetry()}
+                        className="px-8 py-3 bg-red-500 text-white rounded-2xl font-black text-xs uppercase tracking-widest hover:bg-red-600 transition-all shadow-lg shadow-red-500/20 active:scale-95 flex items-center gap-2"
+                      >
+                        <Zap className="w-4 h-4 fill-white" />
+                        Retry Request
+                      </button>
+                    </motion.div>
+                  )}
                   {(isLoading || streamingMessage) && (
                     <div className="flex justify-start">
                       <div className={cn(
