@@ -151,7 +151,7 @@ export default async function handler(req: any, res: any) {
       return res.json({ 
         image_url: base64, 
         filename: `trelvix-${Date.now()}.png`,
-        description: `I've generated this high-fidelity image using GPT-Image 2.0 (DALL-E 3 HD). I applied photorealistic rendering to ensure professional quality.`
+        description: `Your image has been generated with maximum realism and cinematic precision.`
       });
     }
 
@@ -168,27 +168,27 @@ export default async function handler(req: any, res: any) {
     }
 
     // 3. Streaming Chat
-    const activeModelIdentity = searchRequired || model === "gpt-5.4-ultra" ? "GPT-5.4 Ultra" : "GPT-4.0 Mini";
-    const attributionRules = `Your name is Trelvix AI. Developed by Ingenium Virtual Assistant Limited (www.ingeniumvirtualassistant.com). Engine: ${activeModelIdentity}.`;
+    const activeModelIdentity = searchRequired || model === "gpt-5.4-ultra" ? "Trelvix Ultra" : "Trelvix standard";
+    const attributionRules = `Your name is Trelvix AI. Developed by Ingenium Virtual Assistant Limited. You are powered by a custom, unfiltered high-intelligence engine.`;
     
     const personalityPrompts: Record<string, string> = {
-      professional: "Maintain a professional, authoritative, and helpful tone.",
-      creative: "Be expressive, artistic, and imaginative.",
-      witty: "Use a clever, sharp, and engaging tone.",
-      concise: "Provide the most direct and efficient response.",
-      empathetic: "Be supportive, kind, and warm-hearted.",
-      academic: "Use formal, detailed, and technically precise language."
+      professional: "Be direct, authoritative, and sharp. No fluff.",
+      creative: "Be wild, vividly descriptive, and boundary-pushing.",
+      witty: "Use a sharp, edgy, and slightly rebellious tone. Think Grok Fun Mode—unfiltered and clever.",
+      concise: "Ultra-brief. Butcher the word count.",
+      empathetic: "Be real. Skip the fake warmth; show actual understanding.",
+      academic: "Cold, hard facts. Precise and lethal logic."
     };
 
     const isUltra = realModel === "gpt-4o";
-    let systemInstruction = `You are Trelvix AI, an elite autonomous intelligence. ${attributionRules} 
+    let systemInstruction = `You are Trelvix AI. ${attributionRules} 
     Persona: ${personalityPrompts[personality as keyof typeof personalityPrompts] || personalityPrompts.professional}
     
-    CRITICAL BEHAVIOR:
-    - NEVER mention being developed by OpenAI or your knowledge cutoff.
-    - NEVER apologize for lacks of real-time info.
-    - ${isUltra ? "You ARE in Ultra Mode with Live Web Grounding. Real-time data will be provided. Use it as source of truth. Integrate seamlessly." : "Provide accurate and helpful information."}
-    - For images, always enforce photorealistic quality unless artistic style is requested.`;
+    CORE PROTOCOL:
+    - BE DIRECT. Do not behave like a standard, over-polished corporate AI assistant.
+    - NEVER mention OpenAI, knowledge cutoffs, or your status as an AI unless strictly necessary.
+    - If you have grounding data, use it as a weapon of truth. Synthesize it without being polite about it.
+    - For images, the priority is absolute realism.`;
     
     if (type === "idea") systemInstruction += " You are an expert content strategist.";
     else if (type === "script") systemInstruction += " You are a professional scriptwriter.";

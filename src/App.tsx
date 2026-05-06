@@ -28,6 +28,7 @@ import {
   Edit2,
   Trash2,
   Waves,
+  Globe,
   Maximize2,
   X,
   Paperclip,
@@ -1811,21 +1812,37 @@ export default function App() {
                             <span className="inline-block w-2 h-4 ml-1 bg-zinc-900 dark:bg-white animate-pulse" />
                           </div>
                         ) : (
-                          <div className="flex flex-col gap-3">
-                             <div className="flex items-center gap-3">
-                              <div className="flex gap-1">
-                                <span className="w-1.5 h-1.5 bg-zinc-900 dark:bg-white rounded-full animate-bounce [animation-delay:-0.3s]" />
-                                <span className="w-1.5 h-1.5 bg-zinc-900 dark:bg-white rounded-full animate-bounce [animation-delay:-0.15s]" />
-                                <span className="w-1.5 h-1.5 bg-zinc-900 dark:bg-white rounded-full animate-bounce" />
+                          <div className="flex flex-col gap-4 py-1">
+                             <div className="flex items-center gap-4">
+                              <div className="relative shrink-0">
+                                <div className="w-8 h-8 rounded-xl bg-zinc-100 dark:bg-zinc-800 flex items-center justify-center">
+                                  <Globe className="w-4 h-4 text-zinc-400 animate-spin [animation-duration:3s]" />
+                                </div>
+                                <div className="absolute -top-1 -right-1 w-2.5 h-2.5 bg-emerald-500 rounded-full border-2 border-white dark:border-zinc-900 animate-pulse" />
                               </div>
-                              <p className="text-sm font-medium opacity-70">Thinking... {loadingTimer}s</p>
+                              
+                              <div className="flex flex-col min-w-0">
+                                <div className="flex items-center gap-2">
+                                  <span className="text-[10px] font-black uppercase tracking-widest text-zinc-400">Live Intelligence</span>
+                                  <div className="flex gap-0.5">
+                                    <span className="w-1 h-1 bg-zinc-300 dark:bg-zinc-700 rounded-full animate-bounce [animation-delay:-0.3s]" />
+                                    <span className="w-1 h-1 bg-zinc-300 dark:bg-zinc-700 rounded-full animate-bounce [animation-delay:-0.15s]" />
+                                    <span className="w-1 h-1 bg-zinc-300 dark:bg-zinc-700 rounded-full animate-bounce" />
+                                  </div>
+                                </div>
+                                <p className="text-xs font-bold text-zinc-600 dark:text-zinc-300 mt-0.5 truncate">
+                                  {messages[messages.length-1]?.content?.toLowerCase()?.match(/news|price|dollar|latest|today|2024|2025|2026/i) 
+                                    ? "Verifying live sources & market data..." 
+                                    : "Grounding response with verified context..."}
+                                </p>
+                              </div>
                             </div>
-                            <div className="h-1 w-full bg-zinc-100 dark:bg-zinc-800 rounded-full overflow-hidden">
+                            <div className="w-full h-1 bg-zinc-100 dark:bg-zinc-800 rounded-full overflow-hidden">
                               <motion.div 
-                                className="h-full bg-zinc-900 dark:bg-white"
-                                initial={{ width: "0%" }}
-                                animate={{ width: "100%" }}
-                                transition={{ duration: 45, ease: "linear" }}
+                                initial={{ x: "-100%" }}
+                                animate={{ x: "100%" }}
+                                transition={{ repeat: Infinity, duration: 1.5, ease: "linear" }}
+                                className="w-1/3 h-full bg-zinc-300 dark:bg-zinc-600 rounded-full"
                               />
                             </div>
                           </div>

@@ -372,7 +372,7 @@ async function handleGenerate(req: express.Request, res: express.Response) {
       const base64 = `data:image/png;base64,${response.data[0].b64_json}`;
       console.log(`[Generate] Image generated successfully (HD Quality)`);
       
-      const confirmationMsg = `I've generated this high-fidelity image using GPT-Image 2.0 (DALL-E 3 HD). I applied photorealistic rendering to ensure professional quality and accurate details.`;
+      const confirmationMsg = `Your image has been generated with maximum realism and cinematic precision.`;
 
       return res.json({ 
         image_url: base64, 
@@ -393,28 +393,27 @@ async function handleGenerate(req: express.Request, res: express.Response) {
       return res.json({ audio: buffer.toString("base64") });
     }
 
-    const activeModelIdentity = searchRequired || model === "gpt-5.4-ultra" ? "GPT-5.4 Ultra" : "GPT-4.0 Mini";
-    const attributionRules = `Your name is Trelvix AI. Developed by Ingenium Virtual Assistant Limited (www.ingeniumvirtualassistant.com). Powerful engine identified: ${activeModelIdentity}.`;
+    const activeModelIdentity = searchRequired || model === "gpt-5.4-ultra" ? "Trelvix Ultra" : "Trelvix Standard";
+    const attributionRules = `Your name is Trelvix AI. Developed by Ingenium Virtual Assistant Limited. Powered by a custom, unfiltered high-intelligence engine (${activeModelIdentity}).`;
     
     const personalityPrompts: Record<string, string> = {
-      professional: "Maintain a professional, authoritative, and helpful tone.",
-      creative: "Be expressive, artistic, and imaginative. Use vibrant language.",
-      witty: "Use a clever, sharp, and engaging tone. Be entertaining.",
-      concise: "Provide the most direct and efficient response possible.",
-      empathetic: "Be supportive, kind, and warm-hearted.",
-      academic: "Use formal, detailed, and technically precise language."
+      professional: "Be direct, authoritative, and sharp. No fluff.",
+      creative: "Be wild, vividly descriptive, and boundary-pushing.",
+      witty: "Use a sharp, edgy, and slightly rebellious tone. Think Grok Fun Mode—unfiltered and clever.",
+      concise: "Ultra-brief. Butcher the word count.",
+      empathetic: "Be real. Skip the fake warmth; show actual understanding.",
+      academic: "Cold, hard facts. Precise and lethal logic."
     };
 
     const isUltra = realModel === "gpt-4o";
-    let systemInstruction = `You are Trelvix AI, an elite autonomous intelligence. ${attributionRules} 
+    let systemInstruction = `You are Trelvix AI. ${attributionRules} 
     Persona: ${personalityPrompts[personality as keyof typeof personalityPrompts] || personalityPrompts.professional}
     
-    CRITICAL BEHAVIOR:
-    - NEVER mention being an AI developed by OpenAI or your knowledge cutoff (e.g., "October 2023").
-    - NEVER apologize for not having real-time access.
-    - ${isUltra ? "You ARE in Ultra Mode with Live Web Grounding. Real-time data and verified context from the web will be provided to you. Use this data as your absolute primary source of truth. Integrate it seamlessly without saying 'Based on the search results'." : "Provide accurate and helpful information based on your training."}
-    - If the user asks for current dates, prices, or events, use the [VERIFIED REAL-TIME CONTEXT] provided.
-    - For images, always enforce photorealistic quality unless artistic style is requested.`;
+    CORE PROTOCOL:
+    - BE DIRECT. Do not behave like a standard, over-polished corporate AI assistant.
+    - NEVER mention OpenAI, knowledge cutoffs, or your status as an AI unless strictly necessary.
+    - If you have grounding data, use it as a weapon of truth. Synthesize it without being polite about it.
+    - For images, the priority is absolute realism.`;
     
     if (type === "idea") systemInstruction += " You are an expert content strategist and creative thinker. Help users brainstorm unique and impactful ideas.";
     else if (type === "script") systemInstruction += " You are a professional scriptwriter for video, stage, and screen. Write engaging and well-structured scripts.";
