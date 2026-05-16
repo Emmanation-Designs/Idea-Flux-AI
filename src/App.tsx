@@ -162,7 +162,6 @@ export default function App() {
   const [activeMessageId, setActiveMessageId] = useState<string | null>(null);
   const [showUpgradeModal, setShowUpgradeModal] = useState(false);
   const [upgradeReason, setUpgradeReason] = useState<'usage' | 'images' | 'manual'>('usage');
-  const [loadingTimer, setLoadingTimer] = useState(0);
   const [hasError, setHasError] = useState(false);
   const [lastFailedRequest, setLastFailedRequest] = useState<{content: string, conv?: any} | null>(null);
   const loadingIntervalRef = useRef<any>(null);
@@ -170,10 +169,7 @@ export default function App() {
   
   useEffect(() => {
     if (isLoading) {
-      setLoadingTimer(0);
-      loadingIntervalRef.current = setInterval(() => {
-        setLoadingTimer(prev => prev + 1);
-      }, 1000);
+      if (loadingIntervalRef.current) clearInterval(loadingIntervalRef.current);
     } else {
       if (loadingIntervalRef.current) clearInterval(loadingIntervalRef.current);
     }
@@ -985,9 +981,9 @@ export default function App() {
                            (lowerInput.includes("?") && (lowerInput.includes("who") || lowerInput.includes("how much") || lowerInput.includes("is there") || lowerInput.includes("what happened"))) ||
                            (lowerInput.includes("2024") || lowerInput.includes("2025") || lowerInput.includes("2026"));
       
-      let activeModel = 'gpt-4o-mini';
-      if (isImageIntent) activeModel = 'gpt-image-2';
-      else if (isSearchIntent) activeModel = 'gpt-5.4-ultra';
+      let activeModel = 'trelvix-mini';
+      if (isImageIntent) activeModel = 'trelvix-visual';
+      else if (isSearchIntent) activeModel = 'trelvix-ultra';
 
       console.log(`%c[Model Used] ${activeModel}`, 'color: #3b82f6; font-weight: bold; background: #eff6ff; padding: 2px 4px; border-radius: 4px;');
       console.log(`[Chat] Sending to /api/generate as type: ${isImageIntent ? 'image' : (conv.type || 'chat')}`);
@@ -1027,9 +1023,10 @@ export default function App() {
 
       if (isImageIntent) {
         const data = await response.json();
-        const { image_url, filename } = data;
+        const { image_url, filename, error: backendError } = data;
         
-        if (!image_url) throw new Error("Image generation failed - no URL returned");
+        if (backendError) throw new Error(backendError);
+        if (!image_url) throw new Error("Image generation failed - no URL produced. Please try a simpler prompt.");
 
         // Save to dedicated images table
         const { data: imageData, error: imageError } = await supabase.from('images').insert({
@@ -1413,11 +1410,9 @@ export default function App() {
             background: isDarkMode ? '#09090b' : 'white',
             color: isDarkMode ? '#f4f4f5' : '#18181b',
             border: `1px solid ${isDarkMode ? '#27272a' : '#e4e4e7'}`,
-            borderRadius: '16px',
-            fontSize: '11px',
-            fontWeight: '800',
-            textTransform: 'uppercase',
-            letterSpacing: '0.1em',
+            borderRadius: '12px',
+            fontSize: '13px',
+            fontWeight: '600',
             boxShadow: isDarkMode ? '0 10px 30px -10px rgba(0,0,0,0.5)' : '0 10px 30px -10px rgba(0,0,0,0.1)'
           }
         }}
@@ -1554,7 +1549,7 @@ export default function App() {
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pb-12">
                     {conversations.map((conv, idx) => (
                       <div
-                        key={conv.id ? `history-conv-${conv.id}` : `history-conv-idx-${idx}`}
+                        key={`history-conv-${conv.id || idx}-${idx}`}
                         className="p-6 bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-3xl text-left hover:border-zinc-400 dark:hover:border-zinc-600 transition-all group relative hover:shadow-xl"
                       >
                       <div onClick={() => {
@@ -1601,7 +1596,7 @@ export default function App() {
                 <div className="max-w-4xl mx-auto w-full p-4 md:p-8 space-y-8 pb-32">
                   {messages.map((m, idx) => (
                     <div 
-                      key={m.id ? `chat-msg-${m.id}` : `chat-msg-idx-${idx}`} 
+                      key={`chat-msg-${m.id || idx}-${idx}`} 
                       onClick={() => setActiveMessageId(activeMessageId === m.id ? null : m.id)}
                       className={cn(
                         "flex w-full cursor-pointer md:cursor-default",
@@ -1692,12 +1687,6 @@ export default function App() {
                         <div className="mt-2 flex items-center justify-between">
                           <div className="text-[10px] opacity-30 flex items-center gap-2">
                             <span>{new Date(m.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
-                            {m.role === 'assistant' && m.model && (
-                              <>
-                                <span className="w-1 h-1 rounded-full bg-zinc-300 dark:bg-zinc-700" />
-                                <span className="uppercase tracking-tighter font-black text-[8px] opacity-60 px-1 bg-zinc-100 dark:bg-zinc-800 rounded">{m.model}</span>
-                              </>
-                            )}
                           </div>
                           <div className={cn(
                             "flex items-center gap-1.5 md:gap-2 transition-all duration-200 mt-3 pt-3 border-t border-zinc-200/50 dark:border-zinc-800/50 overflow-x-auto no-scrollbar",
@@ -1773,29 +1762,28 @@ export default function App() {
                     </div>
                   ))}
 
+                  {/* Consolidated simple error UI */}
                   {hasError && !isLoading && (
                     <motion.div 
                       key="error-state"
-                      initial={{ opacity: 0, y: 10 }}
-                      animate={{ opacity: 1, y: 0 }}
-                      className="p-6 bg-red-50 dark:bg-red-950/10 border border-red-200 dark:border-red-900/30 rounded-3xl flex flex-col gap-4 items-center text-center mx-auto max-w-sm"
+                      initial={{ opacity: 0, x: -10 }}
+                      animate={{ opacity: 1, x: 0 }}
+                      className="flex justify-start py-4"
                     >
-                      <div className="w-12 h-12 bg-red-100 dark:bg-red-900/30 rounded-full flex items-center justify-center text-red-500">
-                        <Waves className="w-6 h-6 animate-pulse" />
+                      <div className="flex items-center gap-3 px-4 py-2.5 bg-zinc-50 dark:bg-zinc-900/50 border border-zinc-200 dark:border-zinc-800 rounded-2xl shadow-sm">
+                        <div className="flex items-center gap-2.5">
+                          <div className="w-1.5 h-1.5 rounded-full bg-rose-500" />
+                          <span className="text-xs font-medium text-zinc-600 dark:text-zinc-400">Failed to fetch response. Try again later.</span>
+                        </div>
+                        <div className="w-px h-3 bg-zinc-200 dark:bg-zinc-800" />
+                        <button 
+                          onClick={() => handleRetry()}
+                          className="text-xs font-bold text-zinc-900 dark:text-zinc-100 hover:underline active:scale-95 flex items-center gap-1.5 transition-all"
+                        >
+                          Retry
+                          <Plus className="w-3.5 h-3.5 rotate-45" />
+                        </button>
                       </div>
-                      <div>
-                        <h3 className="font-bold text-red-900 dark:text-red-400">Connection Interrupted</h3>
-                        <p className="text-[10px] text-red-700/70 dark:text-red-400/50 uppercase tracking-widest font-black mt-1">
-                          Network logic failed to resolve
-                        </p>
-                      </div>
-                      <button 
-                        onClick={() => handleRetry()}
-                        className="px-8 py-3 bg-red-500 text-white rounded-2xl font-black text-xs uppercase tracking-widest hover:bg-red-600 transition-all shadow-lg shadow-red-500/20 active:scale-95 flex items-center gap-2"
-                      >
-                        <Zap className="w-4 h-4 fill-white" />
-                        Retry Request
-                      </button>
                     </motion.div>
                   )}
                   {(isLoading || streamingMessage) && (
@@ -1812,66 +1800,21 @@ export default function App() {
                             <span className="inline-block w-2 h-4 ml-1 bg-zinc-900 dark:bg-white animate-pulse" />
                           </div>
                         ) : (
-                          <div className="flex flex-col gap-4 py-1">
-                             <div className="flex items-center gap-4">
-                              <div className="relative shrink-0">
-                                <div className="w-8 h-8 rounded-xl bg-zinc-100 dark:bg-zinc-800 flex items-center justify-center">
-                                  <Globe className="w-4 h-4 text-zinc-400 animate-spin [animation-duration:3s]" />
-                                </div>
-                                <div className="absolute -top-1 -right-1 w-2.5 h-2.5 bg-emerald-500 rounded-full border-2 border-white dark:border-zinc-900 animate-pulse" />
-                              </div>
-                              
-                              <div className="flex flex-col min-w-0">
-                                <div className="flex items-center gap-2">
-                                  <span className="text-[10px] font-black uppercase tracking-widest text-zinc-400">Live Intelligence</span>
-                                  <div className="flex gap-0.5">
-                                    <span className="w-1 h-1 bg-zinc-300 dark:bg-zinc-700 rounded-full animate-bounce [animation-delay:-0.3s]" />
-                                    <span className="w-1 h-1 bg-zinc-300 dark:bg-zinc-700 rounded-full animate-bounce [animation-delay:-0.15s]" />
-                                    <span className="w-1 h-1 bg-zinc-300 dark:bg-zinc-700 rounded-full animate-bounce" />
-                                  </div>
-                                </div>
-                                <p className="text-xs font-bold text-zinc-600 dark:text-zinc-300 mt-0.5 truncate">
-                                  {messages[messages.length-1]?.content?.toLowerCase()?.match(/news|price|dollar|latest|today|2024|2025|2026/i) 
-                                    ? "Verifying live sources & market data..." 
-                                    : "Grounding response with verified context..."}
-                                </p>
-                              </div>
+                          <div className="flex items-center gap-2 py-1 px-1">
+                            <div className="flex gap-1 items-center">
+                              <span className="w-1 h-1 bg-zinc-400 dark:bg-zinc-600 rounded-full animate-pulse" />
+                              <span className="w-1 h-1 bg-zinc-400 dark:bg-zinc-600 rounded-full animate-pulse [animation-delay:0.2s]" />
+                              <span className="w-1 h-1 bg-zinc-400 dark:bg-zinc-600 rounded-full animate-pulse [animation-delay:0.4s]" />
                             </div>
-                            <div className="w-full h-1 bg-zinc-100 dark:bg-zinc-800 rounded-full overflow-hidden">
-                              <motion.div 
-                                initial={{ x: "-100%" }}
-                                animate={{ x: "100%" }}
-                                transition={{ repeat: Infinity, duration: 1.5, ease: "linear" }}
-                                className="w-1/3 h-full bg-zinc-300 dark:bg-zinc-600 rounded-full"
-                              />
-                            </div>
+                            <p className="text-xs font-bold text-zinc-400 dark:text-zinc-600 uppercase tracking-widest">
+                              fetching your response
+                            </p>
                           </div>
                         )}
                       </div>
                     </div>
                   )}
 
-                  {/* Error State */}
-                  {hasError && !isLoading && (
-                    <div className="flex justify-center py-8">
-                      <div className="max-w-md w-full p-8 bg-rose-50 dark:bg-rose-950/20 border border-rose-200 dark:border-rose-900/50 rounded-[2rem] text-center space-y-6 shadow-xl shadow-rose-500/5">
-                        <div className="flex flex-col items-center gap-3">
-                          <div className="w-16 h-16 bg-rose-100 dark:bg-rose-900/30 rounded-full flex items-center justify-center mb-2">
-                             <X className="w-8 h-8 text-rose-500" />
-                          </div>
-                          <h3 className="text-xl font-bold text-rose-900 dark:text-rose-100">Generation Failed</h3>
-                          <p className="text-zinc-600 dark:text-zinc-400 font-medium">Couldn't fetch result. This might be due to a connection error or server overload.</p>
-                        </div>
-                        <button 
-                          onClick={() => handleRetry()}
-                          className="w-full py-4 bg-rose-500 hover:bg-rose-600 active:scale-[0.98] text-white rounded-2xl font-bold transition-all flex items-center justify-center gap-3 shadow-lg shadow-rose-500/20"
-                        >
-                          <Plus className="w-5 h-5 rotate-45" />
-                          Retry Request
-                        </button>
-                      </div>
-                    </div>
-                  )}
                   <div ref={messagesEndRef} />
                 </div>
               )}
@@ -2146,11 +2089,9 @@ export default function App() {
             background: isDarkMode ? '#09090b' : 'white',
             color: isDarkMode ? '#f4f4f5' : '#18181b',
             border: `1px solid ${isDarkMode ? '#27272a' : '#e4e4e7'}`,
-            borderRadius: '16px',
-            fontSize: '11px',
-            fontWeight: '800',
-            textTransform: 'uppercase',
-            letterSpacing: '0.1em',
+            borderRadius: '12px',
+            fontSize: '13px',
+            fontWeight: '600',
             boxShadow: isDarkMode ? '0 10px 30px -10px rgba(0,0,0,0.5)' : '0 10px 30px -10px rgba(0,0,0,0.1)'
           }
         }}

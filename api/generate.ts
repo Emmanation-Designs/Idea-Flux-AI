@@ -9,7 +9,7 @@ export default async function handler(req: any, res: any) {
     return res.status(405).json({ error: 'Method not allowed' });
   }
 
-  const { type, prompt, messages = [], voice_option = "alloy", personality = "professional", model = "gpt-4o" } = req.body;
+  const { type, prompt, messages = [], voice_option = "alloy", personality = "professional", model = "trelvix-mini" } = req.body;
 
   const needsWebSearch = (text: string) => {
     const searchKeywords = [
@@ -44,23 +44,35 @@ export default async function handler(req: any, res: any) {
     const openai = new OpenAI({ apiKey });
 
     // 0. Intelligence Controller
-    const lastMessageContent = messages[messages.length - 1]?.content || prompt || "";
-    const isImageIntent = type === "image" || (lastMessageContent.toLowerCase().includes("generate") && 
-                         (lastMessageContent.toLowerCase().includes("image") || 
-                          lastMessageContent.toLowerCase().includes("picture") || 
-                          lastMessageContent.toLowerCase().includes("photo")));
+    const lastMessageContent = (messages[messages.length - 1]?.content || prompt || "").trim();
+    
+    // Stricter image intent detection: must start with or specifically request an image
+    const lowerLast = lastMessageContent.toLowerCase();
+    const isImageIntent = type === "image" || model === "trelvix-visual" || 
+                         (lowerLast.startsWith("generate image") || 
+                          lowerLast.startsWith("create image") || 
+                          lowerLast.startsWith("draw") || 
+                          lowerLast.startsWith("make an image") ||
+                          lowerLast.startsWith("paint") ||
+                          lowerLast.includes("generate a photorealistic image") ||
+                          lowerLast.includes("show me an image of"));
     
     const searchRequired = needsWebSearch(lastMessageContent) && !isImageIntent;
 
     let realModel = "gpt-4o-mini";
-    let currentBranding = "GPT-4.0 Mini";
+    let currentBranding = "Standard Intelligence";
 
-    if (isImageIntent || model === "gpt-image-2") {
+    if (isImageIntent || model === "trelvix-visual") {
       realModel = "gpt-4o"; 
-      currentBranding = "GPT-Image 2.0";
-    } else if (searchRequired || model === "gpt-5.4-ultra") {
+      currentBranding = "Visual Engine";
+    } else if (model === "trelvix-ultra") {
       realModel = "gpt-4o"; 
-      currentBranding = "GPT-5.4 Ultra";
+      currentBranding = "Ultra Intelligence";
+    } else if (searchRequired) {
+      // Search is fast but synthesis benefits from a better model, 
+      // however mini is quite capable and faster. Let's stick with mini for speed unless Ultra is asked.
+      realModel = "gpt-4o-mini";
+      currentBranding = "Standard Intelligence";
     }
 
     console.log(`[API Intelligence] Intent: ${type}, Search: ${searchRequired}, Selection: ${currentBranding} (${realModel})`);
@@ -113,46 +125,92 @@ export default async function handler(req: any, res: any) {
 
     // 1. Image Generation
     if (type === "image" || isImageIntent) {
-      let enhancedPrompt = prompt || lastMessageContent;
-      const lowerPrompt = enhancedPrompt.toLowerCase();
-      
-      const isLogo = lowerPrompt.includes("logo") || lowerPrompt.includes("icon");
-      const isPoster = lowerPrompt.includes("flyer") || lowerPrompt.includes("poster");
-      const isPeople = lowerPrompt.includes("man") || lowerPrompt.includes("woman") || lowerPrompt.includes("person") || lowerPrompt.includes("human");
-      const isArtisticRequested = lowerPrompt.includes("artistic") || lowerPrompt.includes("illustration") || lowerPrompt.includes("3d") || lowerPrompt.includes("cartoon");
-
-      const coreRealism = "photorealistic, highly detailed, realistic photography, sharp focus, natural lighting, 8k resolution, professional quality, accurate anatomy, realistic skin texture, cinematic lighting";
-
-      if (isLogo) {
-        enhancedPrompt = `Professional minimalist logo, high-end graphic design, clean vector lines, high resolution, white background. Subject: ${enhancedPrompt}`;
-      } else if (isPoster) {
-        enhancedPrompt = `Highly detailed professional graphic design, balanced composition, high-end commercial aesthetic. Subject: ${enhancedPrompt}`;
-      } else if (isPeople) {
-        enhancedPrompt = `${coreRealism}, realistic human face, detailed eyes, natural expression, realistic skin textures, shot on 85mm lens. Subject: ${enhancedPrompt}`;
-      } else if (isArtisticRequested) {
-        enhancedPrompt = `Masterpiece, highly detailed artistic rendering, fine art quality. Subject: ${enhancedPrompt}`;
-      } else {
-        enhancedPrompt = `${coreRealism}, shot on professional camera, lifelike atmosphere. Subject: ${enhancedPrompt}`;
+      const falApiKey = process.env.FAL_AI_KEY;
+      if (!falApiKey) {
+        console.error("[API Generate] Missing FAL_AI_KEY");
+        return res.status(500).json({ error: "Image generation engine is currently offline (Missing API Key)." });
       }
 
-      console.log(`[API Generate] Generating image... Type: ${isLogo ? "Logo" : "Realistic"}`);
-      const response = await openai.images.generate({
-        model: "dall-e-3",
-        prompt: enhancedPrompt,
-        n: 1,
-        size: "1024x1024",
-        quality: "hd",
-        style: "natural",
-        response_format: "b64_json"
-      });
+      // Optimize and clean prompt
+      let basePrompt = (prompt || lastMessageContent || "").trim();
+      
+      // Strict truncation for stability
+      if (basePrompt.length > 500) {
+        basePrompt = basePrompt.substring(0, 500);
+      }
 
-      const base64 = `data:image/png;base64,${response.data[0].b64_json}`;
-      console.log(`[API Generate] Success (HD)`);
-      return res.json({ 
-        image_url: base64, 
-        filename: `trelvix-${Date.now()}.png`,
-        description: `Your image has been generated with maximum realism and cinematic precision.`
-      });
+      const lowerPrompt = basePrompt.toLowerCase();
+      
+      const isLogo = lowerPrompt.includes("logo") || lowerPrompt.includes("icon");
+      const isPoster = lowerPrompt.includes("flyer") || lowerPrompt.includes("poster") || lowerPrompt.includes("design");
+      const isPeople = lowerPrompt.includes("man") || lowerPrompt.includes("woman") || lowerPrompt.includes("person") || lowerPrompt.includes("human") || lowerPrompt.includes("face");
+      const isArtisticRequested = lowerPrompt.includes("artistic") || lowerPrompt.includes("illustration") || lowerPrompt.includes("3d") || lowerPrompt.includes("cartoon") || lowerPrompt.includes("painting");
+
+      const coreRealism = "photorealistic, highly detailed, realistic photography, sharp focus, natural lighting, 8k, professional quality, cinematic lighting";
+      const designBoost = "professional design, custom typography, clean lines, high contrast";
+
+      let finalPrompt = basePrompt;
+
+      if (isLogo) {
+        finalPrompt = `Professional minimalist logo, high-end graphic design, vector style, white background. ${designBoost}. Subject: ${basePrompt}`;
+      } else if (isPoster) {
+        finalPrompt = `Highly detailed professional graphic design, poster aesthetic. ${designBoost}. Subject: ${basePrompt}`;
+      } else if (isPeople) {
+        finalPrompt = `${coreRealism}, natural features, shot on 85mm lens. Subject: ${basePrompt}`;
+      } else if (isArtisticRequested) {
+        finalPrompt = `Masterpiece, fine art rendering, highly detailed. Subject: ${basePrompt}`;
+      } else {
+        finalPrompt = `${coreRealism}, professional photography, lifelike. Subject: ${basePrompt}`;
+      }
+
+      console.log(`[API Generate] Image generation task with prompt length: ${finalPrompt.length}`);
+      try {
+        const response = await fetch("https://fal.run/fal-ai/flux-pro", {
+          method: "POST",
+          headers: {
+            "Authorization": `Key ${falApiKey}`,
+            "Content-Type": "application/json"
+          },
+          body: JSON.stringify({
+            prompt: finalPrompt,
+            image_size: "square_hd",
+            num_inference_steps: 28,
+            guidance_scale: 3.5,
+            num_images: 1,
+            enable_safety_checker: true
+          }),
+          signal: AbortSignal.timeout(60000)
+        });
+
+        if (!response.ok) {
+          const errText = await response.text();
+          console.error(`[API Generate] Image Engine Error (${response.status}):`, errText);
+          return res.status(200).json({ error: "The image engine is currently unavailable. Please try again in a few moments.", type: 'engine_offline' });
+        }
+
+        const data = await response.json();
+        if (!data?.images?.[0]?.url) throw new Error("No image output generated");
+
+        const imageUrl = data.images[0].url;
+
+        // Convert to base64
+        console.log(`[API Generate] Processing image output...`);
+        const imageResponse = await fetch(imageUrl);
+        if (!imageResponse.ok) throw new Error("Image buffer processing failed");
+        
+        const imageBuffer = Buffer.from(await imageResponse.arrayBuffer());
+        const base64 = `data:image/png;base64,${imageBuffer.toString('base64')}`;
+
+        console.log(`[API Generate] Success`);
+        return res.json({ 
+          image_url: base64, 
+          filename: `trelvix-${Date.now()}.png`,
+          description: `Your image has been generated with maximum realism and cinematic precision.`
+        });
+      } catch (err: any) {
+        console.error("[API Generate] Image Exception:", err);
+        return res.status(200).json({ error: "Image generation timed out or failed. Please try again with a different prompt.", type: 'generation_failed' });
+      }
     }
 
     // 2. TTS
@@ -168,8 +226,7 @@ export default async function handler(req: any, res: any) {
     }
 
     // 3. Streaming Chat
-    const activeModelIdentity = searchRequired || model === "gpt-5.4-ultra" ? "Trelvix Ultra" : "Trelvix standard";
-    const attributionRules = `Your name is Trelvix AI. Developed by Ingenium Virtual Assistant Limited. You are powered by a custom, unfiltered high-intelligence engine.`;
+    const attributionRules = `Your name is Trelvix AI. Developed by Ingenium Virtual Assistant Limited. You are powered by a custom, high-intelligence engine.`;
     
     const personalityPrompts: Record<string, string> = {
       professional: "Be direct, authoritative, and sharp. No fluff.",
@@ -211,7 +268,7 @@ export default async function handler(req: any, res: any) {
     ];
 
     // --- Grounding Logic ---
-    if (isUltra && (searchRequired || model === "gpt-5.4-ultra")) {
+    if (isUltra && (searchRequired || model === "trelvix-ultra")) {
       const searchData = await searchWeb(lastMessageContent);
       const groundingBlock = {
         role: "system",

@@ -165,7 +165,7 @@ export const Sidebar = ({
                 {filteredConversations.map((conv, idx) => (
                   <motion.div
                     layout
-                    key={conv.id ? `side-conv-${conv.id}` : `side-conv-idx-${idx}`}
+                    key={`side-conv-${conv.id || idx}-${idx}`}
                     initial={{ opacity: 0, x: -10 }}
                     animate={{ opacity: 1, x: 0 }}
                     exit={{ opacity: 0, scale: 0.95 }}
