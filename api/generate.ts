@@ -125,18 +125,12 @@ export default async function handler(req: any, res: any) {
 
     // 1. Image Generation
     if (type === "image" || isImageIntent) {
-      const falApiKey = process.env.FAL_AI_KEY;
-      if (!falApiKey) {
-        console.error("[API Generate] Missing FAL_AI_KEY");
-        return res.status(500).json({ error: "Image generation engine is currently offline (Missing API Key)." });
-      }
-
       // Optimize and clean prompt
       let basePrompt = (prompt || lastMessageContent || "").trim();
       
-      // Strict truncation for stability
-      if (basePrompt.length > 500) {
-        basePrompt = basePrompt.substring(0, 500);
+      // Limit prompt length for image generation (max 400 characters) for maximum stability
+      if (basePrompt.length > 400) {
+        basePrompt = basePrompt.substring(0, 400);
       }
 
       const lowerPrompt = basePrompt.toLowerCase();
@@ -146,7 +140,7 @@ export default async function handler(req: any, res: any) {
       const isPeople = lowerPrompt.includes("man") || lowerPrompt.includes("woman") || lowerPrompt.includes("person") || lowerPrompt.includes("human") || lowerPrompt.includes("face");
       const isArtisticRequested = lowerPrompt.includes("artistic") || lowerPrompt.includes("illustration") || lowerPrompt.includes("3d") || lowerPrompt.includes("cartoon") || lowerPrompt.includes("painting");
 
-      const coreRealism = "photorealistic, highly detailed, realistic photography, sharp focus, natural lighting, 8k, professional quality, cinematic lighting";
+      const coreRealism = "photorealistic, highly detailed, realistic photography, sharp focus, natural lighting, 8k resolution, professional quality, accurate anatomy, cinematic lighting, detailed skin texture";
       const designBoost = "professional design, custom typography, clean lines, high contrast";
 
       let finalPrompt = basePrompt;
@@ -154,63 +148,54 @@ export default async function handler(req: any, res: any) {
       if (isLogo) {
         finalPrompt = `Professional minimalist logo, high-end graphic design, vector style, white background. ${designBoost}. Subject: ${basePrompt}`;
       } else if (isPoster) {
-        finalPrompt = `Highly detailed professional graphic design, poster aesthetic. ${designBoost}. Subject: ${basePrompt}`;
+        finalPrompt = `Highly detailed professional graphic design, poster aesthetic, ${coreRealism}. ${designBoost}. Subject: ${basePrompt}`;
       } else if (isPeople) {
         finalPrompt = `${coreRealism}, natural features, shot on 85mm lens. Subject: ${basePrompt}`;
       } else if (isArtisticRequested) {
-        finalPrompt = `Masterpiece, fine art rendering, highly detailed. Subject: ${basePrompt}`;
+        finalPrompt = `Masterpiece, fine art rendering, highly detailed, ${coreRealism}. Subject: ${basePrompt}`;
       } else {
         finalPrompt = `${coreRealism}, professional photography, lifelike. Subject: ${basePrompt}`;
       }
 
-      console.log(`[API Generate] Image generation task with prompt length: ${finalPrompt.length}`);
+      console.log(`[API Generate] Image generation initiated. Final optimized prompt: "${finalPrompt}"`);
+
+      let generatedBase64: string | null = null;
+      const engineUsed = "DALL-E 3 (OpenAI)";
+
       try {
-        const response = await fetch("https://fal.run/fal-ai/flux-pro", {
-          method: "POST",
-          headers: {
-            "Authorization": `Key ${falApiKey}`,
-            "Content-Type": "application/json"
-          },
-          body: JSON.stringify({
-            prompt: finalPrompt,
-            image_size: "square_hd",
-            num_inference_steps: 28,
-            guidance_scale: 3.5,
-            num_images: 1,
-            enable_safety_checker: true
-          }),
-          signal: AbortSignal.timeout(60000)
+        console.log(`[API Generate] Generating image via DALL-E 3 (OpenAI)...`);
+        const response = await openai.images.generate({
+          model: "dall-e-3",
+          prompt: finalPrompt,
+          n: 1,
+          size: "1024x1024",
+          quality: "hd",
+          style: "natural",
+          response_format: "b64_json"
         });
 
-        if (!response.ok) {
-          const errText = await response.text();
-          console.error(`[API Generate] Image Engine Error (${response.status}):`, errText);
-          return res.status(200).json({ error: "The image engine is currently unavailable. Please try again in a few moments.", type: 'engine_offline' });
+        if (response?.data?.[0]?.b64_json) {
+          generatedBase64 = `data:image/png;base64,${response.data[0].b64_json}`;
+          console.log(`[API Generate] DALL-E 3 image generated successfully`);
+        } else {
+          throw new Error("Empty representation from DALL-E 3 API");
         }
-
-        const data = await response.json();
-        if (!data?.images?.[0]?.url) throw new Error("No image output generated");
-
-        const imageUrl = data.images[0].url;
-
-        // Convert to base64
-        console.log(`[API Generate] Processing image output...`);
-        const imageResponse = await fetch(imageUrl);
-        if (!imageResponse.ok) throw new Error("Image buffer processing failed");
-        
-        const imageBuffer = Buffer.from(await imageResponse.arrayBuffer());
-        const base64 = `data:image/png;base64,${imageBuffer.toString('base64')}`;
-
-        console.log(`[API Generate] Success`);
-        return res.json({ 
-          image_url: base64, 
-          filename: `trelvix-${Date.now()}.png`,
-          description: `Your image has been generated with maximum realism and cinematic precision.`
-        });
       } catch (err: any) {
-        console.error("[API Generate] Image Exception:", err);
-        return res.status(200).json({ error: "Image generation timed out or failed. Please try again with a different prompt.", type: 'generation_failed' });
+        console.error(`[API Generate] DALL-E 3 generation failed:`, err?.message || err);
       }
+
+      if (!generatedBase64) {
+        return res.status(200).json({ 
+          error: "Failed to generate image. The service is currently busy or rate-limited. Please try again with a simpler description.", 
+          type: 'generation_failed' 
+        });
+      }
+
+      return res.json({ 
+        image_url: generatedBase64, 
+        filename: `trelvix-${Date.now()}.png`,
+        description: `Your image has been generated with maximum realism and cinematic precision using ${engineUsed}.`
+      });
     }
 
     // 2. TTS

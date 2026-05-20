@@ -46,6 +46,15 @@ import { supabase } from './lib/supabase';
 
 import type { Message, ConversationType, Profile } from './types';
 
+const safeUUID = (): string => {
+  if (typeof window !== 'undefined' && window.crypto && window.crypto.randomUUID) {
+    try {
+      return window.crypto.randomUUID();
+    } catch (e) {}
+  }
+  return 'msg-' + Math.random().toString(36).substring(2, 15) + '-' + Date.now();
+};
+
 // --- Components ---
 import { Sidebar } from './components/Sidebar';
 
@@ -887,7 +896,7 @@ export default function App() {
     }
 
     const userMessage: Message = {
-      id: crypto.randomUUID(),
+      id: safeUUID(),
       role: 'user',
       content,
       image_url: selectedAttachment?.type === 'image' ? selectedAttachment.preview : undefined,
@@ -1040,7 +1049,7 @@ export default function App() {
         }
 
         const assistantMessage: Message = {
-          id: crypto.randomUUID(),
+          id: safeUUID(),
           role: 'assistant',
           content: data.description || `Generated image for: ${content}`,
           image_url: imageData ? `db:${imageData.id}` : image_url,
@@ -1082,7 +1091,7 @@ export default function App() {
       }
 
       const assistantMessage: Message = {
-        id: crypto.randomUUID(),
+        id: safeUUID(),
         role: 'assistant',
         content: fullContent,
         model: activeModel,
@@ -1547,9 +1556,9 @@ export default function App() {
                 </div>
               ) : (
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pb-12">
-                    {conversations.map((conv, idx) => (
+                    {conversations.map((conv) => (
                       <div
-                        key={`history-conv-${conv.id || idx}-${idx}`}
+                        key={conv.id}
                         className="p-6 bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-3xl text-left hover:border-zinc-400 dark:hover:border-zinc-600 transition-all group relative hover:shadow-xl"
                       >
                       <div onClick={() => {
@@ -1594,9 +1603,9 @@ export default function App() {
                 <WelcomeScreen />
               ) : (
                 <div className="max-w-4xl mx-auto w-full p-4 md:p-8 space-y-8 pb-32">
-                  {messages.map((m, idx) => (
+                  {messages.map((m) => (
                     <div 
-                      key={`chat-msg-${m.id || idx}-${idx}`} 
+                      key={m.id} 
                       onClick={() => setActiveMessageId(activeMessageId === m.id ? null : m.id)}
                       className={cn(
                         "flex w-full cursor-pointer md:cursor-default",

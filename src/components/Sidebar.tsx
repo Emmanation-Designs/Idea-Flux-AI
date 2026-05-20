@@ -162,10 +162,10 @@ export const Sidebar = ({
               </div>
             ) : (
               <AnimatePresence mode="popLayout">
-                {filteredConversations.map((conv, idx) => (
+                {filteredConversations.map((conv) => (
                   <motion.div
                     layout
-                    key={`side-conv-${conv.id || idx}-${idx}`}
+                    key={conv.id}
                     initial={{ opacity: 0, x: -10 }}
                     animate={{ opacity: 1, x: 0 }}
                     exit={{ opacity: 0, scale: 0.95 }}
