@@ -47,8 +47,15 @@ app.all("/api/proxy-image", async (req, res) => {
   if (!imageUrl) return res.status(400).send("URL is required");
 
   try {
-    const response = await fetch(imageUrl);
-    if (!response.ok) throw new Error("Failed to fetch image");
+    const response = await fetch(imageUrl, {
+      headers: {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+      }
+    });
+    if (!response.ok) {
+      console.warn(`[Proxy Image] Failed to fetch image (Status ${response.status}) for URL: ${imageUrl.substring(0, 150)}`);
+      return res.status(response.status || 500).send(`Failed to proxy image: Status ${response.status}`);
+    }
     
     const arrayBuffer = await response.arrayBuffer();
     const buffer = Buffer.from(arrayBuffer);
@@ -56,9 +63,9 @@ app.all("/api/proxy-image", async (req, res) => {
     res.setHeader("Content-Type", response.headers.get("Content-Type") || "image/png");
     res.setHeader("Content-Disposition", `attachment; filename="image.png"`);
     res.send(buffer);
-  } catch (error) {
-    console.error("Proxy error:", error);
-    res.status(500).send("Failed to proxy image");
+  } catch (error: any) {
+    console.warn(`[Proxy Image] Connection error while fetching URL: ${imageUrl.substring(0, 150)} - Message: ${error?.message || error}`);
+    res.status(500).send("Failed to proxy image due to connection/SSL error");
   }
 });
 

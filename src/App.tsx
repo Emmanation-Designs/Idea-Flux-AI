@@ -64,6 +64,11 @@ const ImageWithLoader = ({ src, alt, className, onClick }: { src: string, alt: s
   const [displaySrc, setDisplaySrc] = useState(src.startsWith('db:') ? '' : src);
 
   useEffect(() => {
+    if (src === 'expired') {
+      setHasError(true);
+      setDisplaySrc('');
+      return;
+    }
     if (src.startsWith('db:')) {
       const imgId = src.split(':')[1];
       supabase.from('images').select('image_url').eq('id', imgId).single()
@@ -642,7 +647,7 @@ export default function App() {
         const messages = conv.messages || [];
         let updated = false;
         const newMessages = await Promise.all(messages.map(async (m: any) => {
-          if (m.image_url && !m.image_url.startsWith('db:') && !m.image_url.startsWith('data:')) {
+          if (m.image_url && !m.image_url.startsWith('db:') && !m.image_url.startsWith('data:') && m.image_url !== 'expired') {
             try {
               const proxyResp = await fetch('/api/proxy-image', {
                 method: 'POST',
@@ -667,6 +672,12 @@ export default function App() {
                   updated = true;
                   return { ...m, image_url: `db:${imgData.id}` };
                 }
+              } else {
+                // If it fails to fetch (e.g. 403, 404, or 500 because of an expired OpenAI URL),
+                // mark it as 'expired' so we do not attempt to proxy it again on subsequent reloads.
+                console.warn(`[Auto-Migrate] Found expired image url, marking as expired: ${m.image_url.substring(0, 100)}`);
+                updated = true;
+                return { ...m, image_url: 'expired' };
               }
             } catch (e) {
               console.error("Migration failed:", e);
