@@ -168,13 +168,25 @@ export default async function handler(req: any, res: any) {
           model: "dall-e-3",
           prompt: finalPrompt,
           n: 1,
-          size: "1024x1024",
-          response_format: "b64_json"
+          size: "1024x1024"
         });
 
         if (response?.data?.[0]?.b64_json) {
           generatedBase64 = `data:image/png;base64,${response.data[0].b64_json}`;
-          console.log(`[API Generate] DALL-E 3 image generated successfully`);
+          console.log(`[API Generate] DALL-E 3 image generated successfully (b64_json)`);
+        } else if (response?.data?.[0]?.url) {
+          const imgUrl = response.data[0].url;
+          console.log(`[API Generate] DALL-E 3 image URL returned, fetching & converting to Base64...`);
+          const imgResp = await fetch(imgUrl);
+          if (imgResp.ok) {
+            const arrayBuffer = await imgResp.arrayBuffer();
+            const buffer = Buffer.from(arrayBuffer);
+            const contentType = imgResp.headers.get("content-type") || "image/png";
+            generatedBase64 = `data:${contentType};base64,${buffer.toString("base64")}`;
+            console.log(`[API Generate] Successfully fetched and converted DALL-E 3 image URL to Base64`);
+          } else {
+            throw new Error(`Failed to fetch generated image from URL (Status ${imgResp.status})`);
+          }
         } else {
           throw new Error("Empty representation from DALL-E 3 API");
         }
