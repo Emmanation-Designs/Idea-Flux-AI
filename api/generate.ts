@@ -125,99 +125,52 @@ export default async function handler(req: any, res: any) {
 
     // 1. Image Generation
     if (type === "image" || isImageIntent) {
-      // Optimize and clean prompt
-      let basePrompt = (prompt || lastMessageContent || "").trim();
-      
-      // Limit prompt length for image generation (max 400 characters) for maximum stability
-      if (basePrompt.length > 400) {
-        basePrompt = basePrompt.substring(0, 400);
-      }
+      const promptText = req.body.prompt || req.body.message || prompt || "";
+      console.log("[Image] Generating with DALL-E 3, prompt length:", promptText.length);
 
-      const lowerPrompt = basePrompt.toLowerCase();
-      
-      const isLogo = lowerPrompt.includes("logo") || lowerPrompt.includes("icon");
-      const isPoster = lowerPrompt.includes("flyer") || lowerPrompt.includes("poster") || lowerPrompt.includes("design");
-      const isPeople = lowerPrompt.includes("man") || lowerPrompt.includes("woman") || lowerPrompt.includes("person") || lowerPrompt.includes("human") || lowerPrompt.includes("face");
-      const isArtisticRequested = lowerPrompt.includes("artistic") || lowerPrompt.includes("illustration") || lowerPrompt.includes("3d") || lowerPrompt.includes("cartoon") || lowerPrompt.includes("painting");
+      try {
+        const response = await openai.images.generate({
+          model: "dall-e-3",
+          prompt: promptText + ", photorealistic, highly detailed, realistic photography, sharp focus, natural lighting, 8k",
+          quality: "hd",
+          size: "1024x1024",
+          n: 1,
+        });
 
-      const coreRealism = "photorealistic, highly detailed, realistic photography, sharp focus, natural lighting, 8k resolution, professional quality, accurate anatomy, cinematic lighting, detailed skin texture";
-      const designBoost = "professional design, custom typography, clean lines, high contrast";
-
-      let finalPrompt = basePrompt;
-
-      if (isLogo) {
-        finalPrompt = `Professional minimalist logo, high-end graphic design, vector style, white background. ${designBoost}. Subject: ${basePrompt}`;
-      } else if (isPoster) {
-        finalPrompt = `Highly detailed professional graphic design, poster aesthetic, ${coreRealism}. ${designBoost}. Subject: ${basePrompt}`;
-      } else if (isPeople) {
-        finalPrompt = `${coreRealism}, natural features, shot on 85mm lens. Subject: ${basePrompt}`;
-      } else if (isArtisticRequested) {
-        finalPrompt = `Masterpiece, fine art rendering, highly detailed, ${coreRealism}. Subject: ${basePrompt}`;
-      } else {
-        finalPrompt = `${coreRealism}, professional photography, lifelike. Subject: ${basePrompt}`;
-      }
-
-      console.log(`[API Generate] Image generation initiated. Final optimized prompt: "${finalPrompt}"`);
-
-      let generatedBase64: string | null = null;
-      let engineUsed = "dall-e-3";
-
-      // Sequentially try different model names to handle proxy casing constraints and api permissions
-      const modelCandidates = [
-        "dall-e-3", "DALL-E-3", "DALL-E 3", "dall-e3", "DALL-E3",
-        "dall-e-2", "DALL-E-2", "DALL-E 2", "dall-e2", "DALL-E2"
-      ];
-
-      for (const candidate of modelCandidates) {
-        try {
-          console.log(`[API Generate] Attempting image generation with model: "${candidate}"...`);
-          const response = await openai.images.generate({
-            model: candidate,
-            prompt: finalPrompt,
-            n: 1,
-            size: "1024x1024"
-          });
-
-          if (response?.data?.[0]?.b64_json) {
-            generatedBase64 = `data:image/png;base64,${response.data[0].b64_json}`;
-            engineUsed = candidate;
-            console.log(`[API Generate] Image generated successfully using ${candidate} (b64_json)`);
-            break;
-          } else if (response?.data?.[0]?.url) {
-            const imgUrl = response.data[0].url;
-            console.log(`[API Generate] Image URL returned from ${candidate}, fetching and converting to Base64...`);
-            const imgResp = await fetch(imgUrl);
-            if (imgResp.ok) {
-              const arrayBuffer = await imgResp.arrayBuffer();
-              const buffer = Buffer.from(arrayBuffer);
-              const contentType = imgResp.headers.get("content-type") || "image/png";
-              generatedBase64 = `data:${contentType};base64,${buffer.toString("base64")}`;
-              engineUsed = candidate;
-              console.log(`[API Generate] Successfully fetched and converted ${candidate} image URL to Base64`);
-              break;
-            } else {
-              console.warn(`[API Generate] Failed to fetch image from URL for model ${candidate} (Status ${imgResp.status})`);
-            }
-          } else {
-            console.warn(`[API Generate] Empty representation from model ${candidate}`);
-          }
-        } catch (err: any) {
-          console.warn(`[API Generate] Model "${candidate}" failed: ${err?.message || err}`);
+        const imageUrl = response.data[0].url;
+        if (!imageUrl) {
+          throw new Error("No URL returned from OpenAI DALL-E 3 API");
         }
-      }
 
-      if (!generatedBase64) {
+        console.log("[Image] DALL-E 3 image URL returned, fetching and converting to Base64...");
+        let base64Image = imageUrl;
+        try {
+          const imgResp = await fetch(imageUrl);
+          if (imgResp.ok) {
+            const arrayBuffer = await imgResp.arrayBuffer();
+            const buffer = Buffer.from(arrayBuffer);
+            const contentType = imgResp.headers.get("content-type") || "image/png";
+            base64Image = `data:${contentType};base64,${buffer.toString("base64")}`;
+            console.log("[Image] Successfully fetched and converted DALL-E 3 image URL to Base64");
+          } else {
+            console.warn(`[Image] Failed to fetch image for Base64 conversion (Status ${imgResp.status}). Falling back to direct URL.`);
+          }
+        } catch (fetchErr: any) {
+          console.warn("[Image] Error fetching image for Base64 conversion:", fetchErr.message || fetchErr, ". Falling back to direct URL.");
+        }
+
+        return res.json({ 
+          image_url: base64Image, 
+          filename: `trelvix-${Date.now()}.png`,
+          description: "Your image has been generated with maximum realism and cinematic precision using dall-e-3."
+        });
+      } catch (err: any) {
+        console.error("[Image] DALL-E 3 generation failed:", err?.message || err);
         return res.status(200).json({ 
-          error: "Failed to generate image. The service is currently busy or rate-limited. Please try again with a simpler description.", 
+          error: `Failed to generate image: ${err?.message || "Internal error"}`, 
           type: 'generation_failed' 
         });
       }
-
-      return res.json({ 
-        image_url: generatedBase64, 
-        filename: `trelvix-${Date.now()}.png`,
-        description: `Your image has been generated with maximum realism and cinematic precision using ${engineUsed}.`
-      });
     }
 
     // 2. TTS
