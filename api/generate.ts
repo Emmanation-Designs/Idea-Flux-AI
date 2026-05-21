@@ -160,8 +160,9 @@ export default async function handler(req: any, res: any) {
       console.log(`[API Generate] Image generation initiated. Final optimized prompt: "${finalPrompt}"`);
 
       let generatedBase64: string | null = null;
-      const engineUsed = "DALL-E 3 (OpenAI)";
+      let engineUsed = "DALL-E 3 (OpenAI)";
 
+      // Step 1: Try OpenAI DALL-E 3
       try {
         console.log(`[API Generate] Generating image via DALL-E 3 (OpenAI)...`);
         const response = await openai.images.generate({
@@ -191,7 +192,41 @@ export default async function handler(req: any, res: any) {
           throw new Error("Empty representation from DALL-E 3 API");
         }
       } catch (err: any) {
-        console.error(`[API Generate] DALL-E 3 generation failed:`, err?.message || err);
+        console.warn(`[API Generate] DALL-E 3 generation failed: ${err?.message || err}. Trying DALL-E 2 fallback...`);
+        
+        // Step 2: Try OpenAI DALL-E 2
+        try {
+          const response = await openai.images.generate({
+            model: "dall-e-2",
+            prompt: finalPrompt,
+            n: 1,
+            size: "1024x1024"
+          });
+
+          if (response?.data?.[0]?.b64_json) {
+            generatedBase64 = `data:image/png;base64,${response.data[0].b64_json}`;
+            engineUsed = "DALL-E 2 (OpenAI)";
+            console.log(`[API Generate] DALL-E 2 image generated successfully (b64_json)`);
+          } else if (response?.data?.[0]?.url) {
+            const imgUrl = response.data[0].url;
+            console.log(`[API Generate] DALL-E 2 image URL returned, fetching & converting to Base64...`);
+            const imgResp = await fetch(imgUrl);
+            if (imgResp.ok) {
+              const arrayBuffer = await imgResp.arrayBuffer();
+              const buffer = Buffer.from(arrayBuffer);
+              const contentType = imgResp.headers.get("content-type") || "image/png";
+              generatedBase64 = `data:${contentType};base64,${buffer.toString("base64")}`;
+              engineUsed = "DALL-E 2 (OpenAI)";
+              console.log(`[API Generate] Successfully fetched and converted DALL-E 2 image URL to Base64`);
+            } else {
+              throw new Error(`Failed to fetch generated image from URL (Status ${imgResp.status})`);
+            }
+          } else {
+            throw new Error("Empty representation from DALL-E 2 API");
+          }
+        } catch (dalle2Err: any) {
+          console.error(`[API Generate] DALL-E 2 generation failed:`, dalle2Err?.message || dalle2Err);
+        }
       }
 
       if (!generatedBase64) {
