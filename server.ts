@@ -397,8 +397,6 @@ async function handleGenerate(req: express.Request, res: express.Response) {
           prompt: finalPrompt,
           n: 1,
           size: "1024x1024",
-          quality: "hd",
-          style: "natural",
           response_format: "b64_json"
         });
 

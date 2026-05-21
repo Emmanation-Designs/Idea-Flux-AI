@@ -169,8 +169,6 @@ export default async function handler(req: any, res: any) {
           prompt: finalPrompt,
           n: 1,
           size: "1024x1024",
-          quality: "hd",
-          style: "natural",
           response_format: "b64_json"
         });
 
