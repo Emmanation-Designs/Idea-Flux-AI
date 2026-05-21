@@ -688,6 +688,8 @@ export default function App() {
 
         if (updated) {
           await updateConversationMessages(conv.id, newMessages);
+          setConversations(prev => prev.map(c => c.id === conv.id ? { ...c, messages: newMessages } : c));
+          setCurrentConversation(prev => (prev && prev.id === conv.id) ? { ...prev, messages: newMessages } : prev);
         }
       });
     } catch (error) {
