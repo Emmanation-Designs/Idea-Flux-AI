@@ -225,7 +225,7 @@ export default async function handler(req: any, res: any) {
         image_url: base64Image, 
         type: "image",
         filename: `trelvix-${Date.now()}.png`,
-        description: `Your image has been generated with maximum realism and cinematic precision using ${modelUsed}.`
+        description: `A stunning visual representation of your request: "${promptText}".`
       });
     }
 
