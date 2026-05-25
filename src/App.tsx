@@ -39,8 +39,16 @@ import {
 import { motion, AnimatePresence } from 'motion/react';
 import { Toaster, toast } from 'sonner';
 import ReactMarkdown from 'react-markdown';
-import remarkGfm from 'remark-gfm';
 import { clsx, type ClassValue } from 'clsx';
+
+const supportsLookbehind = (() => {
+  try {
+    new RegExp('(?<=a)b');
+    return true;
+  } catch (e) {
+    return false;
+  }
+})();
 import { twMerge } from 'tailwind-merge';
 import { supabase } from './lib/supabase';
 
@@ -179,6 +187,17 @@ export default function App() {
   const [hasError, setHasError] = useState(false);
   const [lastFailedRequest, setLastFailedRequest] = useState<{content: string, conv?: any} | null>(null);
   const [viewportHeight, setViewportHeight] = useState<string>('100%');
+  const [loadedRemarkGfm, setLoadedRemarkGfm] = useState<any>(null);
+
+  useEffect(() => {
+    if (supportsLookbehind) {
+      import('remark-gfm').then((mod) => {
+        setLoadedRemarkGfm(() => mod.default);
+      }).catch((e) => {
+        console.warn("[Markdown] Dynamic load of remark-gfm failed:", e);
+      });
+    }
+  }, []);
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
@@ -1658,7 +1677,7 @@ export default function App() {
                             : "prose-sm md:prose-base text-zinc-750 dark:text-zinc-300"
                         )}>
                           <ReactMarkdown 
-                            remarkPlugins={[remarkGfm]}
+                            remarkPlugins={loadedRemarkGfm ? [loadedRemarkGfm] : []}
                             components={{
                               code({ node, inline, className, children, ...props }: any) {
                                 return (
@@ -1838,7 +1857,7 @@ export default function App() {
                       <div className="w-full bg-transparent text-zinc-900 dark:text-zinc-100 border-none shadow-none px-0 py-1 relative">
                         {streamingMessage ? (
                           <div className="prose dark:prose-invert prose-sm md:prose-base max-w-none leading-relaxed">
-                            <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                            <ReactMarkdown remarkPlugins={loadedRemarkGfm ? [loadedRemarkGfm] : []}>
                               {streamingMessage}
                             </ReactMarkdown>
                             <span className="inline-block w-2.5 h-4.5 ml-1 bg-zinc-900 dark:bg-white animate-pulse rounded-sm align-middle" />
