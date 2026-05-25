@@ -178,6 +178,35 @@ export default function App() {
   const [upgradeReason, setUpgradeReason] = useState<'usage' | 'images' | 'manual'>('usage');
   const [hasError, setHasError] = useState(false);
   const [lastFailedRequest, setLastFailedRequest] = useState<{content: string, conv?: any} | null>(null);
+  const [viewportHeight, setViewportHeight] = useState<string>('100%');
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    
+    const updateHeight = () => {
+      if (window.visualViewport) {
+        setViewportHeight(`${window.visualViewport.height}px`);
+      } else {
+        setViewportHeight('100%');
+      }
+    };
+
+    updateHeight();
+    
+    if (window.visualViewport) {
+      window.visualViewport.addEventListener('resize', updateHeight);
+      window.visualViewport.addEventListener('scroll', updateHeight);
+    }
+    window.addEventListener('resize', updateHeight);
+
+    return () => {
+      if (window.visualViewport) {
+        window.visualViewport.removeEventListener('resize', updateHeight);
+        window.visualViewport.removeEventListener('scroll', updateHeight);
+      }
+      window.removeEventListener('resize', updateHeight);
+    };
+  }, []);
   const loadingIntervalRef = useRef<any>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   
@@ -1439,7 +1468,10 @@ export default function App() {
   );
 
   return (
-    <div className={cn("flex h-[100dvh] bg-white dark:bg-zinc-950 text-zinc-900 dark:text-zinc-100 font-sans overflow-hidden", isDarkMode && "dark")}>
+    <div 
+      style={{ height: viewportHeight }}
+      className={cn("fixed inset-0 w-full flex bg-white dark:bg-zinc-950 text-zinc-900 dark:text-zinc-100 font-sans overflow-hidden", isDarkMode && "dark")}
+    >
       <Sidebar 
         isOpen={isSidebarOpen}
         setIsOpen={setIsSidebarOpen}
@@ -1500,7 +1532,7 @@ export default function App() {
         )}
 
         {/* Content Area */}
-        <div className="flex-1 overflow-y-auto flex flex-col">
+        <div className="flex-1 overflow-y-auto overscroll-y-contain flex flex-col">
           {activeView === 'apps' ? (
             <div className="flex-1 flex flex-col overflow-hidden">
               <div className="px-6 pt-6 flex items-center justify-between md:hidden">
@@ -1836,8 +1868,8 @@ export default function App() {
 
         {/* Input Area */}
         {activeView === 'chat' && (
-          <div className="relative p-6 md:p-8 bg-white dark:bg-zinc-950 border-t border-zinc-100 dark:border-zinc-900/50">
-            <div className="max-w-4xl mx-auto space-y-4 md:space-y-6">
+          <div className="relative p-3 pb-4 sm:p-6 md:p-8 bg-white dark:bg-zinc-950 border-t border-zinc-100 dark:border-zinc-900/50">
+            <div className="max-w-4xl mx-auto space-y-2 md:space-y-6">
               <div className="bg-zinc-50 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-[2rem] md:rounded-[2.5rem] shadow-xl md:shadow-2xl focus-within:ring-2 focus-within:ring-zinc-900/5 dark:focus-within:ring-white/5 transition-all relative z-20 overflow-hidden">
                 <AnimatePresence>
                   {selectedAttachment && (

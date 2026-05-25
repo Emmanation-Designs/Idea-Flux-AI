@@ -374,7 +374,7 @@ async function handleGenerate(req: express.Request, res: express.Response) {
       const fullPrompt = promptText + ". photorealistic, highly detailed, realistic photography, sharp focus, natural lighting, 8k resolution, professional quality, accurate anatomy, cinematic lighting";
 
       let response;
-      let modelUsed = "gpt-image-1";
+      let modelUsed = "gpt-image-2";
       let base64Image = "";
 
       const extractImage = (resObj: any) => {
@@ -389,9 +389,9 @@ async function handleGenerate(req: express.Request, res: express.Response) {
       };
 
       try {
-        console.log("[Image Generation] Attempting generation with gpt-image-1 (quality: auto)...");
+        console.log("[Image Generation] Attempting generation with primary model gpt-image-2 (quality: auto)...");
         response = await openai.images.generate({
-          model: "gpt-image-1",
+          model: "gpt-image-2",
           prompt: fullPrompt,
           quality: "auto",
           size: "1024x1024",
@@ -399,45 +399,57 @@ async function handleGenerate(req: express.Request, res: express.Response) {
         });
         const extracted = extractImage(response);
         if (!extracted) {
-          console.warn("[Image Generation] No image returned in gpt-image-1 auto configuration response. Payload:", JSON.stringify(response));
-          throw new Error("No image returned from gpt-image-1 with auto config");
+          throw new Error("No image returned from gpt-image-2");
         }
         base64Image = extracted;
-        modelUsed = "gpt-image-1 (auto)";
-      } catch (err: any) {
-        console.warn(`[Image Generation] gpt-image-1 (auto) failed: ${err?.message || err}. Trying (quality: high)...`);
+         modelUsed = "gpt-image-2 (auto)";
+      } catch (err2: any) {
+        console.warn(`[Image Generation] Primary model gpt-image-2 failure: ${err2?.message || err2}. Retrying with minimal params for gpt-image-2...`);
         try {
           response = await openai.images.generate({
-            model: "gpt-image-1",
+            model: "gpt-image-2",
             prompt: fullPrompt,
-            quality: "high",
-            size: "1024x1024",
-            n: 1,
           });
           const extracted = extractImage(response);
           if (!extracted) {
-            console.warn("[Image Generation] No image returned in gpt-image-1 high configuration response. Payload:", JSON.stringify(response));
-            throw new Error("No image returned from gpt-image-1 with high config");
+            throw new Error("No image returned from gpt-image-2 minimal");
           }
           base64Image = extracted;
-          modelUsed = "gpt-image-1 (high)";
-        } catch (errHigh: any) {
-          console.warn(`[Image Generation] gpt-image-1 (high) failed: ${errHigh?.message || errHigh}. Trying minimal params...`);
+          modelUsed = "gpt-image-2 (minimal)";
+        } catch (err2Minimal: any) {
+          console.warn(`[Image Generation] gpt-image-2 failed completely: ${err2Minimal?.message || err2Minimal}. Invoking fallback gpt-image-1...`);
           try {
+            console.log("[Image Generation] Attempting fallback generation with gpt-image-1 (quality: auto)...");
             response = await openai.images.generate({
               model: "gpt-image-1",
               prompt: fullPrompt,
+              quality: "auto",
+              size: "1024x1024",
+              n: 1,
             });
             const extracted = extractImage(response);
             if (!extracted) {
-              console.warn("[Image Generation] No image returned in gpt-image-1 minimal response. Payload:", JSON.stringify(response));
-              throw new Error("No image returned from gpt-image-1 minimal config");
+              throw new Error("No image returned from fallback gpt-image-1");
             }
             base64Image = extracted;
-            modelUsed = "gpt-image-1 (minimal)";
-          } catch (errMinimal: any) {
-            console.error("[Image Generation] All gpt-image-1 methods failed:", errMinimal?.message || errMinimal);
-            throw new Error(errMinimal?.message || "Failed to generate image with gpt-image-1");
+            modelUsed = "gpt-image-1 (fallback auto)";
+          } catch (err1: any) {
+            console.warn(`[Image Generation] Fallback gpt-image-1 auto configuration failed: ${err1?.message || err1}. Trying gpt-image-1 with minimal config...`);
+            try {
+              response = await openai.images.generate({
+                model: "gpt-image-1",
+                prompt: fullPrompt,
+              });
+              const extracted = extractImage(response);
+              if (!extracted) {
+                throw new Error("No image returned from fallback gpt-image-1 minimal");
+              }
+              base64Image = extracted;
+              modelUsed = "gpt-image-1 (fallback minimal)";
+            } catch (errAll: any) {
+              console.error("[Image Generation] All image generation models failed:", errAll?.message || errAll);
+              throw new Error(errAll?.message || "Failed to generate image with any model.");
+            }
           }
         }
       }
