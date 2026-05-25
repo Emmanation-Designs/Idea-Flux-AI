@@ -125,52 +125,71 @@ export default async function handler(req: any, res: any) {
 
     // 1. Image Generation
     if (type === "image" || isImageIntent) {
-      const promptText = req.body.prompt || req.body.message || prompt || "";
-      console.log("[Image] Generating with DALL-E 3, prompt length:", promptText.length);
+      let promptText = req.body.prompt || req.body.message || prompt || "a beautiful image";
+
+      console.log("[Image Generation] Original prompt length:", promptText.length);
+
+      // Append strong realism instructions
+      const fullPrompt = promptText + ". photorealistic, highly detailed, realistic photography, sharp focus, natural lighting, 8k resolution, professional quality, accurate anatomy, cinematic lighting";
+
+      let response;
+      let modelUsed = "gpt-image-1";
+      let base64Image = "";
 
       try {
-        const response = await openai.images.generate({
-          model: "dall-e-3",
-          prompt: promptText + ", photorealistic, highly detailed, realistic photography, sharp focus, natural lighting, 8k",
+        console.log("[Image Generation] Attempting generation with gpt-image-1...");
+        response = await openai.images.generate({
+          model: "gpt-image-1",
+          prompt: fullPrompt,
           quality: "hd",
           size: "1024x1024",
           n: 1,
         });
-
-        const imageUrl = response.data[0].url;
-        if (!imageUrl) {
-          throw new Error("No URL returned from OpenAI DALL-E 3 API");
-        }
-
-        console.log("[Image] DALL-E 3 image URL returned, fetching and converting to Base64...");
-        let base64Image = imageUrl;
+        const imageUrl = response.data[0]?.url;
+        if (!imageUrl) throw new Error("No image URL returned from gpt-image-1 with config");
+        base64Image = imageUrl;
+      } catch (err: any) {
+        console.warn(`[Image Generation] gpt-image-1 detailed params failed: ${err?.message || err}. Retrying with minimal parameters...`);
         try {
-          const imgResp = await fetch(imageUrl);
+          response = await openai.images.generate({
+            model: "gpt-image-1",
+            prompt: fullPrompt,
+          });
+          const imageUrl = response.data[0]?.url;
+          if (!imageUrl) throw new Error("No image URL returned from gpt-image-1 minimal config");
+          base64Image = imageUrl;
+        } catch (errMinimal: any) {
+          console.error("[Image Generation] All gpt-image-1 methods failed:", errMinimal?.message || errMinimal);
+          throw new Error(errMinimal?.message || "Failed to generate image with gpt-image-1");
+        }
+      }
+
+      // Convert image URL to Base64 (only if it's a web URL from OpenAI)
+      if (base64Image.startsWith("http")) {
+        console.log(`[Image] Img generated via ${modelUsed}, fetching and converting to Base64...`);
+        try {
+          const imgResp = await fetch(base64Image);
           if (imgResp.ok) {
             const arrayBuffer = await imgResp.arrayBuffer();
             const buffer = Buffer.from(arrayBuffer);
             const contentType = imgResp.headers.get("content-type") || "image/png";
             base64Image = `data:${contentType};base64,${buffer.toString("base64")}`;
-            console.log("[Image] Successfully fetched and converted DALL-E 3 image URL to Base64");
+            console.log("[Image] Successfully fetched and converted image URL to Base64");
           } else {
             console.warn(`[Image] Failed to fetch image for Base64 conversion (Status ${imgResp.status}). Falling back to direct URL.`);
           }
         } catch (fetchErr: any) {
           console.warn("[Image] Error fetching image for Base64 conversion:", fetchErr.message || fetchErr, ". Falling back to direct URL.");
         }
-
-        return res.json({ 
-          image_url: base64Image, 
-          filename: `trelvix-${Date.now()}.png`,
-          description: "Your image has been generated with maximum realism and cinematic precision using dall-e-3."
-        });
-      } catch (err: any) {
-        console.error("[Image] DALL-E 3 generation failed:", err?.message || err);
-        return res.status(200).json({ 
-          error: `Failed to generate image: ${err?.message || "Internal error"}`, 
-          type: 'generation_failed' 
-        });
       }
+
+      return res.json({ 
+        imageUrl: base64Image,
+        image_url: base64Image, 
+        type: "image",
+        filename: `trelvix-${Date.now()}.png`,
+        description: `Your image has been generated with maximum realism and cinematic precision using ${modelUsed}.`
+      });
     }
 
     // 2. TTS
