@@ -136,6 +136,17 @@ export default async function handler(req: any, res: any) {
       let modelUsed = "gpt-image-1";
       let base64Image = "";
 
+      const extractImage = (resObj: any) => {
+        const item = resObj?.data?.[0];
+        if (item?.b64_json) {
+          return item.b64_json.startsWith("data:") ? item.b64_json : `data:image/png;base64,${item.b64_json}`;
+        }
+        if (item?.url) {
+          return item.url;
+        }
+        return "";
+      };
+
       try {
         console.log("[Image Generation] Attempting generation with gpt-image-1 (quality: auto)...");
         response = await openai.images.generate({
@@ -145,12 +156,12 @@ export default async function handler(req: any, res: any) {
           size: "1024x1024",
           n: 1,
         });
-        const imageUrl = response.data[0]?.url;
-        if (!imageUrl) {
-          console.warn("[Image Generation] No image URL in gpt-image-1 auto configuration response. Payload:", JSON.stringify(response));
-          throw new Error("No image URL returned from gpt-image-1 with auto config");
+        const extracted = extractImage(response);
+        if (!extracted) {
+          console.warn("[Image Generation] No image returned in gpt-image-1 auto configuration response. Payload:", JSON.stringify(response));
+          throw new Error("No image returned from gpt-image-1 with auto config");
         }
-        base64Image = imageUrl;
+        base64Image = extracted;
         modelUsed = "gpt-image-1 (auto)";
       } catch (err: any) {
         console.warn(`[Image Generation] gpt-image-1 (auto) failed: ${err?.message || err}. Trying (quality: high)...`);
@@ -162,12 +173,12 @@ export default async function handler(req: any, res: any) {
             size: "1024x1024",
             n: 1,
           });
-          const imageUrl = response.data[0]?.url;
-          if (!imageUrl) {
-            console.warn("[Image Generation] No image URL in gpt-image-1 high configuration response. Payload:", JSON.stringify(response));
-            throw new Error("No image URL returned from gpt-image-1 with high config");
+          const extracted = extractImage(response);
+          if (!extracted) {
+            console.warn("[Image Generation] No image returned in gpt-image-1 high configuration response. Payload:", JSON.stringify(response));
+            throw new Error("No image returned from gpt-image-1 with high config");
           }
-          base64Image = imageUrl;
+          base64Image = extracted;
           modelUsed = "gpt-image-1 (high)";
         } catch (errHigh: any) {
           console.warn(`[Image Generation] gpt-image-1 (high) failed: ${errHigh?.message || errHigh}. Trying minimal params...`);
@@ -176,12 +187,12 @@ export default async function handler(req: any, res: any) {
               model: "gpt-image-1",
               prompt: fullPrompt,
             });
-            const imageUrl = response.data[0]?.url;
-            if (!imageUrl) {
-              console.warn("[Image Generation] No image URL in gpt-image-1 minimal response. Payload:", JSON.stringify(response));
-              throw new Error("No image URL returned from gpt-image-1 minimal config");
+            const extracted = extractImage(response);
+            if (!extracted) {
+              console.warn("[Image Generation] No image returned in gpt-image-1 minimal response. Payload:", JSON.stringify(response));
+              throw new Error("No image returned from gpt-image-1 minimal config");
             }
-            base64Image = imageUrl;
+            base64Image = extracted;
             modelUsed = "gpt-image-1 (minimal)";
           } catch (errMinimal: any) {
             console.error("[Image Generation] All gpt-image-1 methods failed:", errMinimal?.message || errMinimal);
