@@ -1,6 +1,5 @@
 import { useState } from 'react';
 import { 
-  Zap, 
   Eye, 
   EyeOff 
 } from 'lucide-react';
@@ -9,6 +8,7 @@ import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 import { toast } from 'sonner';
 import { supabase } from '../lib/supabase';
+import { TrelvixLogo } from './TrelvixLogo';
 
 function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
@@ -69,8 +69,8 @@ export const Auth = ({ onAuthSuccess, isDarkMode }: { onAuthSuccess: () => void;
         className="w-full max-w-md bg-zinc-900 border border-zinc-800 rounded-[2.5rem] p-10 md:p-12 shadow-2xl relative z-10"
       >
         <div className="flex flex-col items-center mb-10 text-center">
-          <div className="w-16 h-16 rounded-2xl bg-zinc-800 flex items-center justify-center mb-6 shadow-xl border border-zinc-700/50">
-            <Zap className="w-8 h-8 text-emerald-500 drop-shadow-[0_0_10px_rgba(16,185,129,0.3)]" />
+          <div className="w-20 h-20 rounded-2xl bg-zinc-950 flex items-center justify-center mb-6 shadow-xl border border-zinc-800 p-2">
+            <TrelvixLogo className="w-14 h-14" />
           </div>
           <h1 className="text-3xl font-bold tracking-tight text-white mb-2">Trelvix AI</h1>
           <p className="text-zinc-500 text-sm font-medium leading-relaxed max-w-[240px]">The professional creative engine for high-fidelity content.</p>

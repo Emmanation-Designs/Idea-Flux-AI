@@ -17,7 +17,6 @@ import React, { useState } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
-
 import type { Profile } from '../types';
 
 function cn(...inputs: ClassValue[]) {
@@ -74,9 +73,9 @@ export const Sidebar = ({
       <div className="p-6 flex items-center justify-between mb-2">
         <h2 
           onClick={onNewChat}
-          className="font-black text-xs uppercase tracking-[0.2em] flex items-center gap-2 cursor-pointer transition-opacity"
+          className="font-black text-xs uppercase tracking-[0.2em] flex items-center gap-2 cursor-pointer transition-opacity text-zinc-900 dark:text-white"
         >
-          <Zap className="w-4 h-4 text-emerald-500" />
+          <Zap className="w-5 h-5 text-emerald-500 drop-shadow-[0_0_8px_rgba(16,185,129,0.3)]" />
           Trelvix AI
         </h2>
         <button onClick={() => setIsOpen(false)} className="p-1 hover:bg-zinc-200 dark:hover:bg-zinc-800 rounded-md lg:hidden text-zinc-400">
@@ -87,10 +86,17 @@ export const Sidebar = ({
       <div className="px-4 mb-6">
         <button 
           onClick={onNewChat}
-          className="w-full flex items-center gap-3 bg-zinc-900 dark:bg-zinc-100 text-white dark:text-zinc-900 px-4 py-3 rounded-xl font-black text-[10px] uppercase tracking-widest hover:brightness-110 active:scale-[0.98] transition-all shadow-xl shadow-zinc-500/10"
+          className="w-full group flex items-center justify-between bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white px-4 py-3 border border-emerald-500/20 hover:border-emerald-400/30 rounded-xl font-bold text-[11px] uppercase tracking-[0.15em] transition-all duration-300 shadow-md hover:shadow-lg shadow-emerald-500/10 hover:shadow-emerald-500/25 active:scale-[0.98] hover:-translate-y-[1px] cursor-pointer"
         >
-          <Plus className="w-4 h-4" />
-          New Conversation
+          <div className="flex items-center gap-2.5">
+            <span className="flex items-center justify-center w-5.5 h-5.5 rounded-lg bg-white/11 group-hover:bg-white/20 border border-white/5 transition-colors">
+              <Plus className="w-3.5 h-3.5 group-hover:rotate-90 transition-transform duration-300 ease-out" />
+            </span>
+            <span>New Conversation</span>
+          </div>
+          <span className="text-[8px] font-mono tracking-wider opacity-60 bg-black/10 dark:bg-white/10 px-1.5 py-0.5 rounded-md border border-white/5">
+            NEW
+          </span>
         </button>
       </div>
 

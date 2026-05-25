@@ -39,6 +39,8 @@ import {
 import { motion, AnimatePresence } from 'motion/react';
 import { Toaster, toast } from 'sonner';
 import ReactMarkdown from 'react-markdown';
+import remarkMath from 'remark-math';
+import rehypeKatex from 'rehype-katex';
 import { clsx, type ClassValue } from 'clsx';
 
 const supportsLookbehind = (() => {
@@ -61,6 +63,33 @@ const safeUUID = (): string => {
     } catch (e) {}
   }
   return 'msg-' + Math.random().toString(36).substring(2, 15) + '-' + Date.now();
+};
+
+const preprocessMath = (content: string): string => {
+  if (!content) return "";
+  
+  // Split by code blocks to avoid replacing math delimiters inside coding regions
+  const parts = content.split(/(```[\s\S]*?```)/g);
+  
+  const processedParts = parts.map((part) => {
+    if (part.startsWith('```')) {
+      return part;
+    }
+    
+    // Replace block math delimiters \[ ... \] or \\[ ... \\] with $$ ... $$
+    let sub = part.replace(/(?:\\{1,2})\[([\s\S]*?)(?:\\{1,2})\]/g, (_, equation) => {
+      return `\n$$\n${equation.trim()}\n$$\n`;
+    });
+    
+    // Replace inline math delimiters \( ... \) or \\( ... \\) with $ ... $
+    sub = sub.replace(/(?:\\{1,2})\(([\s\S]*?)(?:\\{1,2})\)/g, (_, equation) => {
+      return `$${equation.trim()}$`;
+    });
+    
+    return sub;
+  });
+  
+  return processedParts.join('');
 };
 
 // --- Components ---
@@ -1517,13 +1546,21 @@ export default function App() {
         {/* Only show standard header for chat */}
         {activeView === 'chat' && (
           <header className="h-16 flex items-center justify-between px-4 border-b border-zinc-200 dark:border-zinc-800 bg-white/80 dark:bg-zinc-950/80 backdrop-blur-md sticky top-0 z-30">
-            <div className="flex items-center gap-3">
+            <div className="flex items-center gap-2 md:gap-3">
               {!isSidebarOpen && (
                 <button onClick={() => setIsSidebarOpen(true)} className="p-2 hover:bg-zinc-100 dark:hover:bg-zinc-900 rounded-lg">
                   <Menu className="w-5 h-5" />
                 </button>
               )}
+              {!isSidebarOpen && (messages.length > 0 || streamingMessage) && (
+                <Zap className="w-6 h-6 text-emerald-500 drop-shadow-[0_0_10px_rgba(16,185,129,0.3)]" />
+              )}
               <h1 className="font-bold text-lg hidden md:block">
+                {currentConversation 
+                  ? (currentConversation.title.split(' ').slice(0, 2).join(' ') + (currentConversation.title.split(' ').length > 2 ? '...' : '')) 
+                  : 'Trelvix AI'}
+              </h1>
+              <h1 className="font-bold text-sm md:hidden block max-w-[150px] truncate">
                 {currentConversation 
                   ? (currentConversation.title.split(' ').slice(0, 2).join(' ') + (currentConversation.title.split(' ').length > 2 ? '...' : '')) 
                   : 'Trelvix AI'}
@@ -1667,90 +1704,105 @@ export default function App() {
                     <div 
                       key={m.id} 
                       onClick={() => setActiveMessageId(activeMessageId === m.id ? null : m.id)}
-                      className="flex w-full cursor-pointer md:cursor-default justify-start"
+                      className={cn(
+                        "flex w-full cursor-pointer md:cursor-default",
+                        m.role === 'user' ? "justify-end" : "justify-start"
+                      )}
                     >
-                      <div className="w-full bg-transparent text-zinc-900 dark:text-zinc-100 border-none shadow-none px-0 py-1 text-sm md:text-base group relative transition-all duration-200">
+                      <div className={cn(
+                        "flex flex-col group relative transition-all duration-200",
+                        m.role === 'user' ? "max-w-[85%] md:max-w-[75%] items-end" : "w-full"
+                      )}>
                         <div className={cn(
-                          "prose dark:prose-invert max-w-none leading-relaxed",
+                          "w-full text-sm md:text-base transition-all duration-200",
                           m.role === 'user' 
-                            ? "font-semibold text-zinc-900 dark:text-zinc-50 text-base md:text-lg md:leading-normal tracking-tight" 
-                            : "prose-sm md:prose-base text-zinc-750 dark:text-zinc-300"
+                            ? "bg-emerald-500/10 dark:bg-emerald-900/20 border border-emerald-500/20 dark:border-emerald-800/30 rounded-2xl md:rounded-[1.75rem] px-5 py-3.5 shadow-sm text-zinc-900 dark:text-zinc-50"
+                            : "bg-transparent text-zinc-900 dark:text-zinc-100 border-none shadow-none px-0 py-1"
                         )}>
-                          <ReactMarkdown 
-                            remarkPlugins={loadedRemarkGfm ? [loadedRemarkGfm] : []}
-                            components={{
-                              code({ node, inline, className, children, ...props }: any) {
-                                return (
-                                  <CodeBlock inline={inline} className={className}>
-                                    {children}
-                                  </CodeBlock>
-                                );
-                              }
-                            }}
-                          >
-                            {m.content}
-                          </ReactMarkdown>
-                        </div>
-
-                        {/* Generic Attachment Display */}
-                        {m.attachment_type && m.attachment_type !== 'image' && (
-                          <div className="mt-3 mb-2 p-3 bg-zinc-50 dark:bg-zinc-800/30 border border-zinc-200/60 dark:border-zinc-800/40 rounded-2xl flex items-center gap-3 w-fit min-w-[200px] max-w-full overflow-hidden shadow-sm">
-                            <div className="w-10 h-10 shrink-0 rounded-lg bg-zinc-200/60 dark:bg-zinc-800 flex items-center justify-center text-zinc-600 dark:text-zinc-400">
-                              {m.attachment_type === 'video' ? <Film className="w-5 h-5" /> : <FileText className="w-5 h-5" />}
-                            </div>
-                            <div className="min-w-0 flex-1">
-                              <p className="text-sm font-semibold truncate text-zinc-900 dark:text-zinc-100">{m.attachment_name || 'Attached file'}</p>
-                              <p className="text-[10px] opacity-50 uppercase tracking-wider font-extrabold">{m.attachment_type}</p>
-                            </div>
-                          </div>
-                        )}
-
-                        {m.image_url && (
-                          <div className="mt-4 max-w-xl rounded-2xl overflow-hidden border border-zinc-200/80 dark:border-zinc-800/60 bg-zinc-50 dark:bg-zinc-900/40">
-                            <div 
-                              className="relative group/img cursor-zoom-in"
-                              onClick={(e) => {
-                                e.preventDefault();
-                                e.stopPropagation();
-                                handleExpandImage(m.image_url!, m.content);
+                          <div className={cn(
+                            "prose dark:prose-invert max-w-none leading-relaxed",
+                            m.role === 'user' 
+                              ? "font-normal text-zinc-800 dark:text-zinc-200 text-sm md:text-base md:leading-normal tracking-tight" 
+                              : "prose-sm md:prose-base text-zinc-750 dark:text-zinc-300"
+                          )}>
+                            <ReactMarkdown 
+                              remarkPlugins={[remarkMath, ...(loadedRemarkGfm ? [loadedRemarkGfm] : [])]}
+                              rehypePlugins={[rehypeKatex]}
+                              components={{
+                                code({ node, inline, className, children, ...props }: any) {
+                                  return (
+                                    <CodeBlock inline={inline} className={className}>
+                                      {children}
+                                    </CodeBlock>
+                                  );
+                                }
                               }}
                             >
-                              <ImageWithLoader 
-                                src={m.image_url} 
-                                alt="Generated" 
-                                className="w-full"
-                              />
-                              <div className="absolute inset-0 bg-black/0 group-hover/img:bg-black/20 transition-colors flex items-center justify-center opacity-0 group-hover/img:opacity-100">
-                                <Maximize2 className="w-8 h-8 text-white drop-shadow-lg" />
+                              {preprocessMath(m.content)}
+                            </ReactMarkdown>
+                          </div>
+
+                          {/* Generic Attachment Display */}
+                          {m.attachment_type && m.attachment_type !== 'image' && (
+                            <div className="mt-3 mb-2 p-3 bg-zinc-50 dark:bg-zinc-800/30 border border-zinc-200/60 dark:border-zinc-800/40 rounded-2xl flex items-center gap-3 w-fit min-w-[200px] max-w-full overflow-hidden shadow-sm">
+                              <div className="w-10 h-10 shrink-0 rounded-lg bg-zinc-200/60 dark:bg-zinc-800 flex items-center justify-center text-zinc-600 dark:text-zinc-400">
+                                {m.attachment_type === 'video' ? <Film className="w-5 h-5" /> : <FileText className="w-5 h-5" />}
+                              </div>
+                              <div className="min-w-0 flex-1">
+                                <p className="text-sm font-semibold truncate text-zinc-900 dark:text-zinc-100">{m.attachment_name || 'Attached file'}</p>
+                                <p className="text-[10px] opacity-50 uppercase tracking-wider font-extrabold">{m.attachment_type}</p>
                               </div>
                             </div>
-                            <div className="flex border-t border-zinc-200 dark:border-zinc-800">
-                              <button 
+                          )}
+
+                          {m.image_url && (
+                            <div className="mt-4 max-w-xl rounded-2xl overflow-hidden border border-zinc-200/80 dark:border-zinc-800/60 bg-zinc-50 dark:bg-zinc-900/40">
+                              <div 
+                                className="relative group/img cursor-zoom-in"
                                 onClick={(e) => {
                                   e.preventDefault();
                                   e.stopPropagation();
                                   handleExpandImage(m.image_url!, m.content);
                                 }}
-                                className="flex-1 py-2.5 bg-transparent text-[10px] font-bold flex items-center justify-center gap-2 hover:bg-zinc-200 dark:hover:bg-zinc-800 transition-colors border-r border-zinc-200 dark:border-zinc-800 text-zinc-600 dark:text-zinc-400"
                               >
-                                <Maximize2 className="w-3 h-3" />
-                                EXPAND
-                              </button>
-                              <button 
-                                onClick={(e) => {
-                                  e.preventDefault();
-                                  e.stopPropagation();
-                                  handleDownloadImage(m.image_url!, m.filename || 'generated-image.png');
-                                }}
-                                className="flex-1 py-2.5 bg-transparent text-[10px] font-bold flex items-center justify-center gap-2 hover:bg-zinc-200 dark:hover:bg-zinc-800 transition-colors text-zinc-600 dark:text-zinc-400"
-                              >
-                                <Download className="w-3 h-3" />
-                                DOWNLOAD
-                              </button>
+                                <ImageWithLoader 
+                                  src={m.image_url} 
+                                  alt="Generated" 
+                                  className="w-full"
+                                />
+                                <div className="absolute inset-0 bg-black/0 group-hover/img:bg-black/20 transition-colors flex items-center justify-center opacity-0 group-hover/img:opacity-100">
+                                  <Maximize2 className="w-8 h-8 text-white drop-shadow-lg" />
+                                </div>
+                              </div>
+                              <div className="flex border-t border-zinc-200 dark:border-zinc-800">
+                                <button 
+                                  onClick={(e) => {
+                                    e.preventDefault();
+                                    e.stopPropagation();
+                                    handleExpandImage(m.image_url!, m.content);
+                                  }}
+                                  className="flex-1 py-2.5 bg-transparent text-[10px] font-bold flex items-center justify-center gap-2 hover:bg-zinc-200 dark:hover:bg-zinc-800 transition-colors border-r border-zinc-200 dark:border-zinc-800 text-zinc-600 dark:text-zinc-400"
+                                >
+                                  <Maximize2 className="w-3 h-3" />
+                                  EXPAND
+                                </button>
+                                <button 
+                                  onClick={(e) => {
+                                    e.preventDefault();
+                                    e.stopPropagation();
+                                    handleDownloadImage(m.image_url!, m.filename || 'generated-image.png');
+                                  }}
+                                  className="flex-1 py-2.5 bg-transparent text-[10px] font-bold flex items-center justify-center gap-2 hover:bg-zinc-200 dark:hover:bg-zinc-800 transition-colors text-zinc-600 dark:text-zinc-400"
+                                >
+                                  <Download className="w-3 h-3" />
+                                  DOWNLOAD
+                                </button>
+                              </div>
                             </div>
-                          </div>
-                        )}
-                        <div className="mt-2.5 flex items-center justify-between">
+                          )}
+                        </div>
+
+                        <div className="mt-2.5 flex items-center justify-between w-full">
                           <div className="text-[10px] opacity-40 flex items-center gap-2">
                             <span>{new Date(m.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
                           </div>
@@ -1857,8 +1909,11 @@ export default function App() {
                       <div className="w-full bg-transparent text-zinc-900 dark:text-zinc-100 border-none shadow-none px-0 py-1 relative">
                         {streamingMessage ? (
                           <div className="prose dark:prose-invert prose-sm md:prose-base max-w-none leading-relaxed">
-                            <ReactMarkdown remarkPlugins={loadedRemarkGfm ? [loadedRemarkGfm] : []}>
-                              {streamingMessage}
+                            <ReactMarkdown 
+                              remarkPlugins={[remarkMath, ...(loadedRemarkGfm ? [loadedRemarkGfm] : [])]}
+                              rehypePlugins={[rehypeKatex]}
+                            >
+                              {preprocessMath(streamingMessage)}
                             </ReactMarkdown>
                             <span className="inline-block w-2.5 h-4.5 ml-1 bg-zinc-900 dark:bg-white animate-pulse rounded-sm align-middle" />
                           </div>
@@ -1952,7 +2007,7 @@ export default function App() {
                           ? "Daily limit reached. Click to upgrade." 
                           : (selectedAttachment ? `Ask about this ${selectedAttachment.type}...` : "Message Trelvix AI...")
                       }
-                      className="w-full bg-transparent border-none rounded-none px-4 md:px-6 py-4 md:py-5 pr-14 md:pr-28 focus:ring-0 outline-none resize-none transition-all min-h-[56px] md:min-h-[64px] max-h-[200px] text-sm md:text-base font-medium placeholder:text-zinc-400"
+                      className="w-full bg-transparent border-none rounded-none px-4 md:px-6 py-4 md:py-5 pr-14 md:pr-28 focus:ring-0 outline-none resize-none transition-all min-h-[56px] md:min-h-[64px] max-h-[200px] text-sm md:text-base font-normal placeholder:text-zinc-400"
                     />
                     
                     <div className="absolute right-0 flex items-center gap-1 md:gap-2 mr-2">
