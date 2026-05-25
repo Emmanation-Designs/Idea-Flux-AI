@@ -1615,7 +1615,7 @@ export default function App() {
               {messages.length === 0 && !streamingMessage ? (
                 <WelcomeScreen />
               ) : (
-                <div className="max-w-4xl mx-auto w-full p-4 md:p-8 space-y-8 pb-32">
+                <div className="max-w-3xl mx-auto w-full px-4 py-8 md:py-12 space-y-10 pb-36">
                   {messages.map((m) => (
                     <div 
                       key={m.id} 
@@ -1626,12 +1626,12 @@ export default function App() {
                       )}
                     >
                       <div className={cn(
-                        "max-w-[85%] md:max-w-[75%] p-4 rounded-2xl text-sm md:text-base group relative",
+                        "text-sm md:text-base group relative transition-all duration-200",
                         m.role === 'user' 
-                          ? "bg-zinc-100 dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 rounded-tr-none border border-zinc-200/50 dark:border-zinc-800/50" 
-                          : "bg-white dark:bg-zinc-900/50 text-zinc-900 dark:text-zinc-100 rounded-tl-none border border-zinc-200 dark:border-zinc-800 shadow-sm"
+                          ? "max-w-[85%] md:max-w-[70%] px-5 py-3 bg-zinc-100 dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 rounded-3xl border border-zinc-200/50 dark:border-zinc-800/40 shadow-none hover:shadow-sm" 
+                          : "w-full bg-transparent text-zinc-900 dark:text-zinc-100 border-none shadow-none px-0 py-1"
                       )}>
-                        <div className="prose dark:prose-invert prose-sm md:prose-base max-w-none">
+                        <div className="prose dark:prose-invert prose-sm md:prose-base max-w-none leading-relaxed">
                           <ReactMarkdown 
                             remarkPlugins={[remarkGfm]}
                             components={{
@@ -1650,19 +1650,19 @@ export default function App() {
 
                         {/* Generic Attachment Display */}
                         {m.attachment_type && m.attachment_type !== 'image' && (
-                          <div className="mt-3 mb-2 p-3 bg-zinc-50 dark:bg-zinc-800/50 border border-zinc-200 dark:border-zinc-700 rounded-xl flex items-center gap-3 w-fit min-w-[200px] max-w-full overflow-hidden">
-                            <div className="w-10 h-10 shrink-0 rounded-lg bg-zinc-200 dark:bg-zinc-700 flex items-center justify-center text-zinc-600 dark:text-zinc-400">
+                          <div className="mt-3 mb-2 p-3 bg-zinc-50 dark:bg-zinc-800/30 border border-zinc-200/60 dark:border-zinc-800/40 rounded-2xl flex items-center gap-3 w-fit min-w-[200px] max-w-full overflow-hidden shadow-sm">
+                            <div className="w-10 h-10 shrink-0 rounded-lg bg-zinc-200/60 dark:bg-zinc-800 flex items-center justify-center text-zinc-600 dark:text-zinc-400">
                               {m.attachment_type === 'video' ? <Film className="w-5 h-5" /> : <FileText className="w-5 h-5" />}
                             </div>
                             <div className="min-w-0 flex-1">
-                              <p className="text-sm font-medium truncate text-zinc-900 dark:text-zinc-100">{m.attachment_name || 'Attached file'}</p>
-                              <p className="text-[10px] opacity-50 uppercase tracking-wider font-bold">{m.attachment_type}</p>
+                              <p className="text-sm font-semibold truncate text-zinc-900 dark:text-zinc-100">{m.attachment_name || 'Attached file'}</p>
+                              <p className="text-[10px] opacity-50 uppercase tracking-wider font-extrabold">{m.attachment_type}</p>
                             </div>
                           </div>
                         )}
 
                         {m.image_url && (
-                          <div className="mt-4 rounded-xl overflow-hidden border border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-900/50">
+                          <div className="mt-4 max-w-xl rounded-2xl overflow-hidden border border-zinc-200/80 dark:border-zinc-800/60 bg-zinc-50 dark:bg-zinc-900/40">
                             <div 
                               className="relative group/img cursor-zoom-in"
                               onClick={(e) => {
@@ -1687,7 +1687,7 @@ export default function App() {
                                   e.stopPropagation();
                                   handleExpandImage(m.image_url!, m.content);
                                 }}
-                                className="flex-1 py-2.5 bg-transparent text-[10px] font-bold flex items-center justify-center gap-2 hover:bg-zinc-200 dark:hover:bg-zinc-800 transition-colors border-r border-zinc-200 dark:border-zinc-800"
+                                className="flex-1 py-2.5 bg-transparent text-[10px] font-bold flex items-center justify-center gap-2 hover:bg-zinc-200 dark:hover:bg-zinc-800 transition-colors border-r border-zinc-200 dark:border-zinc-800 text-zinc-600 dark:text-zinc-400"
                               >
                                 <Maximize2 className="w-3 h-3" />
                                 EXPAND
@@ -1698,7 +1698,7 @@ export default function App() {
                                   e.stopPropagation();
                                   handleDownloadImage(m.image_url!, m.filename || 'generated-image.png');
                                 }}
-                                className="flex-1 py-2.5 bg-transparent text-[10px] font-bold flex items-center justify-center gap-2 hover:bg-zinc-200 dark:hover:bg-zinc-800 transition-colors"
+                                className="flex-1 py-2.5 bg-transparent text-[10px] font-bold flex items-center justify-center gap-2 hover:bg-zinc-200 dark:hover:bg-zinc-800 transition-colors text-zinc-600 dark:text-zinc-400"
                               >
                                 <Download className="w-3 h-3" />
                                 DOWNLOAD
@@ -1706,12 +1706,12 @@ export default function App() {
                             </div>
                           </div>
                         )}
-                        <div className="mt-2 flex items-center justify-between">
-                          <div className="text-[10px] opacity-30 flex items-center gap-2">
+                        <div className="mt-2.5 flex items-center justify-between">
+                          <div className="text-[10px] opacity-40 flex items-center gap-2">
                             <span>{new Date(m.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
                           </div>
                           <div className={cn(
-                            "flex items-center gap-1.5 md:gap-2 transition-all duration-200 mt-3 pt-3 border-t border-zinc-200/50 dark:border-zinc-800/50 overflow-x-auto no-scrollbar",
+                            "flex items-center gap-1.5 md:gap-2 transition-all duration-200",
                             activeMessageId === m.id ? "opacity-100 translate-y-0" : "opacity-0 md:group-hover:opacity-100 translate-y-1 md:translate-y-0"
                           )}>
                             <button 
@@ -1809,27 +1809,24 @@ export default function App() {
                     </motion.div>
                   )}
                   {(isLoading || streamingMessage) && (
-                    <div className="flex justify-start">
-                      <div className={cn(
-                        "max-w-[85%] md:max-w-[75%] p-4 rounded-2xl bg-white dark:bg-zinc-900/50 text-zinc-900 dark:text-zinc-100 rounded-tl-none border border-zinc-200 dark:border-zinc-800 shadow-sm relative",
-                        !streamingMessage && "min-w-[200px]"
-                      )}>
+                    <div className="flex justify-start w-full">
+                      <div className="w-full bg-transparent text-zinc-900 dark:text-zinc-100 border-none shadow-none px-0 py-1 relative">
                         {streamingMessage ? (
-                          <div className="prose dark:prose-invert prose-sm md:prose-base max-w-none">
+                          <div className="prose dark:prose-invert prose-sm md:prose-base max-w-none leading-relaxed">
                             <ReactMarkdown remarkPlugins={[remarkGfm]}>
                               {streamingMessage}
                             </ReactMarkdown>
-                            <span className="inline-block w-2 h-4 ml-1 bg-zinc-900 dark:bg-white animate-pulse" />
+                            <span className="inline-block w-2.5 h-4.5 ml-1 bg-zinc-900 dark:bg-white animate-pulse rounded-sm align-middle" />
                           </div>
                         ) : (
-                          <div className="flex items-center gap-2 py-1 px-1">
+                          <div className="flex items-center gap-3 py-2 px-1">
                             <div className="flex gap-1 items-center">
-                              <span className="w-1 h-1 bg-zinc-400 dark:bg-zinc-600 rounded-full animate-pulse" />
-                              <span className="w-1 h-1 bg-zinc-400 dark:bg-zinc-600 rounded-full animate-pulse [animation-delay:0.2s]" />
-                              <span className="w-1 h-1 bg-zinc-400 dark:bg-zinc-600 rounded-full animate-pulse [animation-delay:0.4s]" />
+                              <span className="w-1.5 h-1.5 bg-zinc-400 dark:bg-zinc-500 rounded-full animate-bounce" />
+                              <span className="w-1.5 h-1.5 bg-zinc-400 dark:bg-zinc-500 rounded-full animate-bounce [animation-delay:0.2s]" />
+                              <span className="w-1.5 h-1.5 bg-zinc-400 dark:bg-zinc-500 rounded-full animate-bounce [animation-delay:0.4s]" />
                             </div>
-                            <p className="text-xs font-bold text-zinc-400 dark:text-zinc-600 uppercase tracking-widest">
-                              fetching your response
+                            <p className="text-xs font-bold text-zinc-400 dark:text-zinc-500 uppercase tracking-widest">
+                              fetching response
                             </p>
                           </div>
                         )}
