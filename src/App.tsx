@@ -642,56 +642,58 @@ export default function App() {
       
       setConversations(uniqueConversations);
 
-      // Auto-migrate/heal expiring images
-      uniqueConversations.forEach(async (conv: any) => {
-        const messages = conv.messages || [];
-        let updated = false;
-        const newMessages = await Promise.all(messages.map(async (m: any) => {
-          if (m.image_url && !m.image_url.startsWith('db:') && !m.image_url.startsWith('data:') && m.image_url !== 'expired') {
-            try {
-              const proxyResp = await fetch('/api/proxy-image', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ url: m.image_url })
-              });
-              if (proxyResp.ok) {
-                const blob = await proxyResp.blob();
-                const reader = new FileReader();
-                const base64 = await new Promise<string>((resolve) => {
-                  reader.onloadend = () => resolve(reader.result as string);
-                  reader.readAsDataURL(blob);
+      // Auto-migrate/heal expiring images in the background after the UI starts rendering to keep chat loading incredibly fast
+      setTimeout(() => {
+        uniqueConversations.forEach(async (conv: any) => {
+          const messages = conv.messages || [];
+          let updated = false;
+          const newMessages = await Promise.all(messages.map(async (m: any) => {
+            if (m.image_url && !m.image_url.startsWith('db:') && !m.image_url.startsWith('data:') && m.image_url !== 'expired') {
+              try {
+                const proxyResp = await fetch('/api/proxy-image', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ url: m.image_url })
                 });
-                
-                const { data: imgData } = await supabase.from('images').insert({
-                  user_id: user.id,
-                  prompt: m.content || "Migrated Image",
-                  image_url: base64
-                }).select().single();
-                
-                if (imgData) {
+                if (proxyResp.ok) {
+                  const blob = await proxyResp.blob();
+                  const reader = new FileReader();
+                  const base64 = await new Promise<string>((resolve) => {
+                    reader.onloadend = () => resolve(reader.result as string);
+                    reader.readAsDataURL(blob);
+                  });
+                  
+                  const { data: imgData } = await supabase.from('images').insert({
+                    user_id: user.id,
+                    prompt: m.content || "Migrated Image",
+                    image_url: base64
+                  }).select().single();
+                  
+                  if (imgData) {
+                    updated = true;
+                    return { ...m, image_url: `db:${imgData.id}` };
+                  }
+                } else {
+                  // If it fails to fetch (e.g. 403, 404, or 500 because of an expired OpenAI URL),
+                  // mark it as 'expired' so we do not attempt to proxy it again on subsequent reloads.
+                  console.warn(`[Auto-Migrate] Found expired image url, marking as expired: ${m.image_url.substring(0, 100)}`);
                   updated = true;
-                  return { ...m, image_url: `db:${imgData.id}` };
+                  return { ...m, image_url: 'expired' };
                 }
-              } else {
-                // If it fails to fetch (e.g. 403, 404, or 500 because of an expired OpenAI URL),
-                // mark it as 'expired' so we do not attempt to proxy it again on subsequent reloads.
-                console.warn(`[Auto-Migrate] Found expired image url, marking as expired: ${m.image_url.substring(0, 100)}`);
-                updated = true;
-                return { ...m, image_url: 'expired' };
+              } catch (e) {
+                console.error("Migration failed:", e);
               }
-            } catch (e) {
-              console.error("Migration failed:", e);
             }
-          }
-          return m;
-        }));
+            return m;
+          }));
 
-        if (updated) {
-          await updateConversationMessages(conv.id, newMessages);
-          setConversations(prev => prev.map(c => c.id === conv.id ? { ...c, messages: newMessages } : c));
-          setCurrentConversation(prev => (prev && prev.id === conv.id) ? { ...prev, messages: newMessages } : prev);
-        }
-      });
+          if (updated) {
+            await updateConversationMessages(conv.id, newMessages);
+            setConversations(prev => prev.map(c => c.id === conv.id ? { ...c, messages: newMessages } : c));
+            setCurrentConversation(prev => (prev && prev.id === conv.id) ? { ...prev, messages: newMessages } : prev);
+          }
+        });
+      }, 1000);
     } catch (error) {
       console.error("Error fetching history:", error);
     }
@@ -787,7 +789,7 @@ export default function App() {
   };
 
   const startConversation = async (type: ConversationType, title: string, initialPrompt: string, metadata: any = {}) => {
-    if (!user || isLoading) return null;
+    if (!user) return null;
     setIsLoading(true);
 
     try {
@@ -871,30 +873,9 @@ export default function App() {
 
   const sendMessage = async (content: string, convOverride?: any) => {
     let conv = convOverride || currentConversation;
-    
-    // If no conversation, start one first
-    if (!conv && (content.trim() || selectedAttachment)) {
-      if (isLoading) {
-        console.warn("[Chat] Blocked overlapping conversation creation");
-        return;
-      }
-      
-      console.log("[Chat] No active conversation, creating new one...");
-      const type = selectedAttachment ? 'general' : (showVoiceMode ? 'voice' : 'script');
-      
-      // Sanitized title
-      const rawTitle = content.trim() || (selectedAttachment ? 'File Analysis' : 'New Chat');
-      const title = rawTitle.length > 50 ? rawTitle.slice(0, 47) + '...' : rawTitle;
-      
-      const newConv = await startConversation(type, title, content);
-      if (newConv) {
-        // Continue sending the message with the new conversation
-        await sendMessage(content, newConv);
-      }
-      return;
-    }
+    const trimmed = content.trim();
 
-    if (!conv || (!content.trim() && !selectedAttachment)) return;
+    if (!trimmed && !selectedAttachment) return;
     
     if (isLoading && !convOverride) {
       if (showVoiceMode) {
@@ -963,6 +944,7 @@ export default function App() {
       }
     }
 
+    // INSTANT FEEDBACK AND CLEAR INPUTS IMMEDIATELY
     const updatedMessages = [...messages, userMessage];
     setMessages(updatedMessages);
     const lastInput = content;
@@ -989,6 +971,20 @@ export default function App() {
     }, 60000); // 1 minute is usually enough for serverless
 
     try {
+      // Lazy-create conversation history context if not already established (avoids blocking input on cold/slow database inserts)
+      if (!conv) {
+        console.log("[Chat] Lazily creating new conversation in background...");
+        const type = currentAttachment ? 'general' : (showVoiceMode ? 'voice' : 'script');
+        const rawTitle = content.trim() || (currentAttachment ? 'File Analysis' : 'New Chat');
+        const title = rawTitle.length > 50 ? rawTitle.slice(0, 47) + '...' : rawTitle;
+        
+        const newConv = await startConversation(type, title, content);
+        if (!newConv) {
+          throw new Error("Failed to set up secure conversation channel. Please check your network connection.");
+        }
+        conv = newConv;
+      }
+
       const lowerInput = content.toLowerCase();
       const searchKeywords = [
         "news", "weather", "price", "today", "latest", "current", "2024", "2025", "2026",
@@ -1620,18 +1616,15 @@ export default function App() {
                     <div 
                       key={m.id} 
                       onClick={() => setActiveMessageId(activeMessageId === m.id ? null : m.id)}
-                      className={cn(
-                        "flex w-full cursor-pointer md:cursor-default",
-                        m.role === 'user' ? "justify-end" : "justify-start"
-                      )}
+                      className="flex w-full cursor-pointer md:cursor-default justify-start"
                     >
-                      <div className={cn(
-                        "text-sm md:text-base group relative transition-all duration-200",
-                        m.role === 'user' 
-                          ? "max-w-[85%] md:max-w-[70%] px-5 py-3 bg-zinc-100 dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 rounded-3xl border border-zinc-200/50 dark:border-zinc-800/40 shadow-none hover:shadow-sm" 
-                          : "w-full bg-transparent text-zinc-900 dark:text-zinc-100 border-none shadow-none px-0 py-1"
-                      )}>
-                        <div className="prose dark:prose-invert prose-sm md:prose-base max-w-none leading-relaxed">
+                      <div className="w-full bg-transparent text-zinc-900 dark:text-zinc-100 border-none shadow-none px-0 py-1 text-sm md:text-base group relative transition-all duration-200">
+                        <div className={cn(
+                          "prose dark:prose-invert max-w-none leading-relaxed",
+                          m.role === 'user' 
+                            ? "font-semibold text-zinc-900 dark:text-zinc-50 text-base md:text-lg md:leading-normal tracking-tight" 
+                            : "prose-sm md:prose-base text-zinc-750 dark:text-zinc-300"
+                        )}>
                           <ReactMarkdown 
                             remarkPlugins={[remarkGfm]}
                             components={{

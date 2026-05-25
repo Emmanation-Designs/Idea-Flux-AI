@@ -129,6 +129,12 @@ export default async function handler(req: any, res: any) {
 
       console.log("[Image Generation] Original prompt length:", promptText.length);
 
+      // Auto-truncate extremely long prompts safely to prevent OpenAI API size limit failures (max 2000 chars)
+      if (promptText.length > 2000) {
+        console.log(`[Image Generation] Truncating client prompt from ${promptText.length} to 2000 chars to prevent API failures.`);
+        promptText = promptText.substring(0, 2000) + "...";
+      }
+
       // Append strong realism instructions
       const fullPrompt = promptText + ". photorealistic, highly detailed, realistic photography, sharp focus, natural lighting, 8k resolution, professional quality, accurate anatomy, cinematic lighting";
 
@@ -201,24 +207,10 @@ export default async function handler(req: any, res: any) {
         }
       }
 
-      // Convert image URL to Base64 (only if it's a web URL from OpenAI)
-      if (base64Image.startsWith("http")) {
-        console.log(`[Image] Img generated via ${modelUsed}, fetching and converting to Base64...`);
-        try {
-          const imgResp = await fetch(base64Image);
-          if (imgResp.ok) {
-            const arrayBuffer = await imgResp.arrayBuffer();
-            const buffer = Buffer.from(arrayBuffer);
-            const contentType = imgResp.headers.get("content-type") || "image/png";
-            base64Image = `data:${contentType};base64,${buffer.toString("base64")}`;
-            console.log("[Image] Successfully fetched and converted image URL to Base64");
-          } else {
-            console.warn(`[Image] Failed to fetch image for Base64 conversion (Status ${imgResp.status}). Falling back to direct URL.`);
-          }
-        } catch (fetchErr: any) {
-          console.warn("[Image] Error fetching image for Base64 conversion:", fetchErr.message || fetchErr, ". Falling back to direct URL.");
-        }
-      }
+      // We skip heavy synchronous download and base64 parsing on the main thread.
+      // Returning the direct OpenAI CDN URL allows the client to load and render the image INSTANTLY!
+      // The client's background auto-migration scanner will lazily heal/migrate compile history safely.
+      console.log(`[Image] Img generated via ${modelUsed} responding immediately with direct CDN URL to maximize throughput speed.`);
 
       return res.json({ 
         imageUrl: base64Image,
