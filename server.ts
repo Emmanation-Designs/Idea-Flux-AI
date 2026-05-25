@@ -372,30 +372,56 @@ async function handleGenerate(req: express.Request, res: express.Response) {
       let base64Image = "";
 
       try {
-        console.log("[Image Generation] Attempting generation with gpt-image-1...");
+        console.log("[Image Generation] Attempting generation with gpt-image-1 (quality: auto)...");
         response = await openai.images.generate({
           model: "gpt-image-1",
           prompt: fullPrompt,
-          quality: "hd",
+          quality: "auto",
           size: "1024x1024",
           n: 1,
         });
         const imageUrl = response.data[0]?.url;
-        if (!imageUrl) throw new Error("No image URL returned from gpt-image-1 with config");
+        if (!imageUrl) {
+          console.warn("[Image Generation] No image URL in gpt-image-1 auto configuration response. Payload:", JSON.stringify(response));
+          throw new Error("No image URL returned from gpt-image-1 with auto config");
+        }
         base64Image = imageUrl;
+        modelUsed = "gpt-image-1 (auto)";
       } catch (err: any) {
-        console.warn(`[Image Generation] gpt-image-1 detailed params failed: ${err?.message || err}. Retrying with minimal parameters...`);
+        console.warn(`[Image Generation] gpt-image-1 (auto) failed: ${err?.message || err}. Trying (quality: high)...`);
         try {
           response = await openai.images.generate({
             model: "gpt-image-1",
             prompt: fullPrompt,
+            quality: "high",
+            size: "1024x1024",
+            n: 1,
           });
           const imageUrl = response.data[0]?.url;
-          if (!imageUrl) throw new Error("No image URL returned from gpt-image-1 minimal config");
+          if (!imageUrl) {
+            console.warn("[Image Generation] No image URL in gpt-image-1 high configuration response. Payload:", JSON.stringify(response));
+            throw new Error("No image URL returned from gpt-image-1 with high config");
+          }
           base64Image = imageUrl;
-        } catch (errMinimal: any) {
-          console.error("[Image Generation] All gpt-image-1 methods failed:", errMinimal?.message || errMinimal);
-          throw new Error(errMinimal?.message || "Failed to generate image with gpt-image-1");
+          modelUsed = "gpt-image-1 (high)";
+        } catch (errHigh: any) {
+          console.warn(`[Image Generation] gpt-image-1 (high) failed: ${errHigh?.message || errHigh}. Trying minimal params...`);
+          try {
+            response = await openai.images.generate({
+              model: "gpt-image-1",
+              prompt: fullPrompt,
+            });
+            const imageUrl = response.data[0]?.url;
+            if (!imageUrl) {
+              console.warn("[Image Generation] No image URL in gpt-image-1 minimal response. Payload:", JSON.stringify(response));
+              throw new Error("No image URL returned from gpt-image-1 minimal config");
+            }
+            base64Image = imageUrl;
+            modelUsed = "gpt-image-1 (minimal)";
+          } catch (errMinimal: any) {
+            console.error("[Image Generation] All gpt-image-1 methods failed:", errMinimal?.message || errMinimal);
+            throw new Error(errMinimal?.message || "Failed to generate image with gpt-image-1");
+          }
         }
       }
 
