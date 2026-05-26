@@ -176,9 +176,11 @@ app.post("/api/stripe/webhook", async (req: any, res) => {
     const interval = session.metadata?.interval;
 
     if (userId && (plan || event.type === 'invoice.paid')) {
+      const supabaseUrl = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || "https://wxezfzhhzlauggufecmm.supabase.co";
+      const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY || process.env.VITE_SUPABASE_ANON_KEY || "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Ind4ZXpmemhoemxhdWdndWZlY21tIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQyNTQxMjcsImV4cCI6MjA4OTgzMDEyN30.2nsDSFhOtm1Xs3RuZNDo74jGbBwd05E7lPP-FN5cd1Q";
       const supabase = createClient(
-        process.env.SUPABASE_URL!,
-        process.env.SUPABASE_SERVICE_ROLE_KEY!
+        supabaseUrl,
+        supabaseServiceKey
       );
 
       // If it's just a renewal (invoice.paid), we might not have plan in metadata 
@@ -235,12 +237,9 @@ app.use((err: any, req: express.Request, res: express.Response, next: express.Ne
 async function appendReplyToConversation(conversationId: string, replyMessage: any) {
   if (!conversationId) return;
   try {
-    const supabaseUrl = process.env.SUPABASE_URL || "";
-    const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY || "";
-    if (!supabaseUrl || !supabaseServiceKey) {
-      console.warn("[Server DB] Missing Supabase config, skipping appended reply");
-      return;
-    }
+    const supabaseUrl = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || "https://wxezfzhhzlauggufecmm.supabase.co";
+    const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY || process.env.VITE_SUPABASE_ANON_KEY || "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Ind4ZXpmemhoemxhdWdndWZlY21tIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQyNTQxMjcsImV4cCI6MjA4OTgzMDEyN30.2nsDSFhOtm1Xs3RuZNDo74jGbBwd05E7lPP-FN5cd1Q";
+    
     const supabase = createClient(supabaseUrl, supabaseServiceKey);
     // Select the existing messages
     const { data: conv, error: fetchErr } = await supabase
@@ -511,11 +510,11 @@ async function handleGenerate(req: express.Request, res: express.Response) {
       if (req.body.conversationId && req.body.userId) {
         (async () => {
           try {
-            const supabaseUrl = process.env.SUPABASE_URL || "";
-            const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY || "";
-            if (supabaseUrl && supabaseServiceKey) {
-              const supabase = createClient(supabaseUrl, supabaseServiceKey);
-              const { data: imageData, error: imgError } = await supabase.from('images').insert({
+            const supabaseUrl = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || "https://wxezfzhhzlauggufecmm.supabase.co";
+            const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY || process.env.VITE_SUPABASE_ANON_KEY || "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Ind4ZXpmemhoemxhdWdndWZlY21tIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQyNTQxMjcsImV4cCI6MjA4OTgzMDEyN30.2nsDSFhOtm1Xs3RuZNDo74jGbBwd05E7lPP-FN5cd1Q";
+            
+            const supabase = createClient(supabaseUrl, supabaseServiceKey);
+            const { data: imageData, error: imgError } = await supabase.from('images').insert({
                 user_id: req.body.userId,
                 prompt: promptText,
                 image_url: base64Image
@@ -532,7 +531,6 @@ async function handleGenerate(req: express.Request, res: express.Response) {
               };
 
               await appendReplyToConversation(req.body.conversationId, assistantMessage);
-            }
           } catch (e) {
             console.error("[Server Image Save Error]:", e);
           }
