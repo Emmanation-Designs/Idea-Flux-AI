@@ -98,9 +98,20 @@ import { Sidebar } from './components/Sidebar';
 const ImageWithLoader = ({ src, alt, className, onClick }: { src: string, alt: string, className?: string, onClick?: (e: React.MouseEvent) => void }) => {
   const [isLoaded, setIsLoaded] = useState(false);
   const [hasError, setHasError] = useState(false);
-  const [displaySrc, setDisplaySrc] = useState(src.startsWith('db:') ? '' : src);
+  const [displaySrc, setDisplaySrc] = useState('');
+
+  const getProxyUrl = (url: string) => {
+    if (!url) return '';
+    if (url.startsWith('http://') || url.startsWith('https://')) {
+      return `/api/proxy-image?url=${encodeURIComponent(url)}`;
+    }
+    return url;
+  };
 
   useEffect(() => {
+    setIsLoaded(false);
+    setHasError(false);
+
     if (src === 'expired') {
       setHasError(true);
       setDisplaySrc('');
@@ -109,16 +120,21 @@ const ImageWithLoader = ({ src, alt, className, onClick }: { src: string, alt: s
     if (src.startsWith('db:')) {
       const imgId = src.split(':')[1];
       supabase.from('images').select('image_url').eq('id', imgId).single()
-        .then(({ data, error }) => {
-          if (error || !data?.image_url) {
-            console.error("Error fetching lazy image:", error);
+        .then(
+          ({ data, error }) => {
+            if (error || !data?.image_url) {
+              console.error("Error fetching lazy image:", error);
+              setHasError(true);
+            } else {
+              setDisplaySrc(getProxyUrl(data.image_url));
+            }
+          },
+          () => {
             setHasError(true);
-          } else {
-            setDisplaySrc(data.image_url);
           }
-        });
+        );
     } else {
-      setDisplaySrc(src);
+      setDisplaySrc(getProxyUrl(src));
     }
   }, [src]);
   
@@ -865,7 +881,13 @@ export default function App() {
     await startConversation(type, title, prompt, data);
   };
 
-  const startConversation = async (type: ConversationType, title: string, initialPrompt: string, metadata: any = {}) => {
+  const startConversation = async (
+    type: ConversationType, 
+    title: string, 
+    initialPrompt: string, 
+    metadata: any = {}, 
+    shouldClearMessages = true
+  ) => {
     if (!user) return null;
     setIsLoading(true);
 
@@ -895,8 +917,13 @@ export default function App() {
 
       console.log("[Chat] Conversation created:", data.id);
       setCurrentConversation(data);
-      setConversations(prev => [data, ...prev]);
-      setMessages([]); // Ensure messages are cleared for new chat
+      setConversations(prev => {
+        if (prev.some(c => c.id === data.id)) return prev;
+        return [data, ...prev];
+      });
+      if (shouldClearMessages) {
+        setMessages([]); // Ensure messages are cleared for new chat
+      }
       
       return data;
     } catch (err) {
@@ -1045,7 +1072,7 @@ export default function App() {
     const timeoutId = setTimeout(() => {
       controller.abort();
       console.warn("[Chat] Timeout reached");
-    }, 60000); // 1 minute is usually enough for serverless
+    }, 120000); // 2 minutes is safer for multi-fallback image generation and advanced searches
 
     try {
       // Lazy-create conversation history context if not already established (avoids blocking input on cold/slow database inserts)
@@ -1055,7 +1082,7 @@ export default function App() {
         const rawTitle = content.trim() || (currentAttachment ? 'File Analysis' : 'New Chat');
         const title = rawTitle.length > 50 ? rawTitle.slice(0, 47) + '...' : rawTitle;
         
-        const newConv = await startConversation(type, title, content);
+        const newConv = await startConversation(type, title, content, {}, false);
         if (!newConv) {
           throw new Error("Failed to set up secure conversation channel. Please check your network connection.");
         }
@@ -1203,6 +1230,18 @@ export default function App() {
       setIsLoading(false);
     } catch (error: any) {
       clearTimeout(timeoutId);
+      
+      const isAbortError = error.name === 'AbortError' || 
+                           error.message?.includes('aborted') || 
+                           error.message?.includes('AbortError') ||
+                           error.message?.includes('signal is aborted');
+                           
+      if (isAbortError) {
+        console.log("[Chat] Request aborted gracefully.");
+        setIsLoading(false);
+        return;
+      }
+      
       console.error("[Chat] Request Error:", error);
       
       setHasError(true);
@@ -1653,9 +1692,9 @@ export default function App() {
                 </div>
               ) : (
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pb-12">
-                    {conversations.map((conv) => (
+                    {conversations.map((conv, index) => (
                       <div
-                        key={conv.id}
+                        key={`${conv.id || index}-${index}`}
                         className="p-6 bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-3xl text-left hover:border-zinc-400 dark:hover:border-zinc-600 transition-all group relative hover:shadow-xl"
                       >
                       <div onClick={() => {
@@ -1700,9 +1739,9 @@ export default function App() {
                 <WelcomeScreen />
               ) : (
                 <div className="max-w-3xl mx-auto w-full px-4 py-8 md:py-12 space-y-10 pb-36">
-                  {messages.map((m) => (
+                  {messages.map((m, index) => (
                     <div 
-                      key={m.id} 
+                      key={`${m.id || index}-${index}`} 
                       onClick={() => setActiveMessageId(activeMessageId === m.id ? null : m.id)}
                       className={cn(
                         "flex w-full cursor-pointer md:cursor-default",
@@ -1720,7 +1759,7 @@ export default function App() {
                             : "bg-transparent text-zinc-900 dark:text-zinc-100 border-none shadow-none px-0 py-1"
                         )}>
                           <div className={cn(
-                            "prose dark:prose-invert max-w-none leading-relaxed",
+                            "prose dark:prose-invert max-w-none leading-relaxed prose-headings:font-normal prose-strong:font-normal prose-th:font-normal",
                             m.role === 'user' 
                               ? "font-normal text-zinc-800 dark:text-zinc-200 text-sm md:text-base md:leading-normal tracking-tight" 
                               : "prose-sm md:prose-base text-zinc-750 dark:text-zinc-300"
@@ -1735,6 +1774,24 @@ export default function App() {
                                       {children}
                                     </CodeBlock>
                                   );
+                                },
+                                strong({ children }) {
+                                  return <span className="font-normal text-zinc-900 dark:text-zinc-100 inline">{children}</span>;
+                                },
+                                b({ children }) {
+                                  return <span className="font-normal text-zinc-900 dark:text-zinc-100 inline">{children}</span>;
+                                },
+                                h1({ children }) {
+                                  return <span className="block text-xl font-normal text-zinc-900 dark:text-zinc-100 mt-4 mb-2">{children}</span>;
+                                },
+                                h2({ children }) {
+                                  return <span className="block text-lg font-normal text-zinc-900 dark:text-zinc-100 mt-4 mb-2">{children}</span>;
+                                },
+                                h3({ children }) {
+                                  return <span className="block text-base font-normal text-zinc-900 dark:text-zinc-100 mt-3 mb-1">{children}</span>;
+                                },
+                                h4({ children }) {
+                                  return <span className="block text-sm font-normal text-zinc-900 dark:text-zinc-100 mt-3 mb-1">{children}</span>;
                                 }
                               }}
                             >
@@ -1908,10 +1965,37 @@ export default function App() {
                     <div className="flex justify-start w-full">
                       <div className="w-full bg-transparent text-zinc-900 dark:text-zinc-100 border-none shadow-none px-0 py-1 relative">
                         {streamingMessage ? (
-                          <div className="prose dark:prose-invert prose-sm md:prose-base max-w-none leading-relaxed">
+                          <div className="prose dark:prose-invert prose-sm md:prose-base max-w-none leading-relaxed prose-headings:font-normal prose-strong:font-normal prose-th:font-normal">
                             <ReactMarkdown 
                               remarkPlugins={[remarkMath, ...(loadedRemarkGfm ? [loadedRemarkGfm] : [])]}
                               rehypePlugins={[rehypeKatex]}
+                              components={{
+                                code({ node, inline, className, children, ...props }: any) {
+                                  return (
+                                    <CodeBlock inline={inline} className={className}>
+                                      {children}
+                                    </CodeBlock>
+                                  );
+                                },
+                                strong({ children }) {
+                                  return <span className="font-normal text-zinc-900 dark:text-zinc-100 inline">{children}</span>;
+                                },
+                                b({ children }) {
+                                  return <span className="font-normal text-zinc-900 dark:text-zinc-100 inline">{children}</span>;
+                                },
+                                h1({ children }) {
+                                  return <span className="block text-xl font-normal text-zinc-900 dark:text-zinc-100 mt-4 mb-2">{children}</span>;
+                                },
+                                h2({ children }) {
+                                  return <span className="block text-lg font-normal text-zinc-900 dark:text-zinc-100 mt-4 mb-2">{children}</span>;
+                                },
+                                h3({ children }) {
+                                  return <span className="block text-base font-normal text-zinc-900 dark:text-zinc-100 mt-3 mb-1">{children}</span>;
+                                },
+                                h4({ children }) {
+                                  return <span className="block text-sm font-normal text-zinc-900 dark:text-zinc-100 mt-3 mb-1">{children}</span>;
+                                }
+                              }}
                             >
                               {preprocessMath(streamingMessage)}
                             </ReactMarkdown>

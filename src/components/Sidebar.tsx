@@ -168,10 +168,10 @@ export const Sidebar = ({
               </div>
             ) : (
               <AnimatePresence mode="popLayout">
-                {filteredConversations.map((conv) => (
+                {filteredConversations.map((conv, index) => (
                   <motion.div
                     layout
-                    key={conv.id}
+                    key={`${conv.id || index}-${index}`}
                     initial={{ opacity: 0, x: -10 }}
                     animate={{ opacity: 1, x: 0 }}
                     exit={{ opacity: 0, scale: 0.95 }}
