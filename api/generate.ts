@@ -1,8 +1,57 @@
 import OpenAI from 'openai';
+import { createClient } from "@supabase/supabase-js";
+import crypto from "crypto";
 
 export const config = {
   maxDuration: 300, // Extend duration if possible on Vercel
 };
+
+async function appendReplyToConversation(conversationId: string, replyMessage: any) {
+  if (!conversationId) return;
+  try {
+    const supabaseUrl = process.env.SUPABASE_URL || "";
+    const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY || "";
+    if (!supabaseUrl || !supabaseServiceKey) {
+      console.warn("[API DB] Missing Supabase config, skipping appended reply");
+      return;
+    }
+    const supabase = createClient(supabaseUrl, supabaseServiceKey);
+    // Select the existing messages
+    const { data: conv, error: fetchErr } = await supabase
+      .from('conversations')
+      .select('messages')
+      .eq('id', conversationId)
+      .single();
+
+    if (fetchErr || !conv) {
+      console.error(`[API DB] Failed to fetch conversation ${conversationId}:`, fetchErr);
+      return;
+    }
+
+    const currentMessages = conv.messages || [];
+    const hasAssisReply = currentMessages.length > 0 && currentMessages[currentMessages.length - 1].role === 'assistant';
+    if (!hasAssisReply) {
+      const updatedMessages = [...currentMessages, replyMessage];
+      const { error: updateErr } = await supabase
+        .from('conversations')
+        .update({
+          messages: updatedMessages,
+          updated_at: new Date().toISOString()
+        })
+        .eq('id', conversationId);
+
+      if (updateErr) {
+        console.error(`[API DB] Failed to update conversation ${conversationId}:`, updateErr);
+      } else {
+        console.log(`[API DB] Successfully appended reply to conversation ${conversationId} on backend`);
+      }
+    } else {
+      console.log(`[API DB] Response already persisted in conversation ${conversationId}, skipping server append.`);
+    }
+  } catch (err) {
+    console.error("[API DB] Error inside appendReplyToConversation:", err);
+  }
+}
 
 export default async function handler(req: any, res: any) {
   if (req.method !== 'POST') {
@@ -224,6 +273,37 @@ export default async function handler(req: any, res: any) {
       // The client's background auto-migration scanner will lazily heal/migrate compile history safely.
       console.log(`[Image] Img generated via ${modelUsed} responding immediately with direct CDN URL to maximize throughput speed.`);
 
+      if (req.body.conversationId && req.body.userId) {
+        (async () => {
+          try {
+            const supabaseUrl = process.env.SUPABASE_URL || "";
+            const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY || "";
+            if (supabaseUrl && supabaseServiceKey) {
+              const supabase = createClient(supabaseUrl, supabaseServiceKey);
+              const { data: imageData, error: imgError } = await supabase.from('images').insert({
+                user_id: req.body.userId,
+                prompt: promptText,
+                image_url: base64Image
+              }).select().single();
+
+              const assistantMessage = {
+                id: crypto.randomUUID(),
+                role: 'assistant',
+                content: `A stunning visual representation of your request: "${promptText}".`,
+                image_url: imageData ? `db:${imageData.id}` : base64Image,
+                filename: `trelvix-${Date.now()}.png`,
+                model: model || 'trelvix-visual',
+                created_at: new Date().toISOString()
+              };
+
+              await appendReplyToConversation(req.body.conversationId, assistantMessage);
+            }
+          } catch (e) {
+            console.error("[API Image Save Error]:", e);
+          }
+        })().catch(console.error);
+      }
+
       return res.json({ 
         imageUrl: base64Image,
         image_url: base64Image, 
@@ -311,13 +391,30 @@ export default async function handler(req: any, res: any) {
     res.setHeader('Cache-Control', 'no-cache');
     res.setHeader('Connection', 'keep-alive');
 
+    let accumulatedText = "";
     for await (const chunk of stream) {
       const content = chunk.choices[0]?.delta?.content || "";
-      if (content) res.write(content);
+      if (content) {
+        accumulatedText += content;
+        if (!res.writableEnded) {
+          res.write(content);
+        }
+      }
     }
     
     console.log(`[API Generate] Done`);
     res.end();
+
+    if (req.body.conversationId) {
+      const assistantMessage = {
+        id: crypto.randomUUID(),
+        role: 'assistant',
+        content: accumulatedText,
+        model: model,
+        created_at: new Date().toISOString()
+      };
+      appendReplyToConversation(req.body.conversationId, assistantMessage).catch(console.error);
+    }
   } catch (error: any) {
     console.error("[API Generate] Error:", error);
     

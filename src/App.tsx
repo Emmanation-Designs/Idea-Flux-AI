@@ -1136,7 +1136,9 @@ export default function App() {
           })),
           voice_option: voiceOption,
           ready_to_copy: conv.metadata?.ready_to_copy || false,
-          personality: profile?.personality || 'creative'
+          personality: profile?.personality || 'creative',
+          conversationId: conv.id,
+          userId: user?.id
         }),
         signal: controller.signal
       });
