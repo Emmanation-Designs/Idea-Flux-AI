@@ -6,7 +6,13 @@ export const config = {
   maxDuration: 300, // Extend duration if possible on Vercel
 };
 
-async function appendReplyToConversation(conversationId: string, replyMessage: any) {
+async function appendReplyToConversation(
+  conversationId: string, 
+  replyMessage: any, 
+  userId?: string, 
+  conversationType?: string, 
+  previousMessages?: any[]
+) {
   if (!conversationId) return;
   try {
     const supabaseUrl = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || "https://wxezfzhhzlauggufecmm.supabase.co";
@@ -21,6 +27,44 @@ async function appendReplyToConversation(conversationId: string, replyMessage: a
       .single();
 
     if (fetchErr || !conv) {
+      if (fetchErr && fetchErr.code === 'PGRST116' && userId) {
+        console.log(`[API DB] Conversation ${conversationId} not found, creating from fallback...`);
+        const initialMessages = previousMessages ? [...previousMessages] : [];
+        if (!initialMessages.some(m => m.id === replyMessage.id)) {
+          initialMessages.push(replyMessage);
+        }
+        let titleText = 'New Conversation';
+        if (previousMessages && previousMessages.length > 0) {
+          titleText = previousMessages[0].content || 'New Conversation';
+        } else if (replyMessage && replyMessage.content) {
+          titleText = replyMessage.content;
+        }
+        if (titleText.length > 50) {
+          titleText = titleText.slice(0, 48) + '...';
+        }
+
+        const newConv = {
+          id: conversationId,
+          user_id: userId,
+          title: titleText,
+          type: conversationType || 'general',
+          messages: initialMessages,
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString()
+        };
+
+        const { error: insertErr } = await supabase
+          .from('conversations')
+          .insert(newConv);
+
+        if (insertErr) {
+          console.error(`[API DB] Error inserting conversation on fallback:`, insertErr);
+        } else {
+          console.log(`[API DB] Created conversation ${conversationId} during fallback flow successfully.`);
+        }
+        return;
+      }
+
       console.error(`[API DB] Failed to fetch conversation ${conversationId}:`, fetchErr);
       return;
     }
@@ -293,7 +337,13 @@ export default async function handler(req: any, res: any) {
                 created_at: new Date().toISOString()
               };
 
-              await appendReplyToConversation(req.body.conversationId, assistantMessage);
+              await appendReplyToConversation(
+                req.body.conversationId,
+                assistantMessage,
+                req.body.userId,
+                type || 'image',
+                messages
+              );
           } catch (e) {
             console.error("[API Image Save Error]:", e);
           }
@@ -409,7 +459,13 @@ export default async function handler(req: any, res: any) {
         model: model,
         created_at: new Date().toISOString()
       };
-      appendReplyToConversation(req.body.conversationId, assistantMessage).catch(console.error);
+      appendReplyToConversation(
+        req.body.conversationId,
+        assistantMessage,
+        req.body.userId,
+        type || 'chat',
+        messages
+      ).catch(console.error);
     }
   } catch (error: any) {
     console.error("[API Generate] Error:", error);

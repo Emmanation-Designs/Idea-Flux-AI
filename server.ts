@@ -234,7 +234,13 @@ app.use((err: any, req: express.Request, res: express.Response, next: express.Ne
   next(err);
 });
 
-async function appendReplyToConversation(conversationId: string, replyMessage: any) {
+async function appendReplyToConversation(
+  conversationId: string, 
+  replyMessage: any, 
+  userId?: string, 
+  conversationType?: string, 
+  previousMessages?: any[]
+) {
   if (!conversationId) return;
   try {
     const supabaseUrl = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || "https://wxezfzhhzlauggufecmm.supabase.co";
@@ -249,6 +255,44 @@ async function appendReplyToConversation(conversationId: string, replyMessage: a
       .single();
 
     if (fetchErr || !conv) {
+      if (fetchErr && fetchErr.code === 'PGRST116' && userId) {
+        console.log(`[Server DB] Conversation ${conversationId} not found, creating from fallback...`);
+        const initialMessages = previousMessages ? [...previousMessages] : [];
+        if (!initialMessages.some(m => m.id === replyMessage.id)) {
+          initialMessages.push(replyMessage);
+        }
+        let titleText = 'New Conversation';
+        if (previousMessages && previousMessages.length > 0) {
+          titleText = previousMessages[0].content || 'New Conversation';
+        } else if (replyMessage && replyMessage.content) {
+          titleText = replyMessage.content;
+        }
+        if (titleText.length > 50) {
+          titleText = titleText.slice(0, 48) + '...';
+        }
+
+        const newConv = {
+          id: conversationId,
+          user_id: userId,
+          title: titleText,
+          type: conversationType || 'general',
+          messages: initialMessages,
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString()
+        };
+
+        const { error: insertErr } = await supabase
+          .from('conversations')
+          .insert(newConv);
+
+        if (insertErr) {
+          console.error(`[Server DB] Error inserting conversation on fallback:`, insertErr);
+        } else {
+          console.log(`[Server DB] Created conversation ${conversationId} during fallback flow successfully.`);
+        }
+        return;
+      }
+
       console.error(`[Server DB] Failed to fetch conversation ${conversationId}:`, fetchErr);
       return;
     }
@@ -530,7 +574,13 @@ async function handleGenerate(req: express.Request, res: express.Response) {
                 created_at: new Date().toISOString()
               };
 
-              await appendReplyToConversation(req.body.conversationId, assistantMessage);
+              await appendReplyToConversation(
+                req.body.conversationId,
+                assistantMessage,
+                req.body.userId,
+                type || 'image',
+                messages
+              );
           } catch (e) {
             console.error("[Server Image Save Error]:", e);
           }
@@ -673,7 +723,13 @@ async function handleGenerate(req: express.Request, res: express.Response) {
         model: model,
         created_at: new Date().toISOString()
       };
-      appendReplyToConversation(req.body.conversationId, assistantMessage).catch(console.error);
+      appendReplyToConversation(
+        req.body.conversationId,
+        assistantMessage,
+        req.body.userId,
+        type || 'chat',
+        messages
+      ).catch(console.error);
     }
   } catch (error: any) {
     console.error("[Generate] Internal Error:", error);
