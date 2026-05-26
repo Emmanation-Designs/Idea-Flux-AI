@@ -228,6 +228,7 @@ export default function App() {
   const transcriptRef = useRef('');
   const [activeMessageId, setActiveMessageId] = useState<string | null>(null);
   const [showUpgradeModal, setShowUpgradeModal] = useState(false);
+  const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
   const [upgradeReason, setUpgradeReason] = useState<'usage' | 'images' | 'manual'>('usage');
   const [hasError, setHasError] = useState(false);
   const [lastFailedRequest, setLastFailedRequest] = useState<{content: string, conv?: any} | null>(null);
@@ -680,7 +681,8 @@ export default function App() {
         images_used_today: 0,
         last_usage_reset: now.toISOString(),
         plan: 'free',
-        subscription_expires_at: null
+        subscription_expires_at: null,
+        personality: 'creative'
       };
       const { data: created } = await supabase.from('profiles').insert(newProfile).select().single();
       setProfile(created);
@@ -841,8 +843,14 @@ export default function App() {
     }
   };
 
-  const handleDeleteConversation = async (id: string) => {
-    if (!confirm('Are you sure you want to delete this conversation?')) return;
+  const handleDeleteConversation = (id: string) => {
+    setDeleteConfirmId(id);
+  };
+
+  const confirmDeleteConversation = async () => {
+    if (!deleteConfirmId) return;
+    const id = deleteConfirmId;
+    setDeleteConfirmId(null);
     try {
       const { error } = await supabase.from('conversations').delete().eq('id', id);
       if (error) throw error;
@@ -1089,6 +1097,10 @@ export default function App() {
         conv = newConv;
       }
 
+      // Persist the newly sent user message to DB immediately so that on closure/refresh it is visible
+      await updateConversationMessages(conv.id, updatedMessages);
+      setConversations(prev => prev.map(c => c.id === conv.id ? { ...c, messages: updatedMessages, updated_at: new Date().toISOString() } : c));
+
       const lowerInput = content.toLowerCase();
       const searchKeywords = [
         "news", "weather", "price", "today", "latest", "current", "2024", "2025", "2026",
@@ -1124,7 +1136,7 @@ export default function App() {
           })),
           voice_option: voiceOption,
           ready_to_copy: conv.metadata?.ready_to_copy || false,
-          personality: profile?.personality || 'professional'
+          personality: profile?.personality || 'creative'
         }),
         signal: controller.signal
       });
@@ -1262,6 +1274,9 @@ export default function App() {
           // Remove all messages from this idx onwards
           const truncatedMessages = messages.slice(0, msgIdx);
           setMessages(truncatedMessages);
+          if (currentConversation?.id) {
+            await updateConversationMessages(currentConversation.id, truncatedMessages);
+          }
           
           // Re-send
           sendMessage(userMsg.content);
@@ -1271,7 +1286,21 @@ export default function App() {
     }
 
     if (lastFailedRequest) {
+      // Remove last message from state and DB first to prevent duplication
+      const truncated = messages.slice(0, messages.length - 1);
+      setMessages(truncated);
+      if (lastFailedRequest.conv?.id) {
+        await updateConversationMessages(lastFailedRequest.conv.id, truncated);
+      }
       sendMessage(lastFailedRequest.content, lastFailedRequest.conv);
+    } else if (messages.length > 0 && messages[messages.length - 1].role === 'user') {
+      const lastUserMsg = messages[messages.length - 1];
+      const truncated = messages.slice(0, messages.length - 1);
+      setMessages(truncated);
+      if (currentConversation?.id) {
+        await updateConversationMessages(currentConversation.id, truncated);
+      }
+      sendMessage(lastUserMsg.content, currentConversation);
     }
   };
 
@@ -1938,7 +1967,7 @@ export default function App() {
                   ))}
 
                   {/* Consolidated simple error UI */}
-                  {hasError && !isLoading && (
+                  {((hasError || (messages.length > 0 && messages[messages.length - 1].role === 'user')) && !isLoading && !streamingMessage) && (
                     <motion.div 
                       key="error-state"
                       initial={{ opacity: 0, x: -10 }}
@@ -1948,15 +1977,15 @@ export default function App() {
                       <div className="flex items-center gap-3 px-4 py-2.5 bg-zinc-50 dark:bg-zinc-900/50 border border-zinc-200 dark:border-zinc-800 rounded-2xl shadow-sm">
                         <div className="flex items-center gap-2.5">
                           <div className="w-1.5 h-1.5 rounded-full bg-rose-500" />
-                          <span className="text-xs font-medium text-zinc-600 dark:text-zinc-400">Failed to fetch response. Try again later.</span>
+                          <span className="text-xs font-semibold text-rose-500/90 dark:text-rose-400">Failed to fetch response or session got interrupted.</span>
                         </div>
                         <div className="w-px h-3 bg-zinc-200 dark:bg-zinc-800" />
                         <button 
                           onClick={() => handleRetry()}
-                          className="text-xs font-bold text-zinc-900 dark:text-zinc-100 hover:underline active:scale-95 flex items-center gap-1.5 transition-all"
+                          className="text-xs font-bold text-zinc-900 dark:text-zinc-100 hover:underline active:scale-95 flex items-center gap-1.5 transition-all text-emerald-600 dark:text-emerald-400"
                         >
-                          Retry
-                          <Plus className="w-3.5 h-3.5 rotate-45" />
+                          Retry Request
+                          <Plus className="w-3.5 h-3.5 rotate-45 text-emerald-600 dark:text-emerald-400" />
                         </button>
                       </div>
                     </motion.div>
@@ -2028,7 +2057,7 @@ export default function App() {
         {activeView === 'chat' && (
           <div className="relative p-3 pb-4 sm:p-6 md:p-8 bg-white dark:bg-zinc-950 border-t border-zinc-100 dark:border-zinc-900/50">
             <div className="max-w-4xl mx-auto space-y-2 md:space-y-6">
-              <div className="bg-zinc-50 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-[2rem] md:rounded-[2.5rem] shadow-xl md:shadow-2xl focus-within:ring-2 focus-within:ring-zinc-900/5 dark:focus-within:ring-white/5 transition-all relative z-20 overflow-hidden">
+              <div className="bg-zinc-50 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-700/80 rounded-[2rem] md:rounded-[2.5rem] shadow-xl md:shadow-2xl focus-within:ring-2 focus-within:ring-zinc-900/5 dark:focus-within:ring-white/15 dark:focus-within:border-zinc-500 transition-all relative z-20 overflow-hidden shadow-zinc-500/5 dark:shadow-black/60">
                 <AnimatePresence>
                   {selectedAttachment && (
                     <motion.div 
@@ -2068,7 +2097,7 @@ export default function App() {
                   <div className="flex-shrink-0">
                     <button 
                       onClick={() => fileInputRef.current?.click()}
-                      className="p-3 md:p-4 text-zinc-400 hover:text-zinc-900 dark:hover:text-white hover:bg-white dark:hover:bg-zinc-800 transition-all rounded-2xl md:rounded-3xl"
+                      className="p-3 md:p-4 text-zinc-400 dark:text-zinc-300 hover:text-zinc-900 dark:hover:text-white hover:bg-white dark:hover:bg-zinc-800 transition-all rounded-2xl md:rounded-3xl"
                     >
                       <Paperclip className="w-4 h-4 md:w-5 md:h-5" />
                     </button>
@@ -2091,7 +2120,7 @@ export default function App() {
                           ? "Daily limit reached. Click to upgrade." 
                           : (selectedAttachment ? `Ask about this ${selectedAttachment.type}...` : "Message Trelvix AI...")
                       }
-                      className="w-full bg-transparent border-none rounded-none px-4 md:px-6 py-4 md:py-5 pr-14 md:pr-28 focus:ring-0 outline-none resize-none transition-all min-h-[56px] md:min-h-[64px] max-h-[200px] text-sm md:text-base font-normal placeholder:text-zinc-400"
+                      className="w-full bg-transparent border-none rounded-none px-4 md:px-6 py-4 md:py-5 pr-14 md:pr-28 focus:ring-0 outline-none resize-none transition-all min-h-[56px] md:min-h-[64px] max-h-[200px] text-sm md:text-base font-normal text-zinc-900 dark:text-zinc-50 placeholder:text-zinc-400 dark:placeholder:text-zinc-300"
                     />
                     
                     <div className="absolute right-0 flex items-center gap-1 md:gap-2 mr-2">
@@ -2106,7 +2135,7 @@ export default function App() {
                               "p-3 md:p-3.5 transition-all rounded-full overflow-hidden flex-shrink-0",
                               isListening 
                                 ? "bg-emerald-500/10 text-emerald-500 animate-pulse ring-2 ring-emerald-500/20" 
-                                : "text-zinc-400 hover:text-zinc-900 dark:hover:text-white hover:bg-white dark:hover:bg-zinc-800"
+                                : "text-zinc-400 dark:text-zinc-300 hover:text-zinc-900 dark:hover:text-white hover:bg-white dark:hover:bg-zinc-800"
                             )}
                             title="Hands-free typing"
                           >
@@ -2122,7 +2151,7 @@ export default function App() {
                           "p-3 md:p-3.5 rounded-full transition-all shadow-xl flex items-center justify-center transform active:scale-95 flex-shrink-0",
                           input.trim() || selectedAttachment
                             ? "bg-zinc-900 dark:bg-white text-white dark:text-zinc-900" 
-                            : "text-zinc-300 dark:text-zinc-700 cursor-not-allowed border border-zinc-200 dark:border-zinc-800"
+                            : "text-zinc-300 dark:text-zinc-500 cursor-not-allowed border border-zinc-200 dark:border-zinc-700/80"
                         )}
                       >
                         <Send className="w-5 h-5" />
@@ -2281,6 +2310,70 @@ export default function App() {
             </motion.div>
           </motion.div>
         )}
+      </AnimatePresence>
+
+      {/* Custom Delete Confirmation Modal */}
+      <AnimatePresence>
+        {deleteConfirmId && (() => {
+          const conversationToConfirm = conversations.find(c => c.id === deleteConfirmId);
+          return (
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setDeleteConfirmId(null)}
+              className="fixed inset-0 z-[110] bg-black/60 dark:bg-black/80 backdrop-blur-sm flex items-center justify-center p-4"
+            >
+              <motion.div
+                initial={{ scale: 0.95, y: 15, opacity: 0 }}
+                animate={{ scale: 1, y: 0, opacity: 1 }}
+                exit={{ scale: 0.95, y: 15, opacity: 0 }}
+                transition={{ type: "spring", duration: 0.4 }}
+                onClick={(e) => e.stopPropagation()}
+                className="w-full max-w-md bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-3xl shadow-2xl p-6 md:p-8 flex flex-col gap-6"
+              >
+                {/* Header */}
+                <div className="flex items-start gap-4">
+                  <div className="w-12 h-12 bg-red-100 dark:bg-red-950/40 text-red-600 dark:text-red-400 rounded-2xl flex items-center justify-center shrink-0">
+                    <Trash2 className="w-6 h-6" />
+                  </div>
+                  <div className="space-y-1">
+                    <h3 className="text-xl font-bold text-zinc-900 dark:text-zinc-50">Delete Conversation?</h3>
+                    <p className="text-sm text-zinc-500 dark:text-zinc-400">
+                      This action is permanent and cannot be undone. All messages and assets inside this chat will be lost.
+                    </p>
+                  </div>
+                </div>
+
+                {/* Conversation Details Box if title exists */}
+                {conversationToConfirm && (
+                  <div className="p-4 bg-zinc-50 dark:bg-zinc-950/40 border border-zinc-100 dark:border-zinc-800/80 rounded-2xl">
+                    <span className="text-[11px] font-bold text-zinc-400 dark:text-zinc-500 uppercase tracking-wider block mb-1">Target Chat</span>
+                    <span className="text-sm font-semibold text-zinc-800 dark:text-zinc-200 line-clamp-2">
+                      {conversationToConfirm.title || 'Untitled Session'}
+                    </span>
+                  </div>
+                )}
+
+                {/* Actions */}
+                <div className="flex items-center gap-3">
+                  <button
+                    onClick={() => setDeleteConfirmId(null)}
+                    className="flex-1 py-3.5 px-4 bg-zinc-100 dark:bg-zinc-800 hover:bg-zinc-200 dark:hover:bg-zinc-700 text-zinc-700 dark:text-zinc-200 font-bold rounded-2xl transition-colors text-sm"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    onClick={confirmDeleteConversation}
+                    className="flex-1 py-3.5 px-4 bg-red-600 hover:bg-red-700 text-white font-bold rounded-2xl transition-colors text-sm shadow-lg shadow-red-600/10 dark:shadow-red-900/10"
+                  >
+                    Delete Chat
+                  </button>
+                </div>
+              </motion.div>
+            </motion.div>
+          );
+        })()}
       </AnimatePresence>
 
       <Toaster 

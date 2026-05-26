@@ -228,7 +228,7 @@ export const Settings = (props: {
     </button>
   );
 
-  const currentPersonality = PERSONALITIES.find(p => p.id === (profile?.personality || 'professional'))!;
+  const currentPersonality = PERSONALITIES.find(p => p.id === (profile?.personality || 'creative'))!;
 
   return (
     <motion.div 
@@ -449,7 +449,7 @@ export const Settings = (props: {
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                     {PERSONALITIES.map((p) => {
                       const Icon = p.icon;
-                      const isSelected = profile?.personality === p.id || (!profile?.personality && p.id === 'professional');
+                      const isSelected = profile?.personality === p.id || (!profile?.personality && p.id === 'creative');
                       return (
                         <button 
                           key={p.id}

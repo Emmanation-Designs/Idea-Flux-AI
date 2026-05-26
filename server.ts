@@ -232,7 +232,7 @@ app.use((err: any, req: express.Request, res: express.Response, next: express.Ne
 });
 
 async function handleGenerate(req: express.Request, res: express.Response) {
-  const { type, prompt, messages = [], voice_option = "alloy", ready_to_copy = false, personality = "professional", model = "trelvix-mini" } = req.body;
+  const { type, prompt, messages = [], voice_option = "alloy", ready_to_copy = false, personality = "creative", model = "trelvix-mini" } = req.body;
 
   const needsWebSearch = (text: string) => {
     const searchKeywords = [
@@ -493,7 +493,7 @@ async function handleGenerate(req: express.Request, res: express.Response) {
 
     const isUltra = realModel === "gpt-4o";
     let systemInstruction = `You are Trelvix AI. ${attributionRules} 
-    Persona: ${personalityPrompts[personality as keyof typeof personalityPrompts] || personalityPrompts.professional}
+    Persona: ${personalityPrompts[personality as keyof typeof personalityPrompts] || personalityPrompts.creative}
     
     CORE PROTOCOL:
     - BE DIRECT. Do not behave like a standard, over-polished corporate AI assistant.

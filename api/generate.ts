@@ -9,7 +9,7 @@ export default async function handler(req: any, res: any) {
     return res.status(405).json({ error: 'Method not allowed' });
   }
 
-  const { type, prompt, messages = [], voice_option = "alloy", personality = "professional", model = "trelvix-mini" } = req.body;
+  const { type, prompt, messages = [], voice_option = "alloy", personality = "creative", model = "trelvix-mini" } = req.body;
 
   const needsWebSearch = (text: string) => {
     const searchKeywords = [
@@ -259,7 +259,7 @@ export default async function handler(req: any, res: any) {
 
     const isUltra = realModel === "gpt-4o";
     let systemInstruction = `You are Trelvix AI. ${attributionRules} 
-    Persona: ${personalityPrompts[personality as keyof typeof personalityPrompts] || personalityPrompts.professional}
+    Persona: ${personalityPrompts[personality as keyof typeof personalityPrompts] || personalityPrompts.creative}
     
     CORE PROTOCOL:
     - BE DIRECT. Do not behave like a standard, over-polished corporate AI assistant.
