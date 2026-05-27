@@ -607,7 +607,7 @@ async function handleGenerate(req: express.Request, res: express.Response) {
               const assistantMessage = {
                 id: crypto.randomUUID(),
                 role: 'assistant',
-                content: `A stunning visual representation of your request: "${promptText}".`,
+                content: "Here is your generated image:",
                 image_url: imageData ? `db:${imageData.id}` : base64Image,
                 filename: `trelvix-${Date.now()}.png`,
                 model: model || 'trelvix-visual',
@@ -624,7 +624,7 @@ async function handleGenerate(req: express.Request, res: express.Response) {
           } catch (e) {
             console.error("[Server Image Save Error]:", e);
           }
-        })().catch(console.error);
+         })().catch(console.error);
       }
 
       return res.json({ 
@@ -632,7 +632,7 @@ async function handleGenerate(req: express.Request, res: express.Response) {
         image_url: base64Image, 
         type: "image",
         filename: `trelvix-${Date.now()}.png`,
-        description: `A stunning visual representation of your request: "${promptText}".`
+        description: "Here is your generated image:"
       });
     }
 

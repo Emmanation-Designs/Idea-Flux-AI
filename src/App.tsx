@@ -36,7 +36,8 @@ import {
   Film,
   FileText,
   Sparkles,
-  Clock
+  Clock,
+  Loader2
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Toaster, toast } from 'sonner';
@@ -55,6 +56,7 @@ const supportsLookbehind = (() => {
 })();
 import { twMerge } from 'tailwind-merge';
 import { supabase } from './lib/supabase';
+import { applyWatermark } from './utils/watermark';
 
 import type { Message, ConversationType, Profile } from './types';
 
@@ -111,6 +113,7 @@ const ImageWithLoader = ({ src, alt, className, onClick }: { src: string, alt: s
   };
 
   useEffect(() => {
+    let active = true;
     setIsLoaded(false);
     setHasError(false);
 
@@ -124,20 +127,31 @@ const ImageWithLoader = ({ src, alt, className, onClick }: { src: string, alt: s
       supabase.from('images').select('image_url').eq('id', imgId).single()
         .then(
           ({ data, error }) => {
+            if (!active) return;
             if (error || !data?.image_url) {
               console.error("Error fetching lazy image:", error);
               setHasError(true);
             } else {
-              setDisplaySrc(getProxyUrl(data.image_url));
+              const proxiedUrl = getProxyUrl(data.image_url);
+              applyWatermark(proxiedUrl).then(watermarked => {
+                if (active) setDisplaySrc(watermarked);
+              });
             }
           },
           () => {
-            setHasError(true);
+            if (active) setHasError(true);
           }
         );
     } else {
-      setDisplaySrc(getProxyUrl(src));
+      const proxiedUrl = getProxyUrl(src);
+      applyWatermark(proxiedUrl).then(watermarked => {
+        if (active) setDisplaySrc(watermarked);
+      });
     }
+
+    return () => {
+      active = false;
+    };
   }, [src]);
   
   return (
@@ -213,6 +227,8 @@ export default function App() {
   const [selectedAttachment, setSelectedAttachment] = useState<{ file: File, preview: string, type: 'image' | 'video' | 'document' | 'other' } | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [expandedImage, setExpandedImage] = useState<{url: string, title: string} | null>(null);
+  const [isDownloading, setIsDownloading] = useState(false);
+  const [isZoomed, setIsZoomed] = useState(false);
   const [streamingMessage, setStreamingMessage] = useState('');
   const [activeView, setActiveView] = useState<'chat' | 'history' | 'apps' | 'images' | 'settings'>('chat');
   const [isListening, setIsListening] = useState(false);
@@ -239,56 +255,7 @@ export default function App() {
   const [timerCount, setTimerCount] = useState(0);
   const [currentStageText, setCurrentStageText] = useState('Initializing Trelvix Visual Engine...');
 
-  // Screen Wake Lock controller to prevent mobile screen sleep during model generation
-  const wakeLockRef = useRef<any>(null);
-  useEffect(() => {
-    const acquireLock = async () => {
-      if (isLoading && 'wakeLock' in navigator) {
-        try {
-          wakeLockRef.current = await (navigator.wakeLock as any).request('screen');
-          console.log('[WakeLock] Screen Wake Lock acquired successfully');
-        } catch (err) {
-          console.warn('[WakeLock] Screen Wake Lock acquisition failed:', err);
-        }
-      }
-    };
 
-    const releaseLock = async () => {
-      if (wakeLockRef.current) {
-        try {
-          await wakeLockRef.current.release();
-          console.log('[WakeLock] Screen Wake Lock released');
-        } catch (err) {
-          console.error('[WakeLock] Error releasing Wake Lock:', err);
-        }
-        wakeLockRef.current = null;
-      }
-    };
-
-    if (isLoading) {
-      acquireLock();
-    } else {
-      releaseLock();
-    }
-
-    const handleVisibilityChange = async () => {
-      if (isLoading && document.visibilityState === 'visible' && 'wakeLock' in navigator && !wakeLockRef.current) {
-        try {
-          wakeLockRef.current = await (navigator.wakeLock as any).request('screen');
-          console.log('[WakeLock] Screen Wake Lock re-acquired on visibility change');
-        } catch (err) {
-          console.warn('[WakeLock] Re-acquisition failed:', err);
-        }
-      }
-    };
-
-    document.addEventListener('visibilitychange', handleVisibilityChange);
-
-    return () => {
-      document.removeEventListener('visibilitychange', handleVisibilityChange);
-      releaseLock();
-    };
-  }, [isLoading]);
 
   // Timer & stage text controller for ChatGPT-style image generation loading UI
   useEffect(() => {
@@ -347,6 +314,62 @@ export default function App() {
   const [lastFailedRequest, setLastFailedRequest] = useState<{content: string, conv?: any} | null>(null);
   const [viewportHeight, setViewportHeight] = useState<string>('100%');
   const [loadedRemarkGfm, setLoadedRemarkGfm] = useState<any>(null);
+
+  // Screen Wake Lock controller to prevent mobile screen sleep during model generation or voice sessions
+  const wakeLockRef = useRef<any>(null);
+  const shouldKeepAwake = isLoading || isGeneratingImage || showVoiceMode || isPlaying || isListening;
+
+  useEffect(() => {
+    const acquireLock = async () => {
+      if (shouldKeepAwake && 'wakeLock' in navigator) {
+        try {
+          // Check if already active
+          if (!wakeLockRef.current) {
+            wakeLockRef.current = await (navigator.wakeLock as any).request('screen');
+            console.log('[WakeLock] Screen Wake Lock acquired successfully (active state)');
+          }
+        } catch (err) {
+          console.warn('[WakeLock] Screen Wake Lock acquisition failed:', err);
+        }
+      }
+    };
+
+    const releaseLock = async () => {
+      if (wakeLockRef.current) {
+        try {
+          await wakeLockRef.current.release();
+          console.log('[WakeLock] Screen Wake Lock released');
+        } catch (err) {
+          console.error('[WakeLock] Error releasing Wake Lock:', err);
+        }
+        wakeLockRef.current = null;
+      }
+    };
+
+    if (shouldKeepAwake) {
+      acquireLock();
+    } else {
+      releaseLock();
+    }
+
+    const handleVisibilityChange = async () => {
+      if (shouldKeepAwake && document.visibilityState === 'visible' && 'wakeLock' in navigator) {
+        try {
+          wakeLockRef.current = await (navigator.wakeLock as any).request('screen');
+          console.log('[WakeLock] Screen Wake Lock re-acquired on visibility change');
+        } catch (err) {
+          console.warn('[WakeLock] Re-acquisition failed:', err);
+        }
+      }
+    };
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      releaseLock();
+    };
+  }, [shouldKeepAwake]);
 
   useEffect(() => {
     if (supportsLookbehind) {
@@ -1412,7 +1435,7 @@ export default function App() {
         const assistantMessage: Message = {
           id: safeUUID(),
           role: 'assistant',
-          content: data.description || `Generated image for: ${content}`,
+          content: data.description || "Here is your generated image:",
           image_url: imageData ? `db:${imageData.id}` : image_url,
           filename: filename || `trelvix-${Date.now()}.png`,
           model: activeModel,
@@ -1723,6 +1746,7 @@ export default function App() {
   };
 
   const handleExpandImage = async (url: string, title: string) => {
+    setIsZoomed(false);
     if (!url) return;
     
     // Resolve DB reference immediately so the modal shows the full image without another loader delay
@@ -1740,6 +1764,7 @@ export default function App() {
 
   const handleDownloadImage = async (url: string, filename: string) => {
     try {
+      setIsDownloading(true);
       toast.loading('Preparing download...', { id: 'img-dl' });
       
       let downloadUrl = url;
@@ -1752,10 +1777,11 @@ export default function App() {
         downloadUrl = data.image_url;
       }
 
-      // If it's a data URI, download directly
+      // If it's a data URI, download directly with watermark
       if (downloadUrl.startsWith('data:')) {
+        const watermarkedUrl = await applyWatermark(downloadUrl);
         const a = document.createElement('a');
-        a.href = downloadUrl;
+        a.href = watermarkedUrl;
         a.download = filename.endsWith('.png') ? filename : `${filename}.png`;
         document.body.appendChild(a);
         a.click();
@@ -1774,18 +1800,29 @@ export default function App() {
       if (!response.ok) throw new Error('Proxy fetch failed');
       
       const blob = await response.blob();
-      const blobUrl = URL.createObjectURL(blob);
+      
+      // Convert blob to DataURL so we can watermark it in canvas
+      const base64FromBlob = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onloadend = () => resolve(reader.result as string);
+        reader.onerror = reject;
+        reader.readAsDataURL(blob);
+      });
+      
+      const watermarkedUrl = await applyWatermark(base64FromBlob);
+      
       const a = document.createElement('a');
-      a.href = blobUrl;
+      a.href = watermarkedUrl;
       a.download = filename.endsWith('.png') ? filename : `${filename}.png`;
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);
-      URL.revokeObjectURL(blobUrl);
       toast.success('Image download started', { id: 'img-dl' });
     } catch (error) {
       console.error('Download error:', error);
       toast.error('Failed to download image. It may have expired.', { id: 'img-dl' });
+    } finally {
+      setIsDownloading(false);
     }
   };
 
@@ -2098,30 +2135,6 @@ export default function App() {
                                   <Maximize2 className="w-8 h-8 text-white drop-shadow-lg" />
                                 </div>
                               </div>
-                              <div className="flex border-t border-zinc-200 dark:border-zinc-800">
-                                <button 
-                                  onClick={(e) => {
-                                    e.preventDefault();
-                                    e.stopPropagation();
-                                    handleExpandImage(m.image_url!, m.content);
-                                  }}
-                                  className="flex-1 py-2.5 bg-transparent text-[10px] font-bold flex items-center justify-center gap-2 hover:bg-zinc-200 dark:hover:bg-zinc-800 transition-colors border-r border-zinc-200 dark:border-zinc-800 text-zinc-600 dark:text-zinc-400"
-                                >
-                                  <Maximize2 className="w-3 h-3" />
-                                  EXPAND
-                                </button>
-                                <button 
-                                  onClick={(e) => {
-                                    e.preventDefault();
-                                    e.stopPropagation();
-                                    handleDownloadImage(m.image_url!, m.filename || 'generated-image.png');
-                                  }}
-                                  className="flex-1 py-2.5 bg-transparent text-[10px] font-bold flex items-center justify-center gap-2 hover:bg-zinc-200 dark:hover:bg-zinc-800 transition-colors text-zinc-600 dark:text-zinc-400"
-                                >
-                                  <Download className="w-3 h-3" />
-                                  DOWNLOAD
-                                </button>
-                              </div>
                             </div>
                           )}
                         </div>
@@ -2279,81 +2292,16 @@ export default function App() {
                           </div>
                         ) : isGeneratingImage ? (
                           <motion.div 
-                            initial={{ opacity: 0, y: 15 }}
-                            animate={{ opacity: 1, y: 0 }}
-                            exit={{ opacity: 0, y: -15 }}
-                            className="w-full max-w-xl mt-4 border border-zinc-200/80 dark:border-zinc-800/60 rounded-3xl overflow-hidden bg-zinc-50 dark:bg-zinc-900/40 shadow-sm p-6"
+                            initial={{ opacity: 0, scale: 0.98 }}
+                            animate={{ opacity: 1, scale: 1 }}
+                            exit={{ opacity: 0 }}
+                            className="mt-4 flex flex-col items-start gap-2"
                           >
-                            <div className="flex flex-col gap-5">
-                              {/* Visual Canvas Representation */}
-                              <div className="relative aspect-square md:aspect-[4/3] w-full rounded-2xl overflow-hidden bg-zinc-100 dark:bg-zinc-950 flex flex-col items-center justify-center border border-zinc-200/40 dark:border-zinc-800/20 shadow-inner">
-                                {/* Animated fluid shimmering background canvas */}
-                                <div className="absolute inset-0 bg-gradient-to-tr from-sky-500/10 via-purple-500/10 to-emerald-500/10 dark:from-sky-500/20 dark:via-purple-500/20 dark:to-emerald-500/20 animate-pulse" />
-                                
-                                <div className="absolute inset-x-0 top-0 h-1/2 bg-gradient-to-b from-white/10 dark:from-white/5 to-transparent blur-sm animate-bounce [animation-duration:8s]" />
-                                
-                                {/* Glowing core */}
-                                <div className="relative z-10 flex flex-col items-center gap-4 text-center p-6 w-full">
-                                  <div className="relative flex items-center justify-center">
-                                    <div className="absolute inset-0 w-16 h-16 rounded-full bg-sky-500/10 dark:bg-sky-500/20 animate-ping [animation-duration:3s]" />
-                                    <div className="absolute inset-0 w-16 h-16 rounded-full bg-purple-500/5 dark:bg-purple-500/10 animate-ping [animation-duration:4s] [animation-delay:1s]" />
-                                    
-                                    <div className="w-16 h-16 rounded-2xl bg-gradient-to-tr from-sky-500 via-indigo-500 to-purple-600 p-[1.5px] shadow-lg animate-spin [animation-duration:12s]">
-                                      <div className="w-full h-full rounded-[14px] bg-zinc-950 flex items-center justify-center">
-                                        <Sparkles className="w-6 h-6 text-sky-400 animate-pulse" />
-                                      </div>
-                                    </div>
-                                  </div>
-
-                                  <div className="flex flex-col gap-1.5 max-w-xs">
-                                    <span className="text-[10px] font-bold uppercase tracking-widest text-sky-500/90 dark:text-sky-400">
-                                      Trelvix Visual Engine
-                                    </span>
-                                    <span className="text-zinc-600 dark:text-zinc-300 text-sm font-semibold tracking-tight leading-snug">
-                                      {currentStageText}
-                                    </span>
-                                  </div>
-
-                                  {/* Prompt pill */}
-                                  {currentImagePrompt && (
-                                    <div className="mt-3 px-4 py-2.5 rounded-2xl bg-white/75 dark:bg-zinc-900/75 backdrop-blur-md border border-zinc-200/50 dark:border-zinc-800/50 text-center max-w-md shadow-sm">
-                                      <p className="text-[9px] text-zinc-400 dark:text-zinc-500 font-bold uppercase tracking-wider mb-0.5">Creating Image</p>
-                                      <p className="text-[11px] text-zinc-700 dark:text-zinc-350 italic line-clamp-3 leading-relaxed">
-                                        "{currentImagePrompt}"
-                                      </p>
-                                    </div>
-                                  )}
-                                </div>
-
-                                {/* Bottom loading bar */}
-                                <div className="absolute bottom-0 inset-x-0 h-1 bg-zinc-200 dark:bg-zinc-900">
-                                  <motion.div 
-                                    className="h-full bg-gradient-to-r from-sky-500 via-indigo-500 to-purple-600"
-                                    initial={{ width: '0%' }}
-                                    animate={{ width: '100%' }}
-                                    transition={{ duration: imageSpeed === 'fast' ? 5 : 22, ease: 'easeOut' }}
-                                  />
-                                </div>
-                                
-                                {/* Timer ticker */}
-                                <div className="absolute top-3 right-3 px-2.5 py-1 rounded-lg bg-zinc-900/80 dark:bg-zinc-950/80 backdrop-blur-sm border border-white/5 text-[10px] font-mono text-zinc-400 font-semibold flex items-center gap-1.5">
-                                  <Clock className="w-3.5 h-3.5 text-sky-400" />
-                                  <span>{timerCount}s elapsed</span>
-                                </div>
-                              </div>
-                              
-                              {/* Footer speed state */}
-                              <div className="flex items-center justify-between px-1">
-                                <div className="flex items-center gap-2">
-                                  <Zap className="w-4 h-4 text-amber-500" />
-                                  <span className="text-[11px] text-zinc-400 dark:text-zinc-500 font-semibold">
-                                    {imageSpeed === 'fast' 
-                                      ? 'Turbo Mode (Faster, Standard Definition)' 
-                                      : 'HD Quality Mode (Slower, High Definition)'}
-                                  </span>
-                                </div>
-                                <span className="text-[10px] font-mono font-bold text-zinc-400">
-                                  Estimated: {imageSpeed === 'fast' ? '3-6s' : '15-25s'}
+                            <div className="relative w-72 h-72 sm:w-80 sm:h-80 aspect-square rounded-[24px] overflow-hidden bg-zinc-100/70 dark:bg-zinc-900/40 border border-zinc-200/50 dark:border-zinc-800/40 flex flex-col items-center justify-center shadow-inner animate-pulse">
+                              <div className="flex flex-col items-center gap-3">
+                                <Loader2 className="w-5 h-5 text-zinc-400 dark:text-zinc-500 animate-spin" />
+                                <span className="text-zinc-400 dark:text-zinc-500 text-xs font-medium tracking-tight">
+                                  Generating image...
                                 </span>
                               </div>
                             </div>
@@ -2574,68 +2522,99 @@ export default function App() {
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
             onClick={() => setExpandedImage(null)}
-            className="fixed inset-0 z-[100] bg-black/95 backdrop-blur-xl flex flex-col items-center justify-center p-4 md:p-10"
+            className="fixed inset-0 z-[100] bg-black/95 backdrop-blur-xl flex flex-col items-center justify-between p-4 md:p-6"
           >
-            <motion.button
-              initial={{ scale: 0.5, opacity: 0 }}
-              animate={{ scale: 1, opacity: 1 }}
-              className="absolute top-6 right-6 p-3 bg-white/10 hover:bg-white/20 rounded-full text-white transition-colors"
-              onClick={() => setExpandedImage(null)}
-            >
-              <X className="w-6 h-6" />
-            </motion.button>
-
             <motion.div
               initial={{ scale: 0.95, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
               exit={{ scale: 0.95, opacity: 0 }}
               onClick={(e) => e.stopPropagation()}
-              className="relative w-full max-w-[95vw] h-full flex flex-col items-center justify-center"
+              className="relative w-full max-w-5xl h-full flex flex-col items-center justify-between py-2 sm:py-4"
             >
-              <div className="relative group rounded-xl overflow-hidden shadow-2xl bg-zinc-900/50 flex items-center justify-center max-h-[85vh] w-full">
-                <ImageWithLoader 
-                  src={expandedImage.url} 
-                  alt={expandedImage.title} 
-                  className="max-h-[85vh] w-auto max-w-full object-contain"
-                />
-                <div className="absolute top-4 left-4 right-4 pointer-events-none">
-                  <div className="bg-black/40 backdrop-blur-md px-4 py-2 rounded-full border border-white/10 w-fit max-w-full">
-                    <p className="text-white text-xs font-medium truncate">{expandedImage.title}</p>
-                  </div>
+              {/* Top Bar Controls */}
+              <div className="w-full flex items-center justify-between z-10 gap-4 select-none mb-3 sm:mb-4 shrink-0">
+                <div className="bg-black/60 backdrop-blur-md px-4 py-2 rounded-full border border-white/10 max-w-[55%] sm:max-w-md shadow-md">
+                  <p className="text-white text-xs sm:text-sm font-semibold truncate">{expandedImage.title || 'Generated Artwork'}</p>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  {/* Download Icon Button with 360 Loader */}
+                  <button
+                    onClick={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      handleDownloadImage(expandedImage.url, 'expanded-image.png');
+                    }}
+                    disabled={isDownloading}
+                    className="flex items-center justify-center w-10 h-10 bg-white/10 hover:bg-white/20 active:scale-95 focus:outline-none disabled:pointer-events-none rounded-full text-white transition-all shadow-lg border border-white/10 relative"
+                    title="Download High Res"
+                  >
+                    {isDownloading ? (
+                      <svg className="animate-spin h-5 w-5 text-white" fill="none" viewBox="0 0 24 24">
+                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                      </svg>
+                    ) : (
+                      <Download className="w-5 h-5" />
+                    )}
+                  </button>
+
+                  {/* Share Icon Button */}
+                  <button
+                    onClick={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      handleShareMessage({ content: expandedImage.title, image_url: expandedImage.url, role: 'assistant', id: 'img-share' } as any);
+                    }}
+                    className="flex items-center justify-center w-10 h-10 bg-white/10 hover:bg-white/20 active:scale-95 focus:outline-none rounded-full text-white transition-all shadow-lg border border-white/10"
+                    title="Share Artwork"
+                  >
+                    <ExternalLink className="w-5 h-5" />
+                  </button>
+
+                  {/* Close Icon Button */}
+                  <button
+                    onClick={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      setExpandedImage(null);
+                    }}
+                    className="flex items-center justify-center w-10 h-10 bg-white/10 hover:bg-white/20 active:scale-95 focus:outline-none rounded-full text-white transition-all shadow-lg border border-white/10"
+                    title="Close"
+                  >
+                    <X className="w-5 h-5" />
+                  </button>
                 </div>
               </div>
 
-              <div className="mt-6 flex items-center gap-3">
-                <button
-                  onClick={(e) => {
-                    e.preventDefault();
-                    e.stopPropagation();
-                    handleDownloadImage(expandedImage.url, 'expanded-image.png');
-                  }}
-                  className="flex items-center gap-2 px-6 md:px-8 py-3 bg-white text-black rounded-full font-bold hover:bg-zinc-200 transition-colors shadow-lg"
-                >
-                  <Download className="w-5 h-5" />
-                  <span className="hidden md:inline">Download High Res</span>
-                  <span className="md:hidden">Download</span>
-                </button>
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    handleShareMessage({ content: expandedImage.title, image_url: expandedImage.url, role: 'assistant', id: 'img-share' } as any);
-                  }}
-                  className="flex items-center gap-2 px-6 md:px-8 py-3 bg-white/10 text-white rounded-full font-bold hover:bg-white/20 transition-colors border border-white/10"
-                >
-                  <ExternalLink className="w-5 h-5" />
-                  <span className="hidden md:inline">Share Artwork</span>
-                  <span className="md:hidden">Share</span>
-                </button>
-                <button
-                  onClick={() => setExpandedImage(null)}
-                  className="flex items-center gap-2 px-6 md:px-8 py-3 bg-zinc-800 text-white rounded-full font-bold hover:bg-zinc-700 transition-colors"
-                >
-                  <X className="w-5 h-5" />
-                  <span className="hidden md:inline">Close</span>
-                </button>
+              {/* Main Image Viewport supporting dual modes (fit screen or pixel-perfect zoom scroll) */}
+              <div 
+                className={cn(
+                  "relative w-full flex-1 min-h-0 flex items-center justify-center bg-zinc-950/20 rounded-3xl border border-white/5",
+                  isZoomed ? "overflow-auto touch-pan-x touch-pan-y" : "overflow-hidden"
+                )}
+                onClick={() => setIsZoomed(!isZoomed)}
+              >
+                <div className={cn(
+                  "transition-all duration-300",
+                  isZoomed ? "min-w-max min-h-max p-4" : "w-full h-full flex items-center justify-center"
+                )}>
+                  <ImageWithLoader 
+                    src={expandedImage.url} 
+                    alt={expandedImage.title} 
+                    className={cn(
+                      "transition-all bg-transparent shadow-2xl rounded-2xl border border-white/5 select-none touch-none",
+                      isZoomed 
+                        ? "max-h-none max-w-none w-auto h-auto cursor-zoom-out" 
+                        : "max-h-[75vh] md:max-h-[82vh] max-w-full w-auto h-auto object-contain cursor-zoom-in"
+                    )}
+                  />
+                </div>
+              </div>
+
+              {/* Light Subtitle Action Instruction Indicator */}
+              <div className="mt-2 shrink-0 select-none text-[10px] text-white/30 font-semibold tracking-wider uppercase border-t border-white/5 pt-2 w-full text-center">
+                <span>{isZoomed ? "Zoom: Actual Size (Tap to fit screen)" : "Zoom: Fit Screen (Tap image to view full scale)"}</span>
               </div>
             </motion.div>
           </motion.div>

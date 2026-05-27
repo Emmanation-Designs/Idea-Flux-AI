@@ -13,6 +13,7 @@
     height: 100%;
     width: 100%;
     overflow: hidden;
+    position: fixed; /* Prevents iOS rubber-banding scroll of whole body */
     margin: 0;
     padding: 0;
   }

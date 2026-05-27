@@ -370,7 +370,7 @@ export default async function handler(req: any, res: any) {
               const assistantMessage = {
                 id: crypto.randomUUID(),
                 role: 'assistant',
-                content: `A stunning visual representation of your request: "${promptText}".`,
+                content: "Here is your generated image:",
                 image_url: imageData ? `db:${imageData.id}` : base64Image,
                 filename: `trelvix-${Date.now()}.png`,
                 model: model || 'trelvix-visual',
@@ -387,7 +387,7 @@ export default async function handler(req: any, res: any) {
           } catch (e) {
             console.error("[API Image Save Error]:", e);
           }
-        })().catch(console.error);
+         })().catch(console.error);
       }
 
       return res.json({ 
@@ -395,7 +395,7 @@ export default async function handler(req: any, res: any) {
         image_url: base64Image, 
         type: "image",
         filename: `trelvix-${Date.now()}.png`,
-        description: `A stunning visual representation of your request: "${promptText}".`
+        description: "Here is your generated image:"
       });
     }
 

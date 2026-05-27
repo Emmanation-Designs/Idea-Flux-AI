@@ -29,7 +29,7 @@ export const ContextForm = ({
       <motion.div 
         initial={{ scale: 0.9, opacity: 0 }}
         animate={{ scale: 1, opacity: 1 }}
-        className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-2xl w-full max-w-md p-6 shadow-2xl"
+        className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-2xl w-full max-w-md p-6 shadow-2xl overflow-y-auto max-h-[90vh]"
       >
         <h2 className="text-xl font-bold mb-6 flex items-center gap-2">
           {type === 'idea' && <MessageSquare className="w-5 h-5 text-blue-500" />}
