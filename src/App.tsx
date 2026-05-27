@@ -34,7 +34,9 @@ import {
   Paperclip,
   File as FileIcon,
   Film,
-  FileText
+  FileText,
+  Sparkles,
+  Clock
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Toaster, toast } from 'sonner';
@@ -231,6 +233,106 @@ export default function App() {
       return next;
     });
   };
+
+  const [isGeneratingImage, setIsGeneratingImage] = useState(false);
+  const [currentImagePrompt, setCurrentImagePrompt] = useState('');
+  const [timerCount, setTimerCount] = useState(0);
+  const [currentStageText, setCurrentStageText] = useState('Initializing Trelvix Visual Engine...');
+
+  // Screen Wake Lock controller to prevent mobile screen sleep during model generation
+  const wakeLockRef = useRef<any>(null);
+  useEffect(() => {
+    const acquireLock = async () => {
+      if (isLoading && 'wakeLock' in navigator) {
+        try {
+          wakeLockRef.current = await (navigator.wakeLock as any).request('screen');
+          console.log('[WakeLock] Screen Wake Lock acquired successfully');
+        } catch (err) {
+          console.warn('[WakeLock] Screen Wake Lock acquisition failed:', err);
+        }
+      }
+    };
+
+    const releaseLock = async () => {
+      if (wakeLockRef.current) {
+        try {
+          await wakeLockRef.current.release();
+          console.log('[WakeLock] Screen Wake Lock released');
+        } catch (err) {
+          console.error('[WakeLock] Error releasing Wake Lock:', err);
+        }
+        wakeLockRef.current = null;
+      }
+    };
+
+    if (isLoading) {
+      acquireLock();
+    } else {
+      releaseLock();
+    }
+
+    const handleVisibilityChange = async () => {
+      if (isLoading && document.visibilityState === 'visible' && 'wakeLock' in navigator && !wakeLockRef.current) {
+        try {
+          wakeLockRef.current = await (navigator.wakeLock as any).request('screen');
+          console.log('[WakeLock] Screen Wake Lock re-acquired on visibility change');
+        } catch (err) {
+          console.warn('[WakeLock] Re-acquisition failed:', err);
+        }
+      }
+    };
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      releaseLock();
+    };
+  }, [isLoading]);
+
+  // Timer & stage text controller for ChatGPT-style image generation loading UI
+  useEffect(() => {
+    let timerId: any = null;
+    if (isGeneratingImage && isLoading) {
+      setTimerCount(0);
+      setCurrentStageText('Initializing Trelvix Visual Engine...');
+      
+      timerId = setInterval(() => {
+        setTimerCount(prev => {
+          const next = prev + 1;
+          if (next === 2) {
+            setCurrentStageText('Parsing composition guidelines...');
+          } else if (next === 4) {
+            setCurrentStageText('Initializing pixel canvas layout...');
+          } else if (next === 8) {
+            setCurrentStageText('Synthesizing high-fidelity lighting model...');
+          } else if (next === 12) {
+            setCurrentStageText('Rendering volumetric details & colors...');
+          } else if (next === 16) {
+            setCurrentStageText('Finalizing rendering & noise reduction...');
+          } else if (next === 22) {
+            setCurrentStageText('Applying 8K upscaling filters...');
+          }
+          return next;
+        });
+      }, 1000);
+    } else {
+      setTimerCount(0);
+    }
+
+    return () => {
+      if (timerId) clearInterval(timerId);
+    };
+  }, [isGeneratingImage, isLoading]);
+
+  // Persist the current active conversation ID to localStorage to survive page reloads gracefully
+  useEffect(() => {
+    if (currentConversation?.id) {
+      localStorage.setItem('last_conversation_id', currentConversation.id);
+    } else {
+      localStorage.removeItem('last_conversation_id');
+    }
+  }, [currentConversation?.id]);
   const [showVoiceMode, setShowVoiceMode] = useState(false);
   const [isMuted, setIsMuted] = useState(false);
   const [isSpeakerOn, setIsSpeakerOn] = useState(true);
@@ -305,8 +407,8 @@ export default function App() {
     const checkConversationHistory = async () => {
       if (!currentConversation?.id) return;
       
-      // Only check if the last local state message is from 'user' and the UI is NOT active/loading/streaming
-      if (messages.length > 0 && messages[messages.length - 1].role === 'user' && !isLoading && !streamingMessage) {
+      // Only check if the last local state message is from 'user' and the UI is NOT actively streaming
+      if (messages.length > 0 && messages[messages.length - 1].role === 'user' && !streamingMessage) {
         try {
           console.log("[Auto-Sync] Checking if server background worker completed reply...");
           const { data, error } = await supabase
@@ -354,7 +456,7 @@ export default function App() {
 
     checkConversationHistory();
 
-    if (messages.length > 0 && messages[messages.length - 1].role === 'user' && !isLoading && !streamingMessage) {
+    if (messages.length > 0 && messages[messages.length - 1].role === 'user' && !streamingMessage) {
       timerId = setInterval(() => {
         checkConversationHistory();
       }, 4000);
@@ -364,7 +466,30 @@ export default function App() {
       active = false;
       if (timerId) clearInterval(timerId);
     };
-  }, [currentConversation?.id, messages, isLoading, streamingMessage]);
+  }, [currentConversation?.id, messages, streamingMessage]);
+
+  // Self-healing startup & reload state resume logic
+  useEffect(() => {
+    if (messages.length > 0 && messages[messages.length - 1].role === 'user') {
+      const lastMsg = messages[messages.length - 1];
+      const lowerContent = (lastMsg.content || '').toLowerCase();
+      const isImg = currentConversation?.type === 'image' || 
+        ((/generate|create|make|draw|design|show me|give me|i want|produce|paint|illustrate|visualize|render/i.test(lowerContent)) && 
+         (/image|picture|photo|logo|flyer|poster|illustration|drawing|sketch|graphic|art|realistic|scene|portrait|landscape/i.test(lowerContent))) ||
+        /\b(logo|flyer|poster|art|sketch|drawing)\b/i.test(lowerContent) ||
+        /image of|picture of|photo of|generate a|create a|make a/i.test(lowerContent) ||
+        /^realistic |^photorealistic /i.test(lowerContent);
+        
+      setIsLoading(true);
+      if (isImg) {
+        setIsGeneratingImage(true);
+        setCurrentImagePrompt(lastMsg.content || '');
+      }
+    } else {
+      setIsLoading(false);
+      setIsGeneratingImage(false);
+    }
+  }, [currentConversation?.id, messages.length]);
   const recognitionRef = useRef<any>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const voiceAbortControllerRef = useRef<AbortController | null>(null);
@@ -817,6 +942,27 @@ export default function App() {
       
       setConversations(uniqueConversations);
 
+      const lastId = localStorage.getItem('last_conversation_id');
+      if (lastId) {
+        const lastConv = uniqueConversations.find((c: any) => c.id === lastId);
+        if (lastConv) {
+          console.log("[Chat] Auto-restoring last active conversation on startup:", lastId);
+          setCurrentConversation(lastConv);
+          
+          const uniqueMessages = (lastConv.messages || []).reduce((acc: any[], curr: any, idx: number) => {
+            const messageId = curr.id || `msg-legacy-${idx}`;
+            if (!acc.find(m => m.id === messageId)) {
+              acc.push({ ...curr, id: messageId });
+            }
+            return acc;
+          }, []);
+          
+          setMessages(uniqueMessages);
+          setStreamingMessage('');
+          setActiveView('chat');
+        }
+      }
+
       // Auto-migrate/heal expiring images in the background after the UI starts rendering to keep chat loading incredibly fast
       setTimeout(() => {
         uniqueConversations.forEach(async (conv: any) => {
@@ -1144,6 +1290,13 @@ export default function App() {
     const currentAttachment = selectedAttachment; 
     clearAttachment(); 
     setIsLoading(true);
+    if (isImageIntent) {
+      setIsGeneratingImage(true);
+      setCurrentImagePrompt(content);
+    } else {
+      setIsGeneratingImage(false);
+      setCurrentImagePrompt('');
+    }
     setStreamingMessage('');
     setHasError(false);
     setLastFailedRequest(null);
@@ -1276,6 +1429,7 @@ export default function App() {
         }
         
         setIsLoading(false);
+        setIsGeneratingImage(false);
         return;
       }
 
@@ -1325,6 +1479,7 @@ export default function App() {
       setIsLoading(false);
     } catch (error: any) {
       clearTimeout(timeoutId);
+      setIsGeneratingImage(false);
       
       const isAbortError = error.name === 'AbortError' || 
                            error.message?.includes('aborted') || 
@@ -2122,6 +2277,87 @@ export default function App() {
                             </ReactMarkdown>
                             <span className="inline-block w-2.5 h-4.5 ml-1 bg-zinc-900 dark:bg-white animate-pulse rounded-sm align-middle" />
                           </div>
+                        ) : isGeneratingImage ? (
+                          <motion.div 
+                            initial={{ opacity: 0, y: 15 }}
+                            animate={{ opacity: 1, y: 0 }}
+                            exit={{ opacity: 0, y: -15 }}
+                            className="w-full max-w-xl mt-4 border border-zinc-200/80 dark:border-zinc-800/60 rounded-3xl overflow-hidden bg-zinc-50 dark:bg-zinc-900/40 shadow-sm p-6"
+                          >
+                            <div className="flex flex-col gap-5">
+                              {/* Visual Canvas Representation */}
+                              <div className="relative aspect-square md:aspect-[4/3] w-full rounded-2xl overflow-hidden bg-zinc-100 dark:bg-zinc-950 flex flex-col items-center justify-center border border-zinc-200/40 dark:border-zinc-800/20 shadow-inner">
+                                {/* Animated fluid shimmering background canvas */}
+                                <div className="absolute inset-0 bg-gradient-to-tr from-sky-500/10 via-purple-500/10 to-emerald-500/10 dark:from-sky-500/20 dark:via-purple-500/20 dark:to-emerald-500/20 animate-pulse" />
+                                
+                                <div className="absolute inset-x-0 top-0 h-1/2 bg-gradient-to-b from-white/10 dark:from-white/5 to-transparent blur-sm animate-bounce [animation-duration:8s]" />
+                                
+                                {/* Glowing core */}
+                                <div className="relative z-10 flex flex-col items-center gap-4 text-center p-6 w-full">
+                                  <div className="relative flex items-center justify-center">
+                                    <div className="absolute inset-0 w-16 h-16 rounded-full bg-sky-500/10 dark:bg-sky-500/20 animate-ping [animation-duration:3s]" />
+                                    <div className="absolute inset-0 w-16 h-16 rounded-full bg-purple-500/5 dark:bg-purple-500/10 animate-ping [animation-duration:4s] [animation-delay:1s]" />
+                                    
+                                    <div className="w-16 h-16 rounded-2xl bg-gradient-to-tr from-sky-500 via-indigo-500 to-purple-600 p-[1.5px] shadow-lg animate-spin [animation-duration:12s]">
+                                      <div className="w-full h-full rounded-[14px] bg-zinc-950 flex items-center justify-center">
+                                        <Sparkles className="w-6 h-6 text-sky-400 animate-pulse" />
+                                      </div>
+                                    </div>
+                                  </div>
+
+                                  <div className="flex flex-col gap-1.5 max-w-xs">
+                                    <span className="text-[10px] font-bold uppercase tracking-widest text-sky-500/90 dark:text-sky-400">
+                                      Trelvix Visual Engine
+                                    </span>
+                                    <span className="text-zinc-600 dark:text-zinc-300 text-sm font-semibold tracking-tight leading-snug">
+                                      {currentStageText}
+                                    </span>
+                                  </div>
+
+                                  {/* Prompt pill */}
+                                  {currentImagePrompt && (
+                                    <div className="mt-3 px-4 py-2.5 rounded-2xl bg-white/75 dark:bg-zinc-900/75 backdrop-blur-md border border-zinc-200/50 dark:border-zinc-800/50 text-center max-w-md shadow-sm">
+                                      <p className="text-[9px] text-zinc-400 dark:text-zinc-500 font-bold uppercase tracking-wider mb-0.5">Creating Image</p>
+                                      <p className="text-[11px] text-zinc-700 dark:text-zinc-350 italic line-clamp-3 leading-relaxed">
+                                        "{currentImagePrompt}"
+                                      </p>
+                                    </div>
+                                  )}
+                                </div>
+
+                                {/* Bottom loading bar */}
+                                <div className="absolute bottom-0 inset-x-0 h-1 bg-zinc-200 dark:bg-zinc-900">
+                                  <motion.div 
+                                    className="h-full bg-gradient-to-r from-sky-500 via-indigo-500 to-purple-600"
+                                    initial={{ width: '0%' }}
+                                    animate={{ width: '100%' }}
+                                    transition={{ duration: imageSpeed === 'fast' ? 5 : 22, ease: 'easeOut' }}
+                                  />
+                                </div>
+                                
+                                {/* Timer ticker */}
+                                <div className="absolute top-3 right-3 px-2.5 py-1 rounded-lg bg-zinc-900/80 dark:bg-zinc-950/80 backdrop-blur-sm border border-white/5 text-[10px] font-mono text-zinc-400 font-semibold flex items-center gap-1.5">
+                                  <Clock className="w-3.5 h-3.5 text-sky-400" />
+                                  <span>{timerCount}s elapsed</span>
+                                </div>
+                              </div>
+                              
+                              {/* Footer speed state */}
+                              <div className="flex items-center justify-between px-1">
+                                <div className="flex items-center gap-2">
+                                  <Zap className="w-4 h-4 text-amber-500" />
+                                  <span className="text-[11px] text-zinc-400 dark:text-zinc-500 font-semibold">
+                                    {imageSpeed === 'fast' 
+                                      ? 'Turbo Mode (Faster, Standard Definition)' 
+                                      : 'HD Quality Mode (Slower, High Definition)'}
+                                  </span>
+                                </div>
+                                <span className="text-[10px] font-mono font-bold text-zinc-400">
+                                  Estimated: {imageSpeed === 'fast' ? '3-6s' : '15-25s'}
+                                </span>
+                              </div>
+                            </div>
+                          </motion.div>
                         ) : (
                           <div className="flex items-center gap-3 py-2 px-1">
                             <div className="flex gap-1 items-center">
