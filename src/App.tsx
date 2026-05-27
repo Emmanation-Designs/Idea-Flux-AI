@@ -220,6 +220,17 @@ export default function App() {
   const [currentlyPlayingMessageId, setCurrentlyPlayingMessageId] = useState<string | null>(null);
   const [shouldPlayVoice, setShouldPlayVoice] = useState(false);
   const [autoPlayVoice, setAutoPlayVoice] = useState(false);
+  const [imageSpeed, setImageSpeed] = useState<'fast' | 'quality'>(() => {
+    return (localStorage.getItem('image_speed') as 'fast' | 'quality') || 'quality';
+  });
+  const handleToggleImageSpeed = () => {
+    setImageSpeed(prev => {
+      const next = prev === 'fast' ? 'quality' : 'fast';
+      localStorage.setItem('image_speed', next);
+      toast.info(`Visual engine set to ${next === 'fast' ? 'Turbo Speed' : 'HD Quality'}`);
+      return next;
+    });
+  };
   const [showVoiceMode, setShowVoiceMode] = useState(false);
   const [isMuted, setIsMuted] = useState(false);
   const [isSpeakerOn, setIsSpeakerOn] = useState(true);
@@ -285,6 +296,75 @@ export default function App() {
       if (loadingIntervalRef.current) clearInterval(loadingIntervalRef.current);
     };
   }, [isLoading]);
+
+  // Quiet background synchronization / session recovery effect
+  useEffect(() => {
+    let active = true;
+    let timerId: any = null;
+    
+    const checkConversationHistory = async () => {
+      if (!currentConversation?.id) return;
+      
+      // Only check if the last local state message is from 'user' and the UI is NOT active/loading/streaming
+      if (messages.length > 0 && messages[messages.length - 1].role === 'user' && !isLoading && !streamingMessage) {
+        try {
+          console.log("[Auto-Sync] Checking if server background worker completed reply...");
+          const { data, error } = await supabase
+            .from('conversations')
+            .select('messages')
+            .eq('id', currentConversation.id)
+            .single();
+            
+          if (error) {
+            console.error("[Auto-Sync] Error checking:", error);
+            return;
+          }
+          
+          if (data && data.messages && data.messages.length > messages.length) {
+            const lastMsg = data.messages[data.messages.length - 1];
+            if (lastMsg.role === 'assistant') {
+              console.log("[Auto-Sync] Found background reply! Healing conversation locally.");
+              
+              // Filter out duplicates and stabilize
+              const uniqueMessages = (data.messages || []).reduce((acc: any[], curr: any, idx: number) => {
+                const messageId = curr.id || `msg-legacy-${idx}`;
+                if (!acc.find(m => m.id === messageId)) {
+                  acc.push({ ...curr, id: messageId });
+                }
+                return acc;
+              }, []);
+              
+              if (active) {
+                setMessages(uniqueMessages);
+                setConversations(prev => prev.map(c => c.id === currentConversation.id ? { ...c, messages: uniqueMessages, updated_at: new Date().toISOString() } : c));
+                setCurrentConversation(prev => prev ? { ...prev, messages: uniqueMessages } : null);
+                setHasError(false);
+                if (autoPlayVoice && lastMsg.content && currentConversation.type !== 'image') {
+                  playVoice(lastMsg.content);
+                }
+              }
+              return; 
+            }
+          }
+        } catch (err) {
+          console.error("[Auto-Sync] Check exception:", err);
+        }
+      }
+    };
+
+    checkConversationHistory();
+
+    if (messages.length > 0 && messages[messages.length - 1].role === 'user' && !isLoading && !streamingMessage) {
+      timerId = setInterval(() => {
+        checkConversationHistory();
+      }, 4000);
+    }
+
+    return () => {
+      active = false;
+      if (timerId) clearInterval(timerId);
+    };
+  }, [currentConversation?.id, messages, isLoading, streamingMessage]);
   const recognitionRef = useRef<any>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const voiceAbortControllerRef = useRef<AbortController | null>(null);
@@ -1138,7 +1218,8 @@ export default function App() {
           ready_to_copy: conv.metadata?.ready_to_copy || false,
           personality: profile?.personality || 'creative',
           conversationId: conv.id,
-          userId: user?.id
+          userId: user?.id,
+          image_speed: imageSpeed
         }),
         signal: controller.signal
       });
@@ -1972,23 +2053,32 @@ export default function App() {
                   {((hasError || (messages.length > 0 && messages[messages.length - 1].role === 'user')) && !isLoading && !streamingMessage) && (
                     <motion.div 
                       key="error-state"
-                      initial={{ opacity: 0, x: -10 }}
-                      animate={{ opacity: 1, x: 0 }}
+                      initial={{ opacity: 0, y: 10 }}
+                      animate={{ opacity: 1, y: 0 }}
                       className="flex justify-start py-4"
                     >
-                      <div className="flex items-center gap-3 px-4 py-2.5 bg-zinc-50 dark:bg-zinc-900/50 border border-zinc-200 dark:border-zinc-800 rounded-2xl shadow-sm">
-                        <div className="flex items-center gap-2.5">
-                          <div className="w-1.5 h-1.5 rounded-full bg-rose-500" />
-                          <span className="text-xs font-semibold text-rose-500/90 dark:text-rose-400">Failed to fetch response or session got interrupted.</span>
+                      <div className="flex flex-col gap-2 p-4 bg-zinc-50 dark:bg-zinc-900/60 border border-zinc-200 dark:border-zinc-800 rounded-2xl shadow-sm max-w-sm">
+                        <div className="flex items-center gap-3">
+                          <div className="relative flex h-2 w-2">
+                            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                            <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+                          </div>
+                          <span className="text-xs font-semibold text-zinc-900 dark:text-zinc-100">
+                            Checking background generation...
+                          </span>
                         </div>
-                        <div className="w-px h-3 bg-zinc-200 dark:bg-zinc-800" />
-                        <button 
-                          onClick={() => handleRetry()}
-                          className="text-xs font-bold text-zinc-900 dark:text-zinc-100 hover:underline active:scale-95 flex items-center gap-1.5 transition-all text-emerald-600 dark:text-emerald-400"
-                        >
-                          Retry Request
-                          <Plus className="w-3.5 h-3.5 rotate-45 text-emerald-600 dark:text-emerald-400" />
-                        </button>
+                        <p className="text-[11px] text-zinc-500 dark:text-zinc-400 leading-relaxed">
+                          The server continues running in the background if your screen went off or was interrupted. We will retrieve and display your response the instant it finishes.
+                        </p>
+                        <div className="flex items-center gap-4 mt-2 pt-2 border-t border-zinc-200/50 dark:border-zinc-800/80">
+                          <button 
+                            onClick={() => handleRetry()}
+                            className="text-xs font-bold text-emerald-600 dark:text-emerald-400 hover:underline active:scale-95 flex items-center gap-1.5 transition-all"
+                          >
+                            <span>Force Retry</span>
+                            <Plus className="w-3.5 h-3.5 rotate-45 text-emerald-600 dark:text-emerald-400" />
+                          </button>
+                        </div>
                       </div>
                     </motion.div>
                   )}
@@ -2189,6 +2279,8 @@ export default function App() {
             onToggleTheme={() => setIsDarkMode(!isDarkMode)}
             autoPlayVoice={autoPlayVoice}
             onToggleAutoPlay={() => setAutoPlayVoice(!autoPlayVoice)}
+            imageSpeed={imageSpeed}
+            onToggleImageSpeed={handleToggleImageSpeed}
           />
         )}
         {showContextForm && (

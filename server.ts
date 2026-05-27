@@ -480,46 +480,85 @@ async function handleGenerate(req: express.Request, res: express.Response) {
         return "";
       };
 
-      try {
-        console.log("[Image Generation] Attempting generation with primary model gpt-image-2 (quality: auto)...");
-        response = await openai.images.generate({
-          model: "gpt-image-2",
-          prompt: fullPrompt,
-          quality: "auto",
-          size: "1024x1024",
-          n: 1,
-        });
-        const extracted = extractImage(response);
-        if (!extracted) {
-          throw new Error("No image returned from gpt-image-2");
-        }
-        base64Image = extracted;
-         modelUsed = "gpt-image-2 (auto)";
-      } catch (err2: any) {
-        console.warn(`[Image Generation] Primary model gpt-image-2 failure: ${err2?.message || err2}. Retrying with minimal params for gpt-image-2...`);
+      const imageSpeed = req.body.image_speed || "quality";
+      console.log(`[Image Generation] Requested engine speed: ${imageSpeed}`);
+
+      if (imageSpeed === "fast") {
         try {
+          console.log("[Image Generation] Fast Mode: Attempting generation with gpt-image-1 for turbo speed (typically < 3 seconds)...");
           response = await openai.images.generate({
-            model: "gpt-image-2",
-            prompt: fullPrompt,
+            model: "gpt-image-1",
+            prompt: promptText, // cleaner prompt to increase generation speed
+            size: "1024x1024",
+            n: 1,
           });
           const extracted = extractImage(response);
-          if (!extracted) {
-            throw new Error("No image returned from gpt-image-2 minimal");
+          if (extracted) {
+            base64Image = extracted;
+            modelUsed = "gpt-image-1 (turbo fast)";
           }
-          base64Image = extracted;
-          modelUsed = "gpt-image-2 (minimal)";
-        } catch (err2Minimal: any) {
-          console.warn(`[Image Generation] gpt-image-2 failed completely: ${err2Minimal?.message || err2Minimal}. Invoking fallback gpt-image-1...`);
+        } catch (fastErr: any) {
+          console.warn("[Image Generation] Fast Mode gpt-image-1 bypassed, trying gpt-image-2 fast-standard...", fastErr?.message || fastErr);
           try {
-            console.log("[Image Generation] Attempting fallback generation with gpt-image-1 (quality: auto)...");
             response = await openai.images.generate({
-              model: "gpt-image-1",
+              model: "gpt-image-2",
               prompt: fullPrompt,
-              quality: "auto",
+              quality: "standard", // 3x faster than HD/auto quality!
               size: "1024x1024",
               n: 1,
             });
             const extracted = extractImage(response);
+            if (extracted) {
+              base64Image = extracted;
+              modelUsed = "gpt-image-2 (fast-standard)";
+            }
+          } catch (fastErr2: any) {
+            console.error("[Image Generation] Fast modes failed, falling back to quality pipeline:", fastErr2?.message || fastErr2);
+          }
+        }
+      }
+
+      if (!base64Image) {
+        try {
+          console.log("[Image Generation] Attempting generation with primary model gpt-image-2 (quality: auto)...");
+          response = await openai.images.generate({
+            model: "gpt-image-2",
+            prompt: fullPrompt,
+            quality: "auto",
+            size: "1024x1024",
+            n: 1,
+          });
+          const extracted = extractImage(response);
+          if (!extracted) {
+            throw new Error("No image returned from gpt-image-2");
+          }
+          base64Image = extracted;
+          modelUsed = "gpt-image-2 (auto)";
+        } catch (err2: any) {
+          console.warn(`[Image Generation] Primary model gpt-image-2 failure: ${err2?.message || err2}. Retrying with minimal params for gpt-image-2...`);
+          try {
+            response = await openai.images.generate({
+              model: "gpt-image-2",
+              prompt: fullPrompt,
+            });
+            const extracted = extractImage(response);
+            if (!extracted) {
+              throw new Error("No image returned from gpt-image-2 minimal");
+            }
+            base64Image = extracted;
+            modelUsed = "gpt-image-2 (minimal)";
+          } catch (err2Minimal: any) {
+            console.warn(`[Image Generation] gpt-image-2 failed completely: ${err2Minimal?.message || err2Minimal}. Invoking fallback gpt-image-1...`);
+            try {
+              console.log("[Image Generation] Attempting fallback generation with gpt-image-1 (quality: auto)...");
+              response = await openai.images.generate({
+                model: "gpt-image-1",
+                prompt: fullPrompt,
+                quality: "auto",
+                size: "1024x1024",
+                n: 1,
+              });
+              const extracted = extractImage(response);
             if (!extracted) {
               throw new Error("No image returned from fallback gpt-image-1");
             }
@@ -545,6 +584,7 @@ async function handleGenerate(req: express.Request, res: express.Response) {
           }
         }
       }
+    }
 
       // We skip heavy synchronous download and base64 parsing on the main thread.
       // Returning the direct OpenAI CDN URL allows the client to load and render the image INSTANTLY!

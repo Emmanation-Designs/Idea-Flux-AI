@@ -96,6 +96,8 @@ export const Settings = (props: {
   onToggleTheme: () => void;
   autoPlayVoice: boolean;
   onToggleAutoPlay: () => void;
+  imageSpeed?: 'fast' | 'quality';
+  onToggleImageSpeed?: () => void;
 }) => {
   const {
     profile,
@@ -105,7 +107,9 @@ export const Settings = (props: {
     isDarkMode,
     onToggleTheme,
     autoPlayVoice,
-    onToggleAutoPlay
+    onToggleAutoPlay,
+    imageSpeed = 'quality',
+    onToggleImageSpeed
   } = props;
   const [activeSection, setActiveSection] = React.useState<SettingsSection | null>(typeof window !== 'undefined' && window.innerWidth > 768 ? 'account' : null);
   const [isEditingName, setIsEditingName] = React.useState(false);
@@ -651,6 +655,31 @@ export const Settings = (props: {
                         autoPlayVoice ? "bg-emerald-500 text-white" : "bg-zinc-100 dark:bg-zinc-800 text-zinc-400"
                       )}>
                         {autoPlayVoice ? 'On' : 'Off'}
+                      </div>
+                    </button>
+
+                    <button 
+                      onClick={onToggleImageSpeed}
+                      className="w-full p-5 rounded-2xl border border-zinc-100 dark:border-zinc-800 bg-white dark:bg-zinc-900 flex items-center justify-between hover:border-zinc-300 dark:hover:border-zinc-700 transition-all text-left"
+                    >
+                      <div className="flex items-center gap-4">
+                        <div className="w-10 h-10 rounded-xl bg-zinc-100 dark:bg-zinc-800 flex items-center justify-center">
+                          <ImageIcon className={cn("w-5 h-5", imageSpeed === 'fast' ? "text-sky-500" : "text-zinc-400")} />
+                        </div>
+                        <div>
+                          <div className="text-sm font-bold">Visual Engine Speed</div>
+                          <div className="text-xs text-zinc-500">
+                            {imageSpeed === 'fast' 
+                              ? 'Ultra-Fast Turbo Generation' 
+                              : 'High Definition Quality (Slower)'}
+                          </div>
+                        </div>
+                      </div>
+                      <div className={cn(
+                        "px-3 py-1 rounded-lg text-[10px] font-bold uppercase tracking-wider transition-colors",
+                        imageSpeed === 'fast' ? "bg-sky-500 text-white" : "bg-zinc-100 dark:bg-zinc-800 text-zinc-500"
+                      )}>
+                        {imageSpeed === 'fast' ? 'Turbo' : 'Quality'}
                       </div>
                     </button>
                   </div>
