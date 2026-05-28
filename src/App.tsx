@@ -224,6 +224,37 @@ export default function App() {
   const [showSettings, setShowSettings] = useState(false);
   const [showContextForm, setShowContextForm] = useState<ConversationType | null>(null);
   const [showLegal, setShowLegal] = useState<'about' | 'privacy' | 'terms' | null>(null);
+
+  // Sync state with URL path
+  useEffect(() => {
+    const handleLocationChange = () => {
+      const path = window.location.pathname.toLowerCase().replace(/\/$/, "");
+      if (path === '/privacy') {
+        setShowLegal('privacy');
+      } else if (path === '/terms') {
+        setShowLegal('terms');
+      } else if (path === '/about') {
+        setShowLegal('about');
+      } else {
+        setShowLegal(null);
+      }
+    };
+    // Check on mount
+    handleLocationChange();
+
+    window.addEventListener('popstate', handleLocationChange);
+    return () => window.removeEventListener('popstate', handleLocationChange);
+  }, []);
+
+  const handleShowLegal = (type: 'about' | 'privacy' | 'terms') => {
+    setShowLegal(type);
+    window.history.pushState({}, document.title, `/${type}`);
+  };
+
+  const handleCloseLegal = () => {
+    setShowLegal(null);
+    window.history.pushState({}, document.title, '/');
+  };
   const [selectedAttachment, setSelectedAttachment] = useState<{ file: File, preview: string, type: 'image' | 'video' | 'document' | 'other' } | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [expandedImage, setExpandedImage] = useState<{url: string, title: string} | null>(null);
@@ -254,6 +285,26 @@ export default function App() {
   const [currentImagePrompt, setCurrentImagePrompt] = useState('');
   const [timerCount, setTimerCount] = useState(0);
   const [currentStageText, setCurrentStageText] = useState('Initializing Trelvix Visual Engine...');
+
+  // Dynamically resolve absolute URL paths for OpenGraph & Twitter crawler compatibility
+  useEffect(() => {
+    try {
+      const origin = window.location.origin;
+      const absoluteLogoUrl = `${origin}/trelvixlogo.png`;
+      
+      const ogImage = document.querySelector('meta[property="og:image"]');
+      if (ogImage) {
+        ogImage.setAttribute('content', absoluteLogoUrl);
+      }
+      
+      const twitterImage = document.querySelector('meta[name="twitter:image"]');
+      if (twitterImage) {
+        twitterImage.setAttribute('content', absoluteLogoUrl);
+      }
+    } catch (e) {
+      console.warn('Failed to dynamically inject direct preview meta path:', e);
+    }
+  }, []);
 
 
 
@@ -2454,7 +2505,7 @@ export default function App() {
             profile={profile} 
             onClose={() => setShowSettings(false)} 
             onUpdateProfile={updateProfile}
-            onShowLegal={setShowLegal}
+            onShowLegal={handleShowLegal}
             onUpgrade={() => {
               setUpgradeReason('manual');
               setShowUpgradeModal(true);
@@ -2477,7 +2528,7 @@ export default function App() {
         {showLegal && (
           <LegalModal 
             type={showLegal} 
-            onClose={() => setShowLegal(null)} 
+            onClose={handleCloseLegal} 
           />
         )}
         <UpgradeModal 
@@ -2543,7 +2594,20 @@ export default function App() {
                     onClick={(e) => {
                       e.preventDefault();
                       e.stopPropagation();
-                      handleDownloadImage(expandedImage.url, 'expanded-image.png');
+                      
+                      // Convert user creation prompt/title to a clean, descriptive file slug
+                      const cleanSlug = expandedImage.title
+                        ? expandedImage.title
+                            .trim()
+                            .toLowerCase()
+                            .slice(0, 80) // Keep file name inside standard length limits
+                            .replace(/[^a-z0-9\s-]/g, '') // remove weird symbols
+                            .replace(/\s+/g, '-') // convert spaces into clean dashes
+                            .replace(/-+/g, '-') // prevent double dashes
+                        : 'trelvix-ai-image';
+                      
+                      const computedFilename = cleanSlug || 'trelvix-ai-image';
+                      handleDownloadImage(expandedImage.url, `${computedFilename}.png`);
                     }}
                     disabled={isDownloading}
                     className="flex items-center justify-center w-10 h-10 bg-white/10 hover:bg-white/20 active:scale-95 focus:outline-none disabled:pointer-events-none rounded-full text-white transition-all shadow-lg border border-white/10 relative"
