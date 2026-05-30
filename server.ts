@@ -456,6 +456,38 @@ async function handleGenerate(req: express.Request, res: express.Response) {
 
       console.log("[Image Generation] Original prompt length:", promptText.length);
 
+      // Conversational multi-turn image description synthesis using GPT-4o-mini
+      if (messages && messages.length > 1) {
+        try {
+          console.log(`[Image Generation] Multi-message context detected (Count: ${messages.length}). Synthesizing cohesive, cumulative image prompt...`);
+          const promptSynthesisConversation = [
+            {
+              role: "system",
+              content: "You are the Trelvix Prompt Synthesizer. Your job is to read a conversation history between a user and an AI image assistant, and synthesize a single, detailed, highly descriptive image prompt for DALL-E (the image generator) that incorporates all cumulative details, revisions, adjustments, corrections, elements, and style instructions requested from the entire conversation. Output ONLY the raw final image description prompt. Do not add any conversational text, pleasantries, or explanations. Do not say things like 'Here is the revised prompt'. Produce a single paragraph description of the scene that perfectly captures the latest desired state, preserving the details of the original request except where the user explicitly asked to change them."
+            },
+            ...messages.filter((m: any) => m.role === 'user' || m.role === 'assistant').map((m: any) => ({
+              role: m.role,
+              content: m.content || ""
+            }))
+          ];
+
+          const synthesisResponse = await openai.chat.completions.create({
+            model: "gpt-4o-mini",
+            messages: promptSynthesisConversation as any,
+            max_tokens: 350,
+            temperature: 0.7
+          });
+
+          const synthesizedPrompt = synthesisResponse.choices[0]?.message?.content?.trim();
+          if (synthesizedPrompt) {
+            console.log("[Image Generation] Synthesized Prompt from History:", synthesizedPrompt);
+            promptText = synthesizedPrompt;
+          }
+        } catch (synthesisError) {
+          console.error("[Image Generation] Prompt synthesis failed, fallback to original prompt:", synthesisError);
+        }
+      }
+
       // Auto-truncate extremely long prompts safely to prevent OpenAI API size limit failures (max 2000 chars)
       if (promptText.length > 2000) {
         console.log(`[Image Generation] Truncating client prompt from ${promptText.length} to 2000 chars to prevent API failures.`);

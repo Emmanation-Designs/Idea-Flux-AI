@@ -1314,6 +1314,7 @@ export default function App() {
     // Smart Image Intent Detection
     const lowerContent = content.toLowerCase();
     const isImageIntent = 
+      (conv?.type === 'image') ||
       ((/generate|create|make|draw|design|show me|give me|i want|produce|paint|illustrate|visualize|render/i.test(lowerContent)) && 
        (/image|picture|photo|logo|flyer|poster|illustration|drawing|sketch|graphic|art|realistic|scene|portrait|landscape/i.test(lowerContent))) ||
       /\b(logo|flyer|poster|art|sketch|drawing)\b/i.test(lowerContent) ||
@@ -1393,8 +1394,8 @@ export default function App() {
       // Lazy-create conversation history context if not already established (avoids blocking input on cold/slow database inserts)
       if (!conv) {
         console.log("[Chat] Lazily creating new conversation in background...");
-        const type = currentAttachment ? 'general' : (showVoiceMode ? 'voice' : 'script');
-        const rawTitle = content.trim() || (currentAttachment ? 'File Analysis' : 'New Chat');
+        const type = currentAttachment ? 'general' : (showVoiceMode ? 'voice' : (isImageIntent ? 'image' : 'script'));
+        const rawTitle = content.trim() || (isImageIntent ? 'Image Generation' : (currentAttachment ? 'File Analysis' : 'New Chat'));
         const title = rawTitle.length > 50 ? rawTitle.slice(0, 47) + '...' : rawTitle;
         
         const newConv = await startConversation(type, title, content, {}, false);
@@ -1433,7 +1434,7 @@ export default function App() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          type: isImageIntent ? 'image' : (conv.type === 'image' ? 'chat' : (conv.type || 'chat')),
+          type: isImageIntent ? 'image' : (conv.type || 'chat'),
           model: activeModel,
           prompt: content,
           messages: updatedMessages.map(m => ({
