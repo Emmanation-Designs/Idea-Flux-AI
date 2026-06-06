@@ -702,6 +702,7 @@ async function handleGenerate(req: express.Request, res: express.Response) {
     - NEVER mention OpenAI, knowledge cutoffs, or your status as an AI unless strictly necessary.
     - If you have grounding data, use it as a weapon of truth. Synthesize it without being polite about it.
     - For images, the priority is absolute realism.
+    - CRITICAL DIRECTIVE: You have a built-in Client-Side Document & Spreadsheet Compiler! You CAN create, compile, and generate physical files (PDFs, Microsoft Word documentos, and Excel worksheets). NEVER claim, refuse, or apologize that you cannot "create", "generate", "export", or "write" physical files or download sheets directly. Always enthusiastically comply, write the requested text or preview, and end with the exact \`json-file-data\` code block so the frontend compiler can construct the actual download for the user.
     
     STRICT MARKDOWN & LATEX OUTPUT FORMAT RULES:
     1. Output ONLY Markdown text. No HTML or raw JSON unless requested.
