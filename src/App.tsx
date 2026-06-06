@@ -192,6 +192,7 @@ import { VoiceMode } from './components/VoiceMode';
 import { Auth } from './components/Auth';
 import { LegalModal } from './components/Legal';
 import { CodeBlock } from './components/CodeBlock';
+import { DocumentExportCard } from './components/DocumentExportCard';
 import { UpgradeModal } from './components/UpgradeModal';
 import { AppsView } from './components/AppsView';
 
@@ -547,17 +548,21 @@ export default function App() {
     if (messages.length > 0 && messages[messages.length - 1].role === 'user') {
       const lastMsg = messages[messages.length - 1];
       const lowerContent = (lastMsg.content || '').toLowerCase();
-      const isImg = currentConversation?.type === 'image' || 
+      const isImg = (currentConversation?.type === 'image' || 
         ((/generate|create|make|draw|design|show me|give me|i want|produce|paint|illustrate|visualize|render/i.test(lowerContent)) && 
          (/image|picture|photo|logo|flyer|poster|illustration|drawing|sketch|graphic|art|realistic|scene|portrait|landscape/i.test(lowerContent))) ||
         /\b(logo|flyer|poster|art|sketch|drawing)\b/i.test(lowerContent) ||
-        /image of|picture of|photo of|generate a|create a|make a/i.test(lowerContent) ||
-        /^realistic |^photorealistic /i.test(lowerContent);
+        /image of|picture of|photo of|generate an image|create an image|make an image|generate a picture|create a picture/i.test(lowerContent) ||
+        /^realistic |^photorealistic /i.test(lowerContent)) && 
+        !/\b(pdf|docx|xlsx|word|excel|spreadsheet|csv|document|resume|report|invoice|presentation|budget)\b/i.test(lowerContent);
         
       setIsLoading(true);
       if (isImg) {
         setIsGeneratingImage(true);
         setCurrentImagePrompt(lastMsg.content || '');
+      } else {
+        setIsGeneratingImage(false);
+        setCurrentImagePrompt('');
       }
     } else {
       setIsLoading(false);
@@ -1314,12 +1319,13 @@ export default function App() {
     // Smart Image Intent Detection
     const lowerContent = content.toLowerCase();
     const isImageIntent = 
-      (conv?.type === 'image') ||
-      ((/generate|create|make|draw|design|show me|give me|i want|produce|paint|illustrate|visualize|render/i.test(lowerContent)) && 
-       (/image|picture|photo|logo|flyer|poster|illustration|drawing|sketch|graphic|art|realistic|scene|portrait|landscape/i.test(lowerContent))) ||
-      /\b(logo|flyer|poster|art|sketch|drawing)\b/i.test(lowerContent) ||
-      /image of|picture of|photo of|generate a|create a|make a/i.test(lowerContent) ||
-      /^realistic |^photorealistic /i.test(lowerContent);
+      ((conv?.type === 'image') ||
+       ((/generate|create|make|draw|design|show me|give me|i want|produce|paint|illustrate|visualize|render/i.test(lowerContent)) && 
+        (/image|picture|photo|logo|flyer|poster|illustration|drawing|sketch|graphic|art|realistic|scene|portrait|landscape/i.test(lowerContent))) ||
+       /\b(logo|flyer|poster|art|sketch|drawing)\b/i.test(lowerContent) ||
+       /image of|picture of|photo of|generate an image|create an image|make an image|generate a picture|create a picture/i.test(lowerContent) ||
+       /^realistic |^photorealistic /i.test(lowerContent)) &&
+      !/\b(pdf|docx|xlsx|word|excel|spreadsheet|csv|document|resume|report|invoice|presentation|budget)\b/i.test(lowerContent);
 
     const isAnalysisIntent = !!selectedAttachment;
 
@@ -2125,6 +2131,10 @@ export default function App() {
                               rehypePlugins={[rehypeKatex]}
                               components={{
                                 code({ node, inline, className, children, ...props }: any) {
+                                  const isJsonFileData = !inline && (className?.includes('json-file-data') || className?.includes('language-json-file-data'));
+                                  if (isJsonFileData) {
+                                    return <DocumentExportCard jsonData={String(children)} />;
+                                  }
                                   return (
                                     <CodeBlock inline={inline} className={className}>
                                       {children}
@@ -2312,6 +2322,10 @@ export default function App() {
                               rehypePlugins={[rehypeKatex]}
                               components={{
                                 code({ node, inline, className, children, ...props }: any) {
+                                  const isJsonFileData = !inline && (className?.includes('json-file-data') || className?.includes('language-json-file-data'));
+                                  if (isJsonFileData) {
+                                    return <DocumentExportCard jsonData={String(children)} />;
+                                  }
                                   return (
                                     <CodeBlock inline={inline} className={className}>
                                       {children}

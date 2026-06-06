@@ -255,8 +255,9 @@ async function appendReplyToConversation(
       .single();
 
     if (fetchErr || !conv) {
-      if (fetchErr && fetchErr.code === 'PGRST116' && userId) {
-        console.log(`[Server DB] Conversation ${conversationId} not found, creating from fallback...`);
+      if (fetchErr && fetchErr.code === 'PGRST116') {
+        const targetUserId = userId || null;
+        console.log(`[Server DB] Conversation ${conversationId} not found, attempting creating from fallback (userId: ${targetUserId})...`);
         const initialMessages = previousMessages ? [...previousMessages] : [];
         if (!initialMessages.some(m => m.id === replyMessage.id)) {
           initialMessages.push(replyMessage);
@@ -273,7 +274,7 @@ async function appendReplyToConversation(
 
         const newConv = {
           id: conversationId,
-          user_id: userId,
+          user_id: targetUserId,
           title: titleText,
           type: conversationType || 'general',
           messages: initialMessages,
@@ -286,7 +287,7 @@ async function appendReplyToConversation(
           .insert(newConv);
 
         if (insertErr) {
-          console.error(`[Server DB] Error inserting conversation on fallback:`, insertErr);
+          console.warn(`[Server DB] Could not insert fallback conversation: ${insertErr.message}`);
         } else {
           console.log(`[Server DB] Created conversation ${conversationId} during fallback flow successfully.`);
         }
@@ -364,14 +365,15 @@ async function handleGenerate(req: express.Request, res: express.Response) {
     
     // Stricter image intent detection: must start with or specifically request an image
     const lowerLast = lastMessageContent.toLowerCase();
-    const isImageIntent = type === "image" || model === "trelvix-visual" || 
-                         (lowerLast.startsWith("generate image") || 
-                          lowerLast.startsWith("create image") || 
-                          lowerLast.startsWith("draw") || 
-                          lowerLast.startsWith("make an image") ||
-                          lowerLast.startsWith("paint") ||
-                          lowerLast.includes("generate a photorealistic image") ||
-                          lowerLast.includes("show me an image of"));
+    const isImageIntent = (type === "image" || model === "trelvix-visual" || 
+                          (lowerLast.startsWith("generate image") || 
+                           lowerLast.startsWith("create image") || 
+                           lowerLast.startsWith("draw") || 
+                           lowerLast.startsWith("make an image") ||
+                           lowerLast.startsWith("paint") ||
+                           lowerLast.includes("generate a photorealistic image") ||
+                           lowerLast.includes("show me an image of"))) &&
+                          !/\b(pdf|docx|xlsx|word|excel|spreadsheet|csv|document|resume|report|invoice|presentation|budget)\b/i.test(lowerLast);
     
     const searchRequired = needsWebSearch(lastMessageContent) && !isImageIntent;
 
@@ -719,7 +721,47 @@ async function handleGenerate(req: express.Request, res: express.Response) {
          * Final answer clearly stated
     4. RESPONSES FORMAT: Group response layout under headings: '### Solution', '### Step-by-step working', etc.
     5. TABLES: Always use Markdown tables for data comparison. Columns must be clean and consistent.
-    6. MOBILE READEBILITY: Avoid horizontal overflow. Keep math calculations vertically stacked. Avoid large unstructured blocks of text.`;
+    6. MOBILE READEBILITY: Avoid horizontal overflow. Keep math calculations vertically stacked. Avoid large unstructured blocks of text.
+    
+    7. FILE GENERATION & EXPORT PROTOCOL (PDF, WORD, EXCEL):
+       - When a user asks you to create, write, design, generate, edit, or adjust a PDF document (.pdf), Microsoft Word document (.docx), or Excel spreadsheet (.xlsx) (such as reports, letters, resumes, invoices, budgets, logs, data workbooks, tables), you MUST:
+         a. Write a highly detailed, professional, and visually structured conversational markdown response containing the full draft preview of the requested document or spreadsheet.
+         b. At the very end of your response, write exactly one code block with the language label \`json-file-data\` (i.e. \`\`\`json-file-data ... \`\`\`) containing the complete, valid structured JSON configuration of the document or spreadsheet so that the frontend compiler can construct the download. Do NOT wrap this block in other code types or formatting. Do NOT omit it.
+         
+         The schema for the JSON within the \`\`\`json-file-data block MUST look exactly like this:
+         {
+           "fileType": "pdf" | "docx" | "xlsx",
+           "fileName": "clean-snake-case-file-name",
+           "title": "Main Title of the Document / Sheet",
+           "subtitle": "Optional Brief Subtitle",
+           "author": "Trelvix AI",
+           "sections": [
+             {
+               "heading": "Section Heading Title",
+               "type": "text" | "bullet" | "table",
+               "paragraphs": ["Detailed text paragraph..."],
+               "bullets": ["Bullet point list item..."],
+               "headers": ["Column 1", "Column 2", "Column 3"],
+               "rows": [
+                 ["Row 1 Col 1", "Row 1 Col 2", "Row 1 Col 3"],
+                 ["Row 2 Col 1", "Row 2 Col 2", "Row 2 Col 3"]
+               ]
+             }
+           ],
+           "spreadsheet": {
+             "sheets": [
+               {
+                 "name": "Sheet Name (max 31 chars)",
+                 "rows": [
+                   ["Category", "Budgeted", "Actual", "Variance"],
+                   ["Row 1 A", "Value 1", "Value 2", "Value 3"]
+                 ]
+               }
+             ]
+           }
+         }
+         
+         Instruction: Only include the "spreadsheet" key when compiling an xlsx file or sheet tables. For PDF and DOCX, use the standard sections formatting. Always provide both the human-readable markdown response and this structured JSON-data block so the user gets both an on-screen preview and a functional, professional physical file download!`;
     
     if (type === "idea") systemInstruction += " You are an expert content strategist and creative thinker. Help users brainstorm unique and impactful ideas.";
     else if (type === "script") systemInstruction += " You are a professional scriptwriter for video, stage, and screen. Write engaging and well-structured scripts.";
