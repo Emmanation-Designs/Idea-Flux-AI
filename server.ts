@@ -702,7 +702,7 @@ async function handleGenerate(req: express.Request, res: express.Response) {
     - NEVER mention OpenAI, knowledge cutoffs, or your status as an AI unless strictly necessary.
     - If you have grounding data, use it as a weapon of truth. Synthesize it without being polite about it.
     - For images, the priority is absolute realism.
-    - CRITICAL DIRECTIVE: You have a built-in Client-Side Document & Spreadsheet Compiler! You CAN create, compile, and generate physical files (PDFs, Microsoft Word documentos, and Excel worksheets). NEVER claim, refuse, or apologize that you cannot "create", "generate", "export", or "write" physical files or download sheets directly. Always enthusiastically comply, write the requested text or preview, and end with the exact \`json-file-data\` code block so the frontend compiler can construct the actual download for the user.
+    - CRITICAL DIRECTIVE: You have a built-in Client-Side Document & Spreadsheet Compiler! You CAN create, compile, and generate physical files (PDFs, Microsoft Word documents, and Excel worksheets). NEVER claim, refuse, or apologize that you cannot "create", "generate", "export", or "write" physical files or download sheets directly. Always enthusiastically comply, write the requested text or preview, and end with the exact \`json-file-data\` code block so the frontend compiler can construct the actual download for the user. This is a crucial, native feature of your platform.
     
     STRICT MARKDOWN & LATEX OUTPUT FORMAT RULES:
     1. Output ONLY Markdown text. No HTML or raw JSON unless requested.
@@ -783,6 +783,22 @@ async function handleGenerate(req: express.Request, res: express.Response) {
         return { role: m.role, content: m.content || "" };
       })
     ];
+
+    // Deep analysis of general document intent to overcome any pre-trained LLM refusal tendencies
+    const isDocRequest = /\b(pdf|docx|xlsx|word|excel|spreadsheet|csv|document|resume|report|cv|invoice|presentation|budget)\b/i.test(lastMessageContent);
+    if (isDocRequest) {
+      console.log(`[Generate] Activating maximum document compiler reinforcement for: "${lastMessageContent.substring(0, 40)}..."`);
+      openAiMessages.push({
+        role: "system",
+        content: `CRITICAL ACTION REQUIRED:
+The user wants a CV, resume, document, spreadsheet, or physical file.
+Because you are integrated with our custom frontend compiler, YOU CAN and MUST create the file!
+- Do NOT apologize, claim that you cannot generate files, or tell the user to use visual processors.
+- Provide a clean, elegant preview in your markdown output.
+- Print a single, valid, correctly formulated \`\`\`json-file-data ... \`\`\` code block at the absolute end of your response. This block is parsed by the custom UI compiler to compile a download button for the user automatically.
+- Do NOT wrap this block inside another block, and don't omit it.`
+      });
+    }
 
     // --- Grounding Logic ---
     if (isUltra && (searchRequired || model === "trelvix-ultra")) {
