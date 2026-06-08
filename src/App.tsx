@@ -99,7 +99,7 @@ const preprocessMath = (content: string): string => {
 // --- Components ---
 import { Sidebar } from './components/Sidebar';
 
-const ImageWithLoader = ({ src, alt, className, onClick }: { src: string, alt: string, className?: string, onClick?: (e: React.MouseEvent) => void }) => {
+const ImageWithLoader = ({ src, alt, className, onClick, skipWatermark = false }: { src: string, alt: string, className?: string, onClick?: (e: React.MouseEvent) => void, skipWatermark?: boolean }) => {
   const [isLoaded, setIsLoaded] = useState(false);
   const [hasError, setHasError] = useState(false);
   const [displaySrc, setDisplaySrc] = useState('');
@@ -133,9 +133,13 @@ const ImageWithLoader = ({ src, alt, className, onClick }: { src: string, alt: s
               setHasError(true);
             } else {
               const proxiedUrl = getProxyUrl(data.image_url);
-              applyWatermark(proxiedUrl).then(watermarked => {
-                if (active) setDisplaySrc(watermarked);
-              });
+              if (skipWatermark) {
+                if (active) setDisplaySrc(proxiedUrl);
+              } else {
+                applyWatermark(proxiedUrl).then(watermarked => {
+                  if (active) setDisplaySrc(watermarked);
+                });
+              }
             }
           },
           () => {
@@ -144,15 +148,19 @@ const ImageWithLoader = ({ src, alt, className, onClick }: { src: string, alt: s
         );
     } else {
       const proxiedUrl = getProxyUrl(src);
-      applyWatermark(proxiedUrl).then(watermarked => {
-        if (active) setDisplaySrc(watermarked);
-      });
+      if (skipWatermark) {
+        if (active) setDisplaySrc(proxiedUrl);
+      } else {
+        applyWatermark(proxiedUrl).then(watermarked => {
+          if (active) setDisplaySrc(watermarked);
+        });
+      }
     }
 
     return () => {
       active = false;
     };
-  }, [src]);
+  }, [src, skipWatermark]);
   
   return (
     <div className={cn("relative overflow-hidden bg-zinc-100 dark:bg-zinc-800 focus-within:ring-2 focus-within:ring-zinc-500", className)} onClick={onClick}>
@@ -1896,9 +1904,11 @@ export default function App() {
         downloadUrl = data.image_url;
       }
 
-      // If it's a data URI, download directly with watermark
+      // If it's a data URI, download directly with watermark (or without if Pro/Plus)
+      const isProOrPlus = profile?.plan === 'pro' || profile?.plan === 'plus';
+
       if (downloadUrl.startsWith('data:')) {
-        const watermarkedUrl = await applyWatermark(downloadUrl);
+        const watermarkedUrl = isProOrPlus ? downloadUrl : await applyWatermark(downloadUrl);
         const a = document.createElement('a');
         a.href = watermarkedUrl;
         a.download = filename.endsWith('.png') ? filename : `${filename}.png`;
@@ -1928,7 +1938,7 @@ export default function App() {
         reader.readAsDataURL(blob);
       });
       
-      const watermarkedUrl = await applyWatermark(base64FromBlob);
+      const watermarkedUrl = isProOrPlus ? base64FromBlob : await applyWatermark(base64FromBlob);
       
       const a = document.createElement('a');
       a.href = watermarkedUrl;
@@ -2194,7 +2204,7 @@ export default function App() {
                                 code({ node, inline, className, children, ...props }: any) {
                                   const isJsonFileData = !inline && (className?.includes('json-file-data') || className?.includes('language-json-file-data'));
                                   if (isJsonFileData) {
-                                    return <DocumentExportCard jsonData={String(children)} />;
+                                    return <DocumentExportCard jsonData={String(children)} isPro={profile?.plan === 'pro' || profile?.plan === 'plus'} />;
                                   }
                                   return (
                                     <CodeBlock inline={inline} className={className}>
@@ -2253,6 +2263,7 @@ export default function App() {
                                   src={m.image_url} 
                                   alt="Generated" 
                                   className="w-full"
+                                  skipWatermark={profile?.plan === 'pro' || profile?.plan === 'plus'}
                                 />
                                 <div className="absolute inset-0 bg-black/0 group-hover/img:bg-black/20 transition-colors flex items-center justify-center opacity-0 group-hover/img:opacity-100">
                                   <Maximize2 className="w-8 h-8 text-white drop-shadow-lg" />
@@ -2385,7 +2396,7 @@ export default function App() {
                                 code({ node, inline, className, children, ...props }: any) {
                                   const isJsonFileData = !inline && (className?.includes('json-file-data') || className?.includes('language-json-file-data'));
                                   if (isJsonFileData) {
-                                    return <DocumentExportCard jsonData={String(children)} />;
+                                    return <DocumentExportCard jsonData={String(children)} isPro={profile?.plan === 'pro' || profile?.plan === 'plus'} />;
                                   }
                                   return (
                                     <CodeBlock inline={inline} className={className}>
@@ -2742,6 +2753,7 @@ export default function App() {
                   <ImageWithLoader 
                     src={expandedImage.url} 
                     alt={expandedImage.title} 
+                    skipWatermark={profile?.plan === 'pro' || profile?.plan === 'plus'}
                     className={cn(
                       "transition-all bg-transparent shadow-2xl rounded-2xl border border-white/5 select-none touch-none",
                       isZoomed 
