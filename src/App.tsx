@@ -352,6 +352,65 @@ export default function App() {
       localStorage.removeItem('last_conversation_id');
     }
   }, [currentConversation?.id]);
+
+  // Tab-Focus recovery & Background Sync:
+  // If the user leaves the tab and comes back, and we were generating an image or loading,
+  // sync the conversation from the database instantly to fetch any completed output from the background!
+  useEffect(() => {
+    const handleVisibilitySync = async () => {
+      if (document.visibilityState === 'visible' && user && currentConversation?.id) {
+        console.log('[VisibilitySync] Tab focused. Refreshing current conversation state to sync background progress...');
+        try {
+          const { data, error } = await supabase
+            .from('conversations')
+            .select('*')
+            .eq('id', currentConversation.id)
+            .single();
+
+          if (error) {
+            console.warn('[VisibilitySync] Could not pull current conversation snapshot:', error);
+            return;
+          }
+
+          if (data) {
+            // Update the sidebar conversations list
+            setConversations(prev => prev.map(c => c.id === data.id ? data : c));
+            
+            // Re-sync messages
+            const uniqueMessages = (data.messages || []).reduce((acc: any[], curr: any, idx: number) => {
+              const messageId = curr.id || `msg-legacy-${idx}`;
+              if (!acc.find(m => m.id === messageId)) {
+                acc.push({ ...curr, id: messageId });
+              }
+              return acc;
+            }, []);
+
+            // Check if been updated (e.g. image has been saved by server)
+            const hasNewImage = uniqueMessages.some((m: any) => m.role === 'assistant' && m.image_url && !messages.find((oldM: any) => oldM.id === m.id));
+            if (hasNewImage || isGeneratingImage) {
+              console.log('[VisibilitySync] Found new synchronized background data. Updating active UI state...');
+              setMessages(uniqueMessages);
+              setCurrentConversation(data);
+              
+              if (isGeneratingImage && uniqueMessages.some((m: any) => m.role === 'assistant' && m.image_url)) {
+                setIsGeneratingImage(false);
+                setIsLoading(false);
+              }
+            }
+          }
+        } catch (syncErr) {
+          console.error('[VisibilitySync] Background synchronization routine failed:', syncErr);
+        }
+      }
+    };
+
+    document.addEventListener('visibilitychange', handleVisibilitySync);
+    window.addEventListener('focus', handleVisibilitySync);
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibilitySync);
+      window.removeEventListener('focus', handleVisibilitySync);
+    };
+  }, [user, currentConversation?.id, messages, isGeneratingImage]);
   const [showVoiceMode, setShowVoiceMode] = useState(false);
   const [isMuted, setIsMuted] = useState(false);
   const [isSpeakerOn, setIsSpeakerOn] = useState(true);
@@ -1318,13 +1377,15 @@ export default function App() {
 
     // Smart Image Intent Detection
     const lowerContent = content.toLowerCase();
+    const hasImageUpload = (selectedAttachment?.type === 'image') || messages.some((m: any) => m.image_url);
     const isImageIntent = 
       ((conv?.type === 'image') ||
        ((/generate|create|make|draw|design|show me|give me|i want|produce|paint|illustrate|visualize|render/i.test(lowerContent)) && 
         (/image|picture|photo|logo|flyer|poster|illustration|drawing|sketch|graphic|art|realistic|scene|portrait|landscape/i.test(lowerContent))) ||
        /\b(logo|flyer|poster|art|sketch|drawing)\b/i.test(lowerContent) ||
        /image of|picture of|photo of|generate an image|create an image|make an image|generate a picture|create a picture/i.test(lowerContent) ||
-       /^realistic |^photorealistic /i.test(lowerContent)) &&
+       /^realistic |^photorealistic /i.test(lowerContent) ||
+       (hasImageUpload && /edit|modify|change|more professional|add text|similar style|re-create|recreate/i.test(lowerContent))) &&
       !/\b(pdf|docx|xlsx|word|excel|spreadsheet|csv|document|resume|report|invoice|presentation|budget)\b/i.test(lowerContent);
 
     const isAnalysisIntent = !!selectedAttachment;

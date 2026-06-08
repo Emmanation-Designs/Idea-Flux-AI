@@ -363,16 +363,18 @@ async function handleGenerate(req: express.Request, res: express.Response) {
     // 0. Intelligence Controller: Determine the best engine based on intent
     const lastMessageContent = (messages[messages.length - 1]?.content || prompt || "").trim();
     
-    // Stricter image intent detection: must start with or specifically request an image
+    // Stricter image intent detection: must start with or specifically request an image, or edit an uploaded image
     const lowerLast = lastMessageContent.toLowerCase();
+    const fileHasImage = (messages || []).some((m: any) => m.image_url && m.image_url.startsWith("data:image"));
     const isImageIntent = (type === "image" || model === "trelvix-visual" || 
                           (lowerLast.startsWith("generate image") || 
                            lowerLast.startsWith("create image") || 
                            lowerLast.startsWith("draw") || 
-                           lowerLast.startsWith("make an image") ||
-                           lowerLast.startsWith("paint") ||
-                           lowerLast.includes("generate a photorealistic image") ||
-                           lowerLast.includes("show me an image of"))) &&
+                           lowerLast.startsWith("make an image") || 
+                           lowerLast.startsWith("paint") || 
+                           lowerLast.includes("generate a photorealistic image") || 
+                           lowerLast.includes("show me an image of") ||
+                           (fileHasImage && /edit|modify|change|more professional|add text|similar style|re-create|recreate/i.test(lowerLast)))) &&
                           !/\b(pdf|docx|xlsx|word|excel|spreadsheet|csv|document|resume|report|invoice|presentation|budget)\b/i.test(lowerLast);
     
     const searchRequired = needsWebSearch(lastMessageContent) && !isImageIntent;
@@ -454,189 +456,284 @@ async function handleGenerate(req: express.Request, res: express.Response) {
 
     // 1. Image Generation
     if (type === "image" || isImageIntent) {
-      let promptText = req.body.prompt || req.body.message || prompt || "a beautiful image";
+      // Set headers for chunked rendering to prevent gateway timeouts on long image runs
+      res.setHeader("Content-Type", "application/json");
+      res.setHeader("Transfer-Encoding", "chunked");
+      res.setHeader("Cache-Control", "no-cache");
+      res.setHeader("Connection", "keep-alive");
 
-      console.log("[Image Generation] Original prompt length:", promptText.length);
+      // Write an initial space chunk immediately to flush headers and wake the browser connection
+      res.write(" ");
 
-      // Conversational multi-turn image description synthesis using GPT-4o-mini
-      if (messages && messages.length > 1) {
+      // Space heartbeat generator - writes a single space byte every 2 seconds to keep the Cloud Run / Vercel gateway active
+      const keepAliveInterval = setInterval(() => {
         try {
-          console.log(`[Image Generation] Multi-message context detected (Count: ${messages.length}). Synthesizing cohesive, cumulative image prompt...`);
-          const promptSynthesisConversation = [
-            {
-              role: "system",
-              content: "You are the Trelvix Prompt Synthesizer. Your job is to read a conversation history between a user and an AI image assistant, and synthesize a single, detailed, highly descriptive image prompt for DALL-E (the image generator) that incorporates all cumulative details, revisions, adjustments, corrections, elements, and style instructions requested from the entire conversation. Output ONLY the raw final image description prompt. Do not add any conversational text, pleasantries, or explanations. Do not say things like 'Here is the revised prompt'. Produce a single paragraph description of the scene that perfectly captures the latest desired state, preserving the details of the original request except where the user explicitly asked to change them."
-            },
-            ...messages.filter((m: any) => m.role === 'user' || m.role === 'assistant').map((m: any) => ({
-              role: m.role,
-              content: m.content || ""
-            }))
-          ];
-
-          const synthesisResponse = await openai.chat.completions.create({
-            model: "gpt-4o-mini",
-            messages: promptSynthesisConversation as any,
-            max_tokens: 350,
-            temperature: 0.7
-          });
-
-          const synthesizedPrompt = synthesisResponse.choices[0]?.message?.content?.trim();
-          if (synthesizedPrompt) {
-            console.log("[Image Generation] Synthesized Prompt from History:", synthesizedPrompt);
-            promptText = synthesizedPrompt;
+          if (!res.writableEnded) {
+            res.write(" ");
           }
-        } catch (synthesisError) {
-          console.error("[Image Generation] Prompt synthesis failed, fallback to original prompt:", synthesisError);
+        } catch (e) {
+          console.warn("[Keep-Alive] Failed to write heartbeat space chunk:", e);
         }
-      }
+      }, 2000);
 
-      // Auto-truncate extremely long prompts safely to prevent OpenAI API size limit failures (max 2000 chars)
-      if (promptText.length > 2000) {
-        console.log(`[Image Generation] Truncating client prompt from ${promptText.length} to 2000 chars to prevent API failures.`);
-        promptText = promptText.substring(0, 2000) + "...";
-      }
+      try {
+        let promptText = req.body.prompt || req.body.message || prompt || "a beautiful image";
 
-      // Append strong realism instructions
-      const fullPrompt = promptText + ". photorealistic, highly detailed, realistic photography, sharp focus, natural lighting, 8k resolution, professional quality, accurate anatomy, cinematic lighting";
+        console.log("[Image Generation] Original prompt length:", promptText.length);
 
-      let response;
-      let modelUsed = "gpt-image-2";
-      let base64Image = "";
+        // Vision-Guided Image Description & Editing Synthesis (when user has uploaded an image)
+        const messagesWithImage = (messages || []).filter((m: any) => m.image_url && m.image_url.startsWith("data:image"));
+        const lastImageMessage = messagesWithImage[messagesWithImage.length - 1];
 
-      const extractImage = (resObj: any) => {
-        const item = resObj?.data?.[0];
-        if (item?.b64_json) {
-          return item.b64_json.startsWith("data:") ? item.b64_json : `data:image/png;base64,${item.b64_json}`;
-        }
-        if (item?.url) {
-          return item.url;
-        }
-        return "";
-      };
-
-      const imageSpeed = req.body.image_speed || "quality";
-      console.log(`[Image Generation] Requested engine speed: ${imageSpeed}`);
-
-      if (imageSpeed === "fast") {
-        try {
-          console.log("[Image Generation] Fast Mode: Attempting generation with gpt-image-1 for turbo speed (typically < 3 seconds)...");
-          response = await openai.images.generate({
-            model: "gpt-image-1",
-            prompt: promptText, // cleaner prompt to increase generation speed
-            size: "1024x1024",
-            n: 1,
-          });
-          const extracted = extractImage(response);
-          if (extracted) {
-            base64Image = extracted;
-            modelUsed = "gpt-image-1 (turbo fast)";
-          }
-        } catch (fastErr: any) {
-          console.warn("[Image Generation] Fast Mode gpt-image-1 bypassed, trying gpt-image-2 fast-standard...", fastErr?.message || fastErr);
+        if (lastImageMessage) {
+          console.log("[Image Generation] Uploaded image detected. Utilizing Vision-Guided Image Description & Editing Synthesis (GPT-4o) to merge original visual contents with user edits...");
           try {
+            const visionResponse = await openai.chat.completions.create({
+              model: "gpt-4o",
+              messages: [
+                {
+                  role: "system",
+                  content: `You are the Trelvix Vision & Image Synthesis Director. A user has uploaded an image and wants to edit, vary, style, or generate a similar image based on it. 
+Your job is to look at the user's uploaded image and their editing instructions, and synthesize a single, highly detailed, photorealistic prompt for DALL-E (gpt-image-2 / gpt-image-1) that describes the entire final edited image in perfect English.
+To make it look like an edit or variation of the input image:
+1. Analyze the original image's style (oil painting, sketch, realist photograph, digital art, logo design, flat design, etc.), subject, composition, background, color theme, and camera perspective in vivid detail to maintain visual continuity.
+2. Incorporate the user's editing/modifying instructions perfectly (e.g. adding text, altering clothes, swapping backgrounds, introducing new objects, making it more professional, or generating a similar style).
+3. Combine both into a cohesive, highly descriptive paragraph of the desired target image.
+4. Output ONLY the raw final image description prompt. Do not add any conversational text, explanations, or pleasantries.`
+                },
+                {
+                  role: "user",
+                  content: [
+                    { type: "text", text: `User request/modifications: "${promptText}"` },
+                    { type: "image_url", image_url: { url: lastImageMessage.image_url } }
+                  ]
+                }
+              ],
+              max_tokens: 350,
+              temperature: 0.7
+            });
+
+            const synthesizedPrompt = visionResponse.choices[0]?.message?.content?.trim();
+            if (synthesizedPrompt) {
+              console.log("[Image Generation] Synthesized Vision-Guided prompt:", synthesizedPrompt);
+              promptText = synthesizedPrompt;
+            }
+          } catch (visionErr) {
+            console.error("[Image Generation] Vision-Guided prompt synthesis failed, falling back to conversational text synthesis:", visionErr);
+            
+            // Fallback to text-only synthesis if vision API fails
+            if (messages && messages.length > 1) {
+              try {
+                console.log(`[Image Generation] Multi-message context fallback (Count: ${messages.length}). Synthesizing cohesive, cumulative image prompt...`);
+                const promptSynthesisConversation = [
+                  {
+                    role: "system",
+                    content: "You are the Trelvix Prompt Synthesizer. Your job is to read a conversation history between a user and an AI image assistant, and synthesize a single, detailed, highly descriptive image prompt for DALL-E (the image generator) that incorporates all cumulative details, revisions, adjustments, corrections, elements, and style instructions requested from the entire conversation. Output ONLY the raw final image description prompt. Do not add any conversational text, pleasantries, or explanations. Do not say things like 'Here is the revised prompt'. Produce a single paragraph description of the scene that perfectly captures the latest desired state, preserving the details of the original request except where the user explicitly asked to change them."
+                  },
+                  ...messages.filter((m: any) => m.role === 'user' || m.role === 'assistant').map((m: any) => ({
+                    role: m.role,
+                    content: m.content || ""
+                  }))
+                ];
+
+                const synthesisResponse = await openai.chat.completions.create({
+                  model: "gpt-4o-mini",
+                  messages: promptSynthesisConversation as any,
+                  max_tokens: 350,
+                  temperature: 0.7
+                });
+
+                const synthesizedPrompt = synthesisResponse.choices[0]?.message?.content?.trim();
+                if (synthesizedPrompt) {
+                  console.log("[Image Generation] Synthesized Prompt from History:", synthesizedPrompt);
+                  promptText = synthesizedPrompt;
+                }
+              } catch (synthesisError) {
+                console.error("[Image Generation] Fallback prompt synthesis failed:", synthesisError);
+              }
+            }
+          }
+        } else {
+          // Conversational multi-turn image description synthesis using GPT-4o-mini
+          if (messages && messages.length > 1) {
+            try {
+              console.log(`[Image Generation] Multi-message context detected (Count: ${messages.length}). Synthesizing cohesive, cumulative image prompt...`);
+              const promptSynthesisConversation = [
+                {
+                  role: "system",
+                  content: "You are the Trelvix Prompt Synthesizer. Your job is to read a conversation history between a user and an AI image assistant, and synthesize a single, detailed, highly descriptive image prompt for DALL-E (the image generator) that incorporates all cumulative details, revisions, adjustments, corrections, elements, and style instructions requested from the entire conversation. Output ONLY the raw final image description prompt. Do not add any conversational text, pleasantries, or explanations. Do not say things like 'Here is the revised prompt'. Produce a single paragraph description of the scene that perfectly captures the latest desired state, preserving the details of the original request except where the user explicitly asked to change them."
+                },
+                ...messages.filter((m: any) => m.role === 'user' || m.role === 'assistant').map((m: any) => ({
+                  role: m.role,
+                  content: m.content || ""
+                }))
+              ];
+
+              const synthesisResponse = await openai.chat.completions.create({
+                model: "gpt-4o-mini",
+                messages: promptSynthesisConversation as any,
+                max_tokens: 350,
+                temperature: 0.7
+              });
+
+              const synthesizedPrompt = synthesisResponse.choices[0]?.message?.content?.trim();
+              if (synthesizedPrompt) {
+                console.log("[Image Generation] Synthesized Prompt from History:", synthesizedPrompt);
+                promptText = synthesizedPrompt;
+              }
+            } catch (synthesisError) {
+              console.error("[Image Generation] Prompt synthesis failed, fallback to original prompt:", synthesisError);
+            }
+          }
+        }
+
+        // Auto-truncate extremely long prompts safely to prevent OpenAI API size limit failures (max 2000 chars)
+        if (promptText.length > 2000) {
+          console.log(`[Image Generation] Truncating client prompt from ${promptText.length} to 2000 chars to prevent API failures.`);
+          promptText = promptText.substring(0, 2000) + "...";
+        }
+
+        // Append strong realism instructions
+        const fullPrompt = promptText + ". photorealistic, highly detailed, realistic photography, sharp focus, natural lighting, 8k resolution, professional quality, accurate anatomy, cinematic lighting";
+
+        let response;
+        let modelUsed = "gpt-image-2";
+        let base64Image = "";
+
+        const extractImage = (resObj: any) => {
+          const item = resObj?.data?.[0];
+          if (item?.b64_json) {
+            return item.b64_json.startsWith("data:") ? item.b64_json : `data:image/png;base64,${item.b64_json}`;
+          }
+          if (item?.url) {
+            return item.url;
+          }
+          return "";
+        };
+
+        const imageSpeed = req.body.image_speed || "quality";
+        console.log(`[Image Generation] Requested engine speed: ${imageSpeed}`);
+
+        if (imageSpeed === "fast") {
+          try {
+            console.log("[Image Generation] Fast Mode: Attempting generation with gpt-image-1 for turbo speed (typically < 3 seconds)...");
             response = await openai.images.generate({
-              model: "gpt-image-2",
-              prompt: fullPrompt,
-              quality: "standard", // 3x faster than HD/auto quality!
+              model: "gpt-image-1",
+              prompt: promptText, // cleaner prompt to increase generation speed
               size: "1024x1024",
               n: 1,
             });
             const extracted = extractImage(response);
             if (extracted) {
               base64Image = extracted;
-              modelUsed = "gpt-image-2 (fast-standard)";
+              modelUsed = "gpt-image-1 (turbo fast)";
             }
-          } catch (fastErr2: any) {
-            console.error("[Image Generation] Fast modes failed, falling back to quality pipeline:", fastErr2?.message || fastErr2);
-          }
-        }
-      }
-
-      if (!base64Image) {
-        try {
-          console.log("[Image Generation] Attempting generation with primary model gpt-image-2 (quality: auto)...");
-          response = await openai.images.generate({
-            model: "gpt-image-2",
-            prompt: fullPrompt,
-            quality: "auto",
-            size: "1024x1024",
-            n: 1,
-          });
-          const extracted = extractImage(response);
-          if (!extracted) {
-            throw new Error("No image returned from gpt-image-2");
-          }
-          base64Image = extracted;
-          modelUsed = "gpt-image-2 (auto)";
-        } catch (err2: any) {
-          console.warn(`[Image Generation] Primary model gpt-image-2 failure: ${err2?.message || err2}. Retrying with minimal params for gpt-image-2...`);
-          try {
-            response = await openai.images.generate({
-              model: "gpt-image-2",
-              prompt: fullPrompt,
-            });
-            const extracted = extractImage(response);
-            if (!extracted) {
-              throw new Error("No image returned from gpt-image-2 minimal");
-            }
-            base64Image = extracted;
-            modelUsed = "gpt-image-2 (minimal)";
-          } catch (err2Minimal: any) {
-            console.warn(`[Image Generation] gpt-image-2 failed completely: ${err2Minimal?.message || err2Minimal}. Invoking fallback gpt-image-1...`);
+          } catch (fastErr: any) {
+            console.warn("[Image Generation] Fast Mode gpt-image-1 bypassed, trying gpt-image-2 fast-standard...", fastErr?.message || fastErr);
             try {
-              console.log("[Image Generation] Attempting fallback generation with gpt-image-1 (quality: auto)...");
               response = await openai.images.generate({
-                model: "gpt-image-1",
+                model: "gpt-image-2",
                 prompt: fullPrompt,
-                quality: "auto",
+                quality: "standard", // 3x faster than HD/auto quality!
                 size: "1024x1024",
                 n: 1,
               });
               const extracted = extractImage(response);
+              if (extracted) {
+                base64Image = extracted;
+                modelUsed = "gpt-image-2 (fast-standard)";
+              }
+            } catch (fastErr2: any) {
+              console.error("[Image Generation] Fast modes failed, falling back to quality pipeline:", fastErr2?.message || fastErr2);
+            }
+          }
+        }
+
+        if (!base64Image) {
+          try {
+            console.log("[Image Generation] Attempting generation with primary model gpt-image-2 (quality: auto)...");
+            response = await openai.images.generate({
+              model: "gpt-image-2",
+              prompt: fullPrompt,
+              quality: "auto",
+              size: "1024x1024",
+              n: 1,
+            });
+            const extracted = extractImage(response);
             if (!extracted) {
-              throw new Error("No image returned from fallback gpt-image-1");
+              throw new Error("No image returned from gpt-image-2");
             }
             base64Image = extracted;
-            modelUsed = "gpt-image-1 (fallback auto)";
-          } catch (err1: any) {
-            console.warn(`[Image Generation] Fallback gpt-image-1 auto configuration failed: ${err1?.message || err1}. Trying gpt-image-1 with minimal config...`);
+            modelUsed = "gpt-image-2 (auto)";
+          } catch (err2: any) {
+            console.warn(`[Image Generation] Primary model gpt-image-2 failure: ${err2?.message || err2}. Retrying with minimal params for gpt-image-2...`);
             try {
               response = await openai.images.generate({
-                model: "gpt-image-1",
+                model: "gpt-image-2",
                 prompt: fullPrompt,
               });
               const extracted = extractImage(response);
               if (!extracted) {
-                throw new Error("No image returned from fallback gpt-image-1 minimal");
+                throw new Error("No image returned from gpt-image-2 minimal");
               }
               base64Image = extracted;
-              modelUsed = "gpt-image-1 (fallback minimal)";
-            } catch (errAll: any) {
-              console.error("[Image Generation] All image generation models failed:", errAll?.message || errAll);
-              throw new Error(errAll?.message || "Failed to generate image with any model.");
+              modelUsed = "gpt-image-2 (minimal)";
+            } catch (err2Minimal: any) {
+              console.warn(`[Image Generation] gpt-image-2 failed completely: ${err2Minimal?.message || err2Minimal}. Invoking fallback gpt-image-1...`);
+              try {
+                console.log("[Image Generation] Attempting fallback generation with gpt-image-1 (quality: auto)...");
+                response = await openai.images.generate({
+                  model: "gpt-image-1",
+                  prompt: fullPrompt,
+                  quality: "auto",
+                  size: "1024x1024",
+                  n: 1,
+                });
+                const extracted = extractImage(response);
+                if (!extracted) {
+                  throw new Error("No image returned from fallback gpt-image-1");
+                }
+                base64Image = extracted;
+                modelUsed = "gpt-image-1 (fallback auto)";
+              } catch (err1: any) {
+                console.warn(`[Image Generation] Fallback gpt-image-1 auto configuration failed: ${err1?.message || err1}. Trying gpt-image-1 with minimal config...`);
+                try {
+                  response = await openai.images.generate({
+                    model: "gpt-image-1",
+                    prompt: fullPrompt,
+                  });
+                  const extracted = extractImage(response);
+                  if (!extracted) {
+                    throw new Error("No image returned from fallback gpt-image-1 minimal");
+                  }
+                  base64Image = extracted;
+                  modelUsed = "gpt-image-1 (fallback minimal)";
+                } catch (errAll: any) {
+                  console.error("[Image Generation] All image generation models failed:", errAll?.message || errAll);
+                  throw new Error(errAll?.message || "Failed to generate image with any model.");
+                }
+              }
             }
           }
         }
-      }
-    }
 
-      // We skip heavy synchronous download and base64 parsing on the main thread.
-      // Returning the direct OpenAI CDN URL allows the client to load and render the image INSTANTLY!
-      // The client's background auto-migration scanner will lazily heal/migrate compile history safely.
-      console.log(`[Image] Img generated via ${modelUsed} responding immediately with direct CDN URL to maximize throughput speed.`);
+        // We skip heavy synchronous download and base64 parsing on the main thread.
+        // Returning the direct OpenAI CDN URL allows the client to load and render the image INSTANTLY!
+        // The client's background auto-migration scanner will lazily heal/migrate compile history safely.
+        console.log(`[Image] Img generated via ${modelUsed} responding immediately with direct CDN URL to maximize throughput speed.`);
 
-      if (req.body.conversationId && req.body.userId) {
-        (async () => {
-          try {
-            const supabaseUrl = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || "https://wxezfzhhzlauggufecmm.supabase.co";
-            const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY || process.env.VITE_SUPABASE_ANON_KEY || "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Ind4ZXpmemhoemxhdWdndWZlY21tIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQyNTQxMjcsImV4cCI6MjA4OTgzMDEyN30.2nsDSFhOtm1Xs3RuZNDo74jGbBwd05E7lPP-FN5cd1Q";
-            
-            const supabase = createClient(supabaseUrl, supabaseServiceKey);
-            const { data: imageData, error: imgError } = await supabase.from('images').insert({
-                user_id: req.body.userId,
-                prompt: promptText,
-                image_url: base64Image
-              }).select().single();
+        if (req.body.conversationId && req.body.userId) {
+          (async () => {
+            try {
+              const supabaseUrl = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || "https://wxezfzhhzlauggufecmm.supabase.co";
+              const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY || process.env.VITE_SUPABASE_ANON_KEY || "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Ind4ZXpmemhoemxhdWdndWZlY21tIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQyNTQxMjcsImV4cCI6MjA4OTgzMDEyN30.2nsDSFhOtm1Xs3RuZNDo74jGbBwd05E7lPP-FN5cd1Q";
+              
+              const supabase = createClient(supabaseUrl, supabaseServiceKey);
+              const { data: imageData, error: imgError } = await supabase.from('images').insert({
+                  user_id: req.body.userId,
+                  prompt: promptText,
+                  image_url: base64Image
+                }).select().single();
 
               const assistantMessage = {
                 id: crypto.randomUUID(),
@@ -655,19 +752,31 @@ async function handleGenerate(req: express.Request, res: express.Response) {
                 type || 'image',
                 messages
               );
-          } catch (e) {
-            console.error("[Server Image Save Error]:", e);
-          }
-         })().catch(console.error);
-      }
+            } catch (e) {
+              console.error("[Server Image Save Error]:", e);
+            }
+          })().catch(console.error);
+        }
 
-      return res.json({ 
-        imageUrl: base64Image,
-        image_url: base64Image, 
-        type: "image",
-        filename: `trelvix-${Date.now()}.png`,
-        description: "Here is your generated image:"
-      });
+        clearInterval(keepAliveInterval);
+        res.write(JSON.stringify({ 
+          imageUrl: base64Image,
+          image_url: base64Image, 
+          type: "image",
+          filename: `trelvix-${Date.now()}.png`,
+          description: "Here is your generated image:"
+        }));
+        res.end();
+        return;
+      } catch (err: any) {
+        clearInterval(keepAliveInterval);
+        console.error("[Image Generation] Error in pipeline:", err);
+        if (!res.writableEnded) {
+          res.write(JSON.stringify({ error: err.message || "Failed to generate image" }));
+          res.end();
+        }
+        return;
+      }
     }
 
     // 2. Text-to-Speech
@@ -768,6 +877,16 @@ async function handleGenerate(req: express.Request, res: express.Response) {
     else if (type === "script") systemInstruction += " You are a professional scriptwriter for video, stage, and screen. Write engaging and well-structured scripts.";
     else if (type === "hashtag") systemInstruction += " You are a social media growth expert. Generate trending and relevant hashtags.";
 
+    // Pre-parse isDocRequest to supercharge system prompts
+    const isDocRequest = /\b(pdf|docx|xlsx|word|excel|spreadsheet|csv|document|resume|report|cv|invoice|presentation|budget)\b/i.test(lastMessageContent);
+    if (isDocRequest) {
+      systemInstruction += `\n\nCRITICAL DIRECTIVE: The user is explicitly asking for a CV, resume, document, spreadsheet, or physical file (such as a PDF, Word .docx, or Excel .xlsx). 
+Because you are integrated with our custom client-side file compiler, YOU ABSOLUTELY CAN AND MUST GENERATE AND EMIT THIS FILE!
+- NEVER refuse, say you cannot write/create/compile files, or suggest standard tools like Word/Google Docs.
+- Say "Sure, I have generated the file" and display a beautiful preview formatting for it in markdown.
+- At the absolute end of your response, write exactly one code block with label \`\`\`json-file-data ... \`\`\` containing the full correct JSON configuration (with fileType, fileName, title, sections, etc.) as detailed in rule #7 above. Our compiler will automatically detect this and render actual [Download PDF], [Download Word], and [Download Excel] buttons so the user can download the real physical file!`;
+    }
+
     const openAiMessages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [
       { role: "system", content: systemInstruction },
       ...messages.map((m: any) => {
@@ -785,7 +904,6 @@ async function handleGenerate(req: express.Request, res: express.Response) {
     ];
 
     // Deep analysis of general document intent to overcome any pre-trained LLM refusal tendencies
-    const isDocRequest = /\b(pdf|docx|xlsx|word|excel|spreadsheet|csv|document|resume|report|cv|invoice|presentation|budget)\b/i.test(lastMessageContent);
     if (isDocRequest) {
       console.log(`[Generate] Activating maximum document compiler reinforcement for: "${lastMessageContent.substring(0, 40)}..."`);
       openAiMessages.push({

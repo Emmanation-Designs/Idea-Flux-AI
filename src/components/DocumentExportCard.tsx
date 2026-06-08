@@ -5,6 +5,7 @@ import * as XLSX from 'xlsx';
 import { FileText, Table as TableIcon, Check, FileSpreadsheet, Download, Loader2, RefreshCw, AlertTriangle } from 'lucide-react';
 import { motion } from 'motion/react';
 import { toast } from 'sonner';
+import { saveAs } from 'file-saver';
 
 interface DocumentExportCardProps {
   jsonData: string;
@@ -261,7 +262,8 @@ export const DocumentExportCard: React.FC<DocumentExportCardProps> = ({ jsonData
       drawPageFooter();
 
       // Download trigger
-      doc.save(getCleanFilename("pdf"));
+      const pdfBlob = doc.output('blob');
+      saveAs(pdfBlob, getCleanFilename("pdf"));
       toast.success("PDF generated successfully!");
     } catch (err) {
       console.error(err);
@@ -464,15 +466,7 @@ export const DocumentExportCard: React.FC<DocumentExportCardProps> = ({ jsonData
       });
 
       const blobOut = await Packer.toBlob(wordDocument);
-      const outputUrl = URL.createObjectURL(blobOut);
-      
-      const downloadAnchor = document.createElement("a");
-      downloadAnchor.href = outputUrl;
-      downloadAnchor.download = getCleanFilename("docx");
-      document.body.appendChild(downloadAnchor);
-      downloadAnchor.click();
-      document.body.removeChild(downloadAnchor);
-      URL.revokeObjectURL(outputUrl);
+      saveAs(blobOut, getCleanFilename("docx"));
 
       toast.success("Word Document exported successfully!");
     } catch (e) {
@@ -552,7 +546,9 @@ export const DocumentExportCard: React.FC<DocumentExportCardProps> = ({ jsonData
       }
 
       // Export file
-      XLSX.writeFile(workbook, getCleanFilename("xlsx"));
+      const writeBuffer = XLSX.write(workbook, { bookType: 'xlsx', type: 'array' });
+      const excelBlob = new Blob([writeBuffer], { type: 'application/octet-stream' });
+      saveAs(excelBlob, getCleanFilename("xlsx"));
       toast.success("Excel spreadsheet exported successfully!");
     } catch (exc) {
       console.error(exc);
