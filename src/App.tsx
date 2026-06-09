@@ -45,6 +45,7 @@ import ReactMarkdown from 'react-markdown';
 import remarkMath from 'remark-math';
 import rehypeKatex from 'rehype-katex';
 import { clsx, type ClassValue } from 'clsx';
+import { SplashScreen } from './components/SplashScreen';
 
 const supportsLookbehind = (() => {
   try {
@@ -223,6 +224,7 @@ export default function App() {
     const saved = localStorage.getItem('theme');
     return saved ? saved === 'dark' : true;
   });
+  const [isSplashing, setIsSplashing] = useState(true);
   const [user, setUser] = useState<any>(null);
   const [profile, setProfile] = useState<Profile | null>(null);
   const [conversations, setConversations] = useState<any[]>([]);
@@ -1964,6 +1966,14 @@ export default function App() {
 
   if (!user) return (
     <div className={cn(isDarkMode && "dark")}>
+      <AnimatePresence>
+        {isSplashing && (
+          <SplashScreen 
+            isDarkMode={isDarkMode} 
+            onComplete={() => setIsSplashing(false)} 
+          />
+        )}
+      </AnimatePresence>
       <Auth onAuthSuccess={() => {}} isDarkMode={isDarkMode} />
       <button 
         onClick={() => setIsDarkMode(!isDarkMode)}
@@ -1994,6 +2004,14 @@ export default function App() {
       style={{ height: viewportHeight }}
       className={cn("fixed inset-0 w-full flex bg-white dark:bg-zinc-950 text-zinc-900 dark:text-zinc-100 font-sans overflow-hidden", isDarkMode && "dark")}
     >
+      <AnimatePresence>
+        {isSplashing && (
+          <SplashScreen 
+            isDarkMode={isDarkMode} 
+            onComplete={() => setIsSplashing(false)} 
+          />
+        )}
+      </AnimatePresence>
       <Sidebar 
         isOpen={isSidebarOpen}
         setIsOpen={setIsSidebarOpen}

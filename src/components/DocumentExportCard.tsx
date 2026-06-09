@@ -2,8 +2,8 @@ import React, { useState } from 'react';
 import { jsPDF } from 'jspdf';
 import { Document, Packer, Paragraph, TextRun, HeadingLevel, Table, TableRow, TableCell, BorderStyle, WidthType } from 'docx';
 import * as XLSX from 'xlsx';
-import { FileText, Table as TableIcon, Check, FileSpreadsheet, Download, Loader2, RefreshCw, AlertTriangle } from 'lucide-react';
-import { motion } from 'motion/react';
+import { FileText, Table as TableIcon, Check, FileSpreadsheet, Download, Loader2, RefreshCw, AlertTriangle, File, Eye, EyeOff, LayoutGrid } from 'lucide-react';
+import { motion, AnimatePresence } from 'motion/react';
 import { toast } from 'sonner';
 import { saveAs } from 'file-saver';
 
@@ -16,6 +16,8 @@ export const DocumentExportCard: React.FC<DocumentExportCardProps> = ({ jsonData
   const [isGenerating, setIsGenerating] = useState<string | null>(null);
   const [parseError, setParseError] = useState<boolean>(false);
   const [parsedData, setParsedData] = useState<any | null>(null);
+  const [activePreviewTab, setActivePreviewTab] = useState<string>("preview"); // "preview" | "raw"
+  const [showFullOutline, setShowFullOutline] = useState<boolean>(false);
 
   // Lazy parse the data safely
   React.useEffect(() => {
@@ -38,11 +40,13 @@ export const DocumentExportCard: React.FC<DocumentExportCardProps> = ({ jsonData
 
   if (parseError) {
     return (
-      <div className="my-4 p-4 bg-amber-500/10 border border-amber-500/20 rounded-2xl flex items-start gap-3 max-w-full">
-        <AlertTriangle className="w-5 h-5 text-amber-500 shrink-0 mt-0.5" />
-        <div>
+      <div className="my-6 p-5 bg-amber-500/5 dark:bg-amber-500/10 border border-amber-500/20 rounded-2xl flex items-start gap-4 max-w-full">
+        <div className="w-10 h-10 rounded-xl bg-amber-500/10 flex items-center justify-center shrink-0">
+          <AlertTriangle className="w-5 h-5 text-amber-500" />
+        </div>
+        <div className="flex-1 min-w-0">
           <h4 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">Document Blueprint Format Warning</h4>
-          <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-1">
+          <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-1 leading-relaxed">
             The AI drafted a document structure, but there is a formatting issue in the raw code blueprint. You can ask Trelvix to regenerate it.
           </p>
         </div>
@@ -52,9 +56,9 @@ export const DocumentExportCard: React.FC<DocumentExportCardProps> = ({ jsonData
 
   if (!parsedData) {
     return (
-      <div className="my-4 p-5 border border-zinc-200 dark:border-zinc-850 bg-zinc-50 dark:bg-zinc-900/40 rounded-2xl flex items-center justify-center gap-3">
+      <div className="my-6 p-6 border border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-900/40 rounded-2xl flex items-center justify-center gap-3">
         <Loader2 className="w-4 h-4 text-emerald-500 animate-spin" />
-        <span className="text-xs text-zinc-400">Loading document export panel...</span>
+        <span className="text-xs text-zinc-400 font-medium">Loading document export panel...</span>
       </div>
     );
   }
@@ -70,12 +74,39 @@ export const DocumentExportCard: React.FC<DocumentExportCardProps> = ({ jsonData
     return `${clean || 'trelvix-file'}.${ext}`;
   };
 
+  // Safe metrics calculator
+  const getMetrics = () => {
+    let wordCount = 0;
+    let tableCount = 0;
+    let listItemsCount = 0;
+
+    sections.forEach((sec: any) => {
+      if (sec.type === 'table') tableCount++;
+      if (sec.type === 'bullet' && Array.isArray(sec.bullets)) listItemsCount += sec.bullets.length;
+      
+      if (sec.heading) wordCount += sec.heading.split(/\s+/).length;
+      if (Array.isArray(sec.paragraphs)) {
+        sec.paragraphs.forEach((p: string) => {
+          wordCount += p.split(/\s+/).length;
+        });
+      }
+      if (Array.isArray(sec.bullets)) {
+        sec.bullets.forEach((b: string) => {
+          wordCount += b.split(/\s+/).length;
+        });
+      }
+    });
+
+    return { words: wordCount, tables: tableCount, items: listItemsCount };
+  };
+
+  const metrics = getMetrics();
+
   // 1. PDF Export logic
   const handleExportPDF = async () => {
     setIsGenerating("pdf");
     toast.info("Assembling PDF typography and sections...");
 
-    // Tiny artificial timeout for highly crafted, premium feel
     await new Promise(resolve => setTimeout(resolve, 800));
 
     try {
@@ -92,7 +123,6 @@ export const DocumentExportCard: React.FC<DocumentExportCardProps> = ({ jsonData
         for (let i = 1; i <= totalPages; i++) {
           doc.setPage(i);
           
-          // Draw faint divider line above footers
           doc.setDrawColor(243, 244, 246);
           doc.line(margin, pageHeight - 15, pageWidth - margin, pageHeight - 15);
 
@@ -102,17 +132,18 @@ export const DocumentExportCard: React.FC<DocumentExportCardProps> = ({ jsonData
             doc.setTextColor(156, 163, 175);
             doc.text("Generated by Trelvix AI Document Engine", margin, pageHeight - 10);
           }
+          doc.setFont("Helvetica", "normal");
+          doc.setFontSize(8);
+          doc.setTextColor(156, 163, 175);
           doc.text(`Page ${i} of ${totalPages}`, pageWidth - margin - 15, pageHeight - 10);
         }
       };
 
-      // Header margin checker
       const checkPageOverflow = (neededHeight: number) => {
         if (y + neededHeight > pageHeight - margin - 15) {
           doc.addPage();
           y = margin;
           
-          // Reprint secondary page badge
           doc.setFillColor(16, 185, 129);
           doc.rect(margin, y, 4, 4, "F");
           doc.setFont("Helvetica", "bold");
@@ -135,7 +166,7 @@ export const DocumentExportCard: React.FC<DocumentExportCardProps> = ({ jsonData
       };
 
       // Top Header Line Tint
-      doc.setFillColor(16, 185, 129); // Accent emerald
+      doc.setFillColor(16, 185, 129);
       doc.rect(margin, y, contentWidth, 3.5, "F");
       y += 11;
 
@@ -147,7 +178,6 @@ export const DocumentExportCard: React.FC<DocumentExportCardProps> = ({ jsonData
       doc.text(titleLines, margin, y);
       y += titleLines.length * 9.5 + 2;
 
-      // Meta Header Subtitle
       if (subtitle || author) {
         doc.setFont("Helvetica", "normal");
         doc.setFontSize(9.5);
@@ -157,16 +187,13 @@ export const DocumentExportCard: React.FC<DocumentExportCardProps> = ({ jsonData
         y += 8;
       }
 
-      // Border Divider Page Section
       doc.setDrawColor(229, 231, 235);
       doc.setLineWidth(0.5);
       doc.line(margin, y, pageWidth - margin, y);
       y += 12;
 
-      // Draw all sections
       if (sections && Array.isArray(sections)) {
         sections.forEach((section: any) => {
-          // 1. Title head
           if (section.heading) {
             checkPageOverflow(16);
             doc.setFont("Helvetica", "bold");
@@ -175,14 +202,12 @@ export const DocumentExportCard: React.FC<DocumentExportCardProps> = ({ jsonData
             doc.text(section.heading, margin, y);
             y += 6;
 
-            // Header color trace underline
             doc.setDrawColor(16, 185, 129);
             doc.setLineWidth(0.75);
             doc.line(margin, y, margin + 20, y);
             y += 8;
           }
 
-          // 2. Types
           if (section.type === "bullet" && Array.isArray(section.bullets)) {
             section.bullets.forEach((bullet: string) => {
               checkPageOverflow(7.5);
@@ -190,7 +215,6 @@ export const DocumentExportCard: React.FC<DocumentExportCardProps> = ({ jsonData
               doc.setFontSize(10.5);
               doc.setTextColor(55, 65, 81);
               
-              // Draw a tiny bullet point
               doc.setFillColor(156, 163, 175);
               doc.circle(margin + 2, y - 3, 1, "F");
 
@@ -205,10 +229,8 @@ export const DocumentExportCard: React.FC<DocumentExportCardProps> = ({ jsonData
             const colWidth = contentWidth / headers.length;
             const rHeight = 8.5;
 
-            // Render header columns
             checkPageOverflow(rHeight + 5);
-            doc.setFillColor(55, 65, 81); // beautiful dark slate header backgrounds
-            doc.rect(margin, y, contentWidth, rHeight, "F");
+            doc.setFillColor(55, 65, 81);
 
             doc.setFont("Helvetica", "bold");
             doc.setFontSize(9);
@@ -222,17 +244,15 @@ export const DocumentExportCard: React.FC<DocumentExportCardProps> = ({ jsonData
               doc.text(safeText, cellX + 3.5, y + 5.5);
               doc.line(cellX, y, cellX, y + rHeight);
             });
-            // Outer boundaries border lines
             doc.line(margin + contentWidth, y, margin + contentWidth, y + rHeight);
             doc.line(margin, y, margin + contentWidth, y);
             doc.line(margin, y + rHeight, margin + contentWidth, y + rHeight);
             y += rHeight;
 
-            // Rows with alternating stripes
             rows.forEach((rowArr: any[], rIdx: number) => {
               checkPageOverflow(rHeight + 2);
               if (rIdx % 2 === 1) {
-                doc.setFillColor(249, 250, 251); // row stripe tint
+                doc.setFillColor(249, 250, 251);
                 doc.rect(margin, y, contentWidth, rHeight, "F");
               }
 
@@ -261,10 +281,8 @@ export const DocumentExportCard: React.FC<DocumentExportCardProps> = ({ jsonData
         });
       }
 
-      // Apply complete footnoting structure onto all pages built
       drawPageFooter();
 
-      // Download trigger
       const pdfBlob = doc.output('blob');
       saveAs(pdfBlob, getCleanFilename("pdf"));
       toast.success("PDF generated successfully!");
@@ -286,7 +304,6 @@ export const DocumentExportCard: React.FC<DocumentExportCardProps> = ({ jsonData
     try {
       const docChildren: any[] = [];
 
-      // Big Title Header
       docChildren.push(
         new Paragraph({
           heading: HeadingLevel.TITLE,
@@ -296,14 +313,13 @@ export const DocumentExportCard: React.FC<DocumentExportCardProps> = ({ jsonData
               text: title,
               bold: true,
               size: 34,
-              color: "1F2937", // Grey-805
+              color: "1F2937",
               font: "Arial",
             }),
           ],
         })
       );
 
-      // Metas
       if (subtitle || author) {
         const subStr = [subtitle, author ? `Author: ${author}` : ''].filter(Boolean).join("  |  ");
         docChildren.push(
@@ -322,10 +338,8 @@ export const DocumentExportCard: React.FC<DocumentExportCardProps> = ({ jsonData
         );
       }
 
-      // Add a line break
       docChildren.push(new Paragraph({ spacing: { after: 150 } }));
 
-      // Sections mapping
       if (sections && Array.isArray(sections)) {
         sections.forEach((section: any) => {
           if (section.heading) {
@@ -338,7 +352,7 @@ export const DocumentExportCard: React.FC<DocumentExportCardProps> = ({ jsonData
                     text: section.heading,
                     bold: true,
                     size: 26,
-                    color: "10B981", // Emerald accent
+                    color: "10B981",
                     font: "Arial",
                   }),
                 ],
@@ -367,16 +381,14 @@ export const DocumentExportCard: React.FC<DocumentExportCardProps> = ({ jsonData
           } else if (section.type === "table" && Array.isArray(section.headers) && Array.isArray(section.rows)) {
             const headers = section.headers;
             const rows = section.rows;
-
             const tWidth = 100 / headers.length;
 
             const tableRows = [
-              // Styled Table Header
               new TableRow({
                 children: headers.map((hdrStr: string) => (
                   new TableCell({
                     width: { size: tWidth, type: WidthType.PERCENTAGE },
-                    shading: { fill: "374151", color: "auto" }, // Dark header shading
+                    shading: { fill: "374151", color: "auto" },
                     margins: { top: 120, bottom: 120, left: 160, right: 160 },
                     children: [
                       new Paragraph({
@@ -395,13 +407,12 @@ export const DocumentExportCard: React.FC<DocumentExportCardProps> = ({ jsonData
                 )),
               }),
 
-              // Table Body Data Items
               ...rows.map((rowArr: any[], rId: number) => (
                 new TableRow({
                   children: rowArr.map((cellObj: any) => (
                     new TableCell({
                       width: { size: tWidth, type: WidthType.PERCENTAGE },
-                      shading: rId % 2 === 1 ? { fill: "F9FAFB", color: "auto" } : undefined, // alternating background sheets
+                      shading: rId % 2 === 1 ? { fill: "F9FAFB", color: "auto" } : undefined,
                       margins: { top: 110, bottom: 110, left: 160, right: 160 },
                       children: [
                         new Paragraph({
@@ -437,7 +448,6 @@ export const DocumentExportCard: React.FC<DocumentExportCardProps> = ({ jsonData
               })
             );
 
-            // Spacing spacer after table
             docChildren.push(new Paragraph({ spacing: { after: 120 } }));
           } else if (Array.isArray(section.paragraphs)) {
             section.paragraphs.forEach((pStr: string) => {
@@ -460,7 +470,6 @@ export const DocumentExportCard: React.FC<DocumentExportCardProps> = ({ jsonData
         });
       }
 
-      // Core wrapper
       const wordDocument = new Document({
         sections: [{
           properties: {},
@@ -491,19 +500,16 @@ export const DocumentExportCard: React.FC<DocumentExportCardProps> = ({ jsonData
       const workbook = XLSX.utils.book_new();
       let addedWorksheet = false;
 
-      // Check if structured workbook spreadsheet data block exists
       if (parsedData.spreadsheet && Array.isArray(parsedData.spreadsheet.sheets)) {
         parsedData.spreadsheet.sheets.forEach((sheet: any) => {
           if (sheet.name && Array.isArray(sheet.rows)) {
             const worksheet = XLSX.utils.aoa_to_sheet(sheet.rows);
-            // Limit sheet name length to Excel limit (31)
             XLSX.utils.book_append_sheet(workbook, worksheet, sheet.name.substring(0, 31));
             addedWorksheet = true;
           }
         });
       }
 
-      // Check sections for table occurrences and output them as excel sheet tabs
       if (sections && Array.isArray(sections)) {
         sections.forEach((section: any, id: number) => {
           if (section.type === "table" && Array.isArray(section.headers) && Array.isArray(section.rows)) {
@@ -516,7 +522,6 @@ export const DocumentExportCard: React.FC<DocumentExportCardProps> = ({ jsonData
         });
       }
 
-      // Fallback: If document has NO databases/tables, write standard report content into a flat rows scheme
       if (!addedWorksheet) {
         const flatContent: any[][] = [
           [title],
@@ -548,7 +553,6 @@ export const DocumentExportCard: React.FC<DocumentExportCardProps> = ({ jsonData
         XLSX.utils.book_append_sheet(workbook, fallbackWorksheet, "Export Overview");
       }
 
-      // Export file
       const writeBuffer = XLSX.write(workbook, { bookType: 'xlsx', type: 'array' });
       const excelBlob = new Blob([writeBuffer], { type: 'application/octet-stream' });
       saveAs(excelBlob, getCleanFilename("xlsx"));
@@ -561,7 +565,6 @@ export const DocumentExportCard: React.FC<DocumentExportCardProps> = ({ jsonData
     }
   };
 
-  // Determine which format is requested and should be rendered
   const reqType = String(fileType || '').toLowerCase().trim();
   const hasSpreadsheetData = parsedData.spreadsheet || sections?.some((s: any) => s.type === 'table');
   
@@ -569,129 +572,61 @@ export const DocumentExportCard: React.FC<DocumentExportCardProps> = ({ jsonData
   const showWord = reqType === "docx" || reqType === "doc" || reqType === "word";
   const showPDF = reqType === "pdf" || (!showExcel && !showWord);
 
-  const fileExtLabel = showExcel 
-    ? "Excel Spreadsheet (.xlsx)" 
-    : (showWord ? "Microsoft Word (.docx)" : "PDF Document (.pdf)");
+  const primaryFormat = showExcel ? "xlsx" : (showWord ? "docx" : "pdf");
 
   return (
     <motion.div 
-      initial={{ opacity: 0, scale: 0.98, y: 12 }} 
-      animate={{ opacity: 1, scale: 1, y: 0 }}
-      transition={{ duration: 0.4, ease: "easeOut" }}
-      className="my-6 rounded-2xl border border-zinc-200/80 dark:border-zinc-800/80 bg-white dark:bg-zinc-950 overflow-hidden shadow-lg hover:shadow-xl transition-all duration-350 max-w-full w-full"
+      initial={{ opacity: 0, y: 8 }} 
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.35, ease: "easeOut" }}
+      className="my-4 rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-950 p-4.5 shrink-0 flex flex-col sm:flex-row items-center justify-between gap-4 shadow-sm hover:shadow-md transition-all duration-300 max-w-full w-full"
     >
-      {/* Top Header Card Area */}
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 p-5 md:p-6 border-b border-zinc-150 dark:border-zinc-800 bg-zinc-50/50 dark:bg-zinc-900/20 backdrop-blur-md min-w-0 w-full">
-        <div className="flex items-start gap-3 md:gap-4 min-w-0 flex-1 w-full">
-          <div className="w-10 h-10 md:w-12 md:h-12 rounded-xl md:rounded-2xl bg-zinc-900 dark:bg-white text-white dark:text-zinc-950 flex items-center justify-center shrink-0 shadow-md">
-            {showExcel ? <FileSpreadsheet className="w-5 h-5 md:w-6 md:h-6 text-emerald-500" /> : <FileText className="w-5 h-5 md:w-6 md:h-6 text-emerald-500" />}
-          </div>
-          <div className="min-w-0 flex-1">
-            <h4 className="text-sm md:text-base font-bold text-zinc-900 dark:text-zinc-50 leading-snug tracking-tight font-sans break-words pr-1">
-              {title}
-            </h4>
-            <div className="flex flex-wrap items-center gap-1.5 mt-1 min-w-0">
-              <span className="text-[8px] md:text-[9px] font-bold text-zinc-500 dark:text-zinc-400 uppercase tracking-widest bg-zinc-100 dark:bg-zinc-800/60 px-1.5 py-0.5 rounded border border-zinc-200/50 dark:border-zinc-700/50 shrink-0">
-                Document Export Center
-              </span>
-              <span className="text-[11px] md:text-xs font-semibold text-emerald-600 dark:text-emerald-400 break-words">
-                Type: {fileExtLabel}
-              </span>
-            </div>
-          </div>
+      <div className="flex items-center gap-3 w-full sm:w-auto min-w-0">
+        <div className="text-zinc-400 dark:text-zinc-500 shrink-0">
+          {showExcel ? (
+            <FileSpreadsheet className="w-5 h-5" strokeWidth={1.2} />
+          ) : showWord ? (
+            <FileText className="w-5 h-5" strokeWidth={1.2} />
+          ) : (
+            <File className="w-5 h-5" strokeWidth={1.2} />
+          )}
         </div>
-
-        {/* Short outline statistics indicator */}
-        <div className="text-xs font-mono text-zinc-400 dark:text-zinc-500 border-l md:border-l-0 md:pl-0 pl-4 border-zinc-200 dark:border-zinc-800 flex flex-col md:items-end shrink-0">
-          <span className="font-semibold text-zinc-750 dark:text-zinc-300">Outline: {sections?.length || 0} structures</span>
-          <span>By: {author || "Trelvix AI"}</span>
+        <div className="min-w-0 flex-1">
+          <h5 className="text-[13px] font-semibold text-zinc-900 dark:text-zinc-100 truncate leading-snug">
+            {title}
+          </h5>
+          <div className="flex flex-wrap items-center gap-1.5 mt-0.5 text-[11px] text-zinc-500 dark:text-zinc-400 font-mono">
+            <span className="uppercase font-bold text-zinc-600 dark:text-zinc-300">{primaryFormat}</span>
+            <span>•</span>
+            <span>{metrics.words} words</span>
+            {sections?.length > 0 && (
+              <>
+                <span>•</span>
+                <span>{sections.length} parts</span>
+              </>
+            )}
+          </div>
         </div>
       </div>
 
-      {/* Button exports selector group - rendered professionally and minimalistically */}
-      <div className="p-5 md:p-8 flex flex-col items-center justify-center text-center bg-gradient-to-b from-transparent to-zinc-50/30 dark:to-zinc-950/20 w-full">
-        <div className="max-w-md w-full mb-5">
-          <p className="text-xs md:text-sm text-zinc-500 dark:text-zinc-400 leading-relaxed break-words">
-            Your document has been compiled and formatted successfully based on your request. Below, you can export the production-ready file to your local computer.
-          </p>
-        </div>
-
-        <div className="w-full max-w-sm flex flex-col gap-2.5">
-          {/* PDF Document Button */}
-          {showPDF && (
-            <motion.button
-              whileHover={{ scale: 1.01 }}
-              whileTap={{ scale: 0.99 }}
-              onClick={handleExportPDF}
-              disabled={isGenerating !== null}
-              className="w-full py-3 md:py-3.5 px-4 md:px-6 rounded-xl md:rounded-2xl flex items-center justify-center gap-2 bg-zinc-950 hover:bg-zinc-900 dark:bg-zinc-50 dark:hover:bg-zinc-150 text-white dark:text-zinc-950 active:scale-[0.98] transition-all cursor-pointer font-semibold text-xs md:text-sm disabled:opacity-40 disabled:pointer-events-none disabled:active:scale-100 shadow-md md:shadow-lg shadow-zinc-950/10 dark:shadow-none border border-zinc-900 dark:border-zinc-200"
-            >
-              {isGenerating === "pdf" ? (
-                <>
-                  <Loader2 className="w-3.5 h-3.5 animate-spin text-emerald-500 shrink-0" />
-                  <span className="break-words">Compiling PDF document...</span>
-                </>
-              ) : (
-                <>
-                  <Download className="w-3.5 h-3.5 text-emerald-500 shrink-0" />
-                  <span className="break-words">Download PDF Document</span>
-                </>
-              )}
-            </motion.button>
+      <div className="flex items-center gap-3 w-full sm:w-auto shrink-0 justify-end">
+        <button
+          onClick={showExcel ? handleExportXLSX : showWord ? handleExportDOCX : handleExportPDF}
+          disabled={isGenerating !== null}
+          className="py-1.5 px-3.5 rounded-lg flex items-center justify-center gap-1.5 bg-zinc-900 hover:bg-zinc-850 dark:bg-zinc-100 dark:hover:bg-zinc-200 text-white dark:text-zinc-950 text-xs font-semibold shadow-sm transition-all cursor-pointer disabled:opacity-40 disabled:pointer-events-none"
+        >
+          {isGenerating ? (
+            <>
+              <Loader2 className="w-3.5 h-3.5 animate-spin" strokeWidth={1.2} />
+              <span>Compiling...</span>
+            </>
+          ) : (
+            <>
+              <Download className="w-3.5 h-3.5" strokeWidth={1.2} />
+              <span>Download</span>
+            </>
           )}
-
-          {/* Word Document Button */}
-          {showWord && (
-            <motion.button
-              whileHover={{ scale: 1.01 }}
-              whileTap={{ scale: 0.99 }}
-              onClick={handleExportDOCX}
-              disabled={isGenerating !== null}
-              className="w-full py-3 md:py-3.5 px-4 md:px-6 rounded-xl md:rounded-2xl flex items-center justify-center gap-2 bg-zinc-950 hover:bg-zinc-900 dark:bg-zinc-50 dark:hover:bg-zinc-150 text-white dark:text-zinc-950 active:scale-[0.98] transition-all cursor-pointer font-semibold text-xs md:text-sm disabled:opacity-40 disabled:pointer-events-none disabled:active:scale-100 shadow-md md:shadow-lg shadow-zinc-950/10 dark:shadow-none border border-zinc-900 dark:border-zinc-200"
-            >
-              {isGenerating === "docx" ? (
-                <>
-                  <Loader2 className="w-3.5 h-3.5 animate-spin text-emerald-500 shrink-0" />
-                  <span className="break-words">Compiling Word Document...</span>
-                </>
-              ) : (
-                <>
-                  <FileText className="w-3.5 h-3.5 text-emerald-500 shrink-0" />
-                  <span className="break-words">Download Word Document</span>
-                </>
-              )}
-            </motion.button>
-          )}
-
-          {/* Excel Workbook Button */}
-          {showExcel && (
-            <motion.button
-              whileHover={{ scale: 1.01 }}
-              whileTap={{ scale: 0.99 }}
-              onClick={handleExportXLSX}
-              disabled={isGenerating !== null}
-              className="w-full py-3 md:py-3.5 px-4 md:px-6 rounded-xl md:rounded-2xl flex items-center justify-center gap-2 bg-zinc-950 hover:bg-zinc-900 dark:bg-zinc-50 dark:hover:bg-zinc-150 text-white dark:text-zinc-950 active:scale-[0.98] transition-all cursor-pointer font-semibold text-xs md:text-sm disabled:opacity-40 disabled:pointer-events-none disabled:active:scale-100 shadow-md md:shadow-lg shadow-zinc-950/10 dark:shadow-none border border-zinc-900 dark:border-zinc-200"
-            >
-              {isGenerating === "xlsx" ? (
-                <>
-                  <Loader2 className="w-3.5 h-3.5 animate-spin text-emerald-500 shrink-0" />
-                  <span className="break-words">Compiling Excel Spreadsheet...</span>
-                </>
-              ) : (
-                <>
-                  <TableIcon className="w-3.5 h-3.5 text-emerald-500 shrink-0" />
-                  <span className="break-words">Download Excel Spreadsheet</span>
-                </>
-              )}
-            </motion.button>
-          )}
-        </div>
-      </div>
-
-      {/* Under footer disclaimer */}
-      <div className="px-5 py-3 bg-zinc-50 dark:bg-zinc-900/30 border-t border-zinc-150 dark:border-zinc-800/40 text-[10px] text-zinc-400 dark:text-zinc-500 flex items-center justify-between font-mono">
-        <span>Trelvix Document Compiler v2.1.0</span>
-        <span>Secure Sandbox Export</span>
+        </button>
       </div>
     </motion.div>
   );
