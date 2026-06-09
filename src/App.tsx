@@ -615,13 +615,14 @@ export default function App() {
     if (messages.length > 0 && messages[messages.length - 1].role === 'user') {
       const lastMsg = messages[messages.length - 1];
       const lowerContent = (lastMsg.content || '').toLowerCase();
+      const docFilter = /\b(pdf|docx|xlsx|word|excel|spreadsheet|csv|document|resume|report|cv|curriculum\s*vitae|invoice|presentation|budget|letter|email|cover\s*letter|essay|article|post|text|contract|agreement|outline|syllabus|proposal|workbook|chart|table|schema|blueprint|database)\b/i;
       const isImg = (currentConversation?.type === 'image' || 
         ((/generate|create|make|draw|design|show me|give me|i want|produce|paint|illustrate|visualize|render/i.test(lowerContent)) && 
          (/image|picture|photo|logo|flyer|poster|illustration|drawing|sketch|graphic|art|realistic|scene|portrait|landscape/i.test(lowerContent))) ||
         /\b(logo|flyer|poster|art|sketch|drawing)\b/i.test(lowerContent) ||
         /image of|picture of|photo of|generate an image|create an image|make an image|generate a picture|create a picture/i.test(lowerContent) ||
         /^realistic |^photorealistic /i.test(lowerContent)) && 
-        !/\b(pdf|docx|xlsx|word|excel|spreadsheet|csv|document|resume|report|invoice|presentation|budget)\b/i.test(lowerContent);
+        !docFilter.test(lowerContent);
         
       setIsLoading(true);
       if (isImg) {
@@ -1386,6 +1387,7 @@ export default function App() {
     // Smart Image Intent Detection
     const lowerContent = content.toLowerCase();
     const hasImageUpload = (selectedAttachment?.type === 'image') || messages.some((m: any) => m.image_url);
+    const docExclusionFilter = /\b(pdf|docx|xlsx|word|excel|spreadsheet|csv|document|resume|report|cv|curriculum\s*vitae|invoice|presentation|budget|letter|email|cover\s*letter|essay|article|post|text|contract|agreement|outline|syllabus|proposal|workbook|chart|table|schema|blueprint|database)\b/i;
     const isImageIntent = 
       ((conv?.type === 'image') ||
        ((/generate|create|make|draw|design|show me|give me|i want|produce|paint|illustrate|visualize|render/i.test(lowerContent)) && 
@@ -1394,7 +1396,7 @@ export default function App() {
        /image of|picture of|photo of|generate an image|create an image|make an image|generate a picture|create a picture/i.test(lowerContent) ||
        /^realistic |^photorealistic /i.test(lowerContent) ||
        (hasImageUpload && /edit|modify|change|more professional|add text|similar style|re-create|recreate/i.test(lowerContent))) &&
-      !/\b(pdf|docx|xlsx|word|excel|spreadsheet|csv|document|resume|report|invoice|presentation|budget)\b/i.test(lowerContent);
+      !docExclusionFilter.test(lowerContent);
 
     const isAnalysisIntent = !!selectedAttachment;
 

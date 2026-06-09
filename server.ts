@@ -363,6 +363,9 @@ async function handleGenerate(req: express.Request, res: express.Response) {
     // 0. Intelligence Controller: Determine the best engine based on intent
     const lastMessageContent = (messages[messages.length - 1]?.content || prompt || "").trim();
     
+    // Comprehensive document/file exclusion list to prevent false positive image generation triggers
+    const docExclusionFilter = /\b(pdf|docx|xlsx|word|excel|spreadsheet|csv|document|resume|report|cv|curriculum\s*vitae|invoice|presentation|budget|letter|email|cover\s*letter|essay|article|post|text|contract|agreement|outline|syllabus|proposal|workbook|chart|table|schema|blueprint|database)\b/i;
+
     // Stricter image intent detection: must start with or specifically request an image, or edit an uploaded image
     const lowerLast = lastMessageContent.toLowerCase();
     const fileHasImage = (messages || []).some((m: any) => m.image_url && m.image_url.startsWith("data:image"));
@@ -375,8 +378,11 @@ async function handleGenerate(req: express.Request, res: express.Response) {
                            lowerLast.includes("generate a photorealistic image") || 
                            lowerLast.includes("show me an image of") ||
                            (fileHasImage && /edit|modify|change|more professional|add text|similar style|re-create|recreate/i.test(lowerLast)))) &&
-                          !/\b(pdf|docx|xlsx|word|excel|spreadsheet|csv|document|resume|report|invoice|presentation|budget)\b/i.test(lowerLast);
+                          !docExclusionFilter.test(lowerLast);
     
+    // Explicitly detect if the user wants to compile a document, CV, layout, text sheet or report
+    const isDocRequest = docExclusionFilter.test(lastMessageContent);
+
     const searchRequired = needsWebSearch(lastMessageContent) && !isImageIntent;
 
     // Strict Tiered Selection Logic (Prioritizing Client Request + Server Detection)
@@ -386,7 +392,8 @@ async function handleGenerate(req: express.Request, res: express.Response) {
     if (isImageIntent || model === "trelvix-visual") {
       realModel = "gpt-4o"; 
       currentBranding = "Visual Engine";
-    } else if (model === "trelvix-ultra") {
+    } else if (model === "trelvix-ultra" || isDocRequest) {
+      // Force gpt-4o for all document/resume/PDF compile requests to ensure correct JSON outputs
       realModel = "gpt-4o"; 
       currentBranding = "Ultra Intelligence";
     } else if (searchRequired) {
@@ -877,8 +884,6 @@ To make it look like an edit or variation of the input image:
     else if (type === "script") systemInstruction += " You are a professional scriptwriter for video, stage, and screen. Write engaging and well-structured scripts.";
     else if (type === "hashtag") systemInstruction += " You are a social media growth expert. Generate trending and relevant hashtags.";
 
-    // Pre-parse isDocRequest to supercharge system prompts
-    const isDocRequest = /\b(pdf|docx|xlsx|word|excel|spreadsheet|csv|document|resume|report|cv|invoice|presentation|budget)\b/i.test(lastMessageContent);
     if (isDocRequest) {
       systemInstruction += `\n\nCRITICAL DIRECTIVE: The user is explicitly asking for a CV, resume, document, spreadsheet, or physical file (such as a PDF, Word .docx, or Excel .xlsx). 
 Because you are integrated with our custom client-side file compiler, YOU ABSOLUTELY CAN AND MUST GENERATE AND EMIT THIS FILE!
