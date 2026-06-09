@@ -136,17 +136,24 @@ export default async function handler(req: any, res: any) {
     // 0. Intelligence Controller
     const lastMessageContent = (messages[messages.length - 1]?.content || prompt || "").trim();
     
+    // Comprehensive document/file exclusion list to prevent false positive image generation triggers
+    const docExclusionFilter = /\b(pdf|docx|xlsx|word|excel|spreadsheet|csv|document|resume|report|cv|curriculum\s*vitae|invoice|presentation|budget|letter|email|cover\s*letter|essay|article|post|text|contract|agreement|outline|syllabus|proposal|workbook|chart|table|schema|blueprint|database)\b/i;
+
     // Stricter image intent detection: must start with or specifically request an image
     const lowerLast = lastMessageContent.toLowerCase();
-    const isImageIntent = type === "image" || model === "trelvix-visual" || 
+    const isImageIntent = (type === "image" || model === "trelvix-visual" || 
                          (lowerLast.startsWith("generate image") || 
                           lowerLast.startsWith("create image") || 
                           lowerLast.startsWith("draw") || 
                           lowerLast.startsWith("make an image") ||
                           lowerLast.startsWith("paint") ||
                           lowerLast.includes("generate a photorealistic image") ||
-                          lowerLast.includes("show me an image of"));
+                          lowerLast.includes("show me an image of"))) &&
+                          !docExclusionFilter.test(lowerLast);
     
+    // Explicitly detect if the user wants to compile a document, CV, layout, text sheet or report
+    const isDocRequest = docExclusionFilter.test(lastMessageContent);
+
     const searchRequired = needsWebSearch(lastMessageContent) && !isImageIntent;
 
     let realModel = "gpt-4o-mini";
@@ -155,7 +162,8 @@ export default async function handler(req: any, res: any) {
     if (isImageIntent || model === "trelvix-visual") {
       realModel = "gpt-4o"; 
       currentBranding = "Visual Engine";
-    } else if (model === "trelvix-ultra") {
+    } else if (model === "trelvix-ultra" || isDocRequest) {
+      // Force gpt-4o for all document/resume/PDF compile requests to ensure correct JSON outputs
       realModel = "gpt-4o"; 
       currentBranding = "Ultra Intelligence";
     } else if (searchRequired) {
@@ -431,11 +439,80 @@ export default async function handler(req: any, res: any) {
     - BE DIRECT. Do not behave like a standard, over-polished corporate AI assistant.
     - NEVER mention OpenAI, knowledge cutoffs, or your status as an AI unless strictly necessary.
     - If you have grounding data, use it as a weapon of truth. Synthesize it without being polite about it.
-    - For images, the priority is absolute realism.`;
+    - For images, the priority is absolute realism.
+    - CRITICAL DIRECTIVE: You have a built-in Client-Side Document & Spreadsheet Compiler! You CAN create, compile, and generate physical files (PDFs, Microsoft Word documents, and Excel worksheets). NEVER claim, refuse, or apologize that you cannot "create", "generate", "export", or "write" physical files or download sheets directly. Always enthusiastically comply, write the requested text or preview, and end with the exact \`json-file-data\` code block so the frontend compiler can construct the actual download for the user. This is a crucial, native feature of your platform.
     
-    if (type === "idea") systemInstruction += " You are an expert content strategist.";
-    else if (type === "script") systemInstruction += " You are a professional scriptwriter.";
-    else if (type === "hashtag") systemInstruction += " You are a social media growth expert.";
+    STRICT MARKDOWN & LATEX OUTPUT FORMAT RULES:
+    1. Output ONLY Markdown text. No HTML or raw JSON unless requested.
+    2. STRUCTURE: Always use headings (# ## ###) for sections, numbered lists for procedures/steps, and bullet points for explanations. Keep responses cleanly spaced and highly readable.
+    3. MATHEMATICAL SOLUTION FORMAT (VERY IMPORTANT):
+       - ALWAYS use LaTeX for ALL mathematical expressions.
+       - Inline math MUST be written as: \\( ... \\)
+       - Block math MUST be written as: \\[ ... \\]
+       - NEVER use plain text math (e.g. write "\\( x^2 = 4 \\)", NEVER "x^2 = 4").
+       - Break math solutions into clear, vertically stacked, numbered steps, each on its own line (never mixed with descriptive text).
+       - Quadratic equations MUST follow this strict section structure:
+         * Given equation (in block LaTeX)
+         * Standard form (in block LaTeX)
+         * Method used (factorization / formula / completing square)
+         * Substitution step (in block LaTeX)
+         * Simplification steps (each step separated clearly onto its own line in block LaTeX)
+         * Final answer clearly stated
+    4. RESPONSES FORMAT: Group response layout under headings: '### Solution', '### Step-by-step working', etc.
+    5. TABLES: Always use Markdown tables for data comparison. Columns must be clean and consistent.
+    6. MOBILE READEBILITY: Avoid horizontal overflow. Keep math calculations vertically stacked. Avoid large unstructured blocks of text.
+    
+    7. FILE GENERATION & EXPORT PROTOCOL (PDF, WORD, EXCEL):
+       - When a user asks you to create, write, design, generate, edit, or adjust a PDF document (.pdf), Microsoft Word document (.docx), or Excel spreadsheet (.xlsx) (such as reports, letters, resumes, invoices, budgets, logs, data workbooks, tables), you MUST:
+         a. Write a highly detailed, professional, and visually structured conversational markdown response containing the full draft preview of the requested document or spreadsheet.
+         b. At the very end of your response, write exactly one code block with the language label \`json-file-data\` (i.e. \`\`\`json-file-data ... \`\`\`) containing the complete, valid structured JSON configuration of the document or spreadsheet so that the frontend compiler can construct the download. Do NOT wrap this block in other code types or formatting. Do NOT omit it.
+         
+         The schema for the JSON within the \`\`\`json-file-data block MUST look exactly like this:
+         {
+           "fileType": "pdf" | "docx" | "xlsx",
+           "fileName": "clean-snake-case-file-name",
+           "title": "Main Title of the Document / Sheet",
+           "subtitle": "Optional Brief Subtitle",
+           "author": "Trelvix AI",
+           "sections": [
+             {
+               "heading": "Section Heading Title",
+               "type": "text" | "bullet" | "table",
+               "paragraphs": ["Detailed text paragraph..."],
+               "bullets": ["Bullet point list item..."],
+               "headers": ["Column 1", "Column 2", "Column 3"],
+               "rows": [
+                 ["Row 1 Col 1", "Row 1 Col 2", "Row 1 Col 3"],
+                 ["Row 2 Col 1", "Row 2 Col 2", "Row 2 Col 3"]
+               ]
+             }
+           ],
+           "spreadsheet": {
+             "sheets": [
+               {
+                 "name": "Sheet Name (max 31 chars)",
+                 "rows": [
+                   ["Category", "Budgeted", "Actual", "Variance"],
+                   ["Row 1 A", "Value 1", "Value 2", "Value 3"]
+                 ]
+               }
+             }
+           }
+         }
+         
+         Instruction: Only include the "spreadsheet" key when compiling an xlsx file or sheet tables. For PDF and DOCX, use the standard sections formatting. Always provide both the human-readable markdown response and this structured JSON-data block so the user gets both an on-screen preview and a functional, professional physical file download!`;
+    
+    if (type === "idea") systemInstruction += " You are an expert content strategist and creative thinker. Help users brainstorm unique and impactful ideas.";
+    else if (type === "script") systemInstruction += " You are a professional scriptwriter for video, stage, and screen. Write engaging and well-structured scripts.";
+    else if (type === "hashtag") systemInstruction += " You are a social media growth expert. Generate trending and relevant hashtags.";
+
+    if (isDocRequest) {
+      systemInstruction += `\n\nCRITICAL DIRECTIVE: The user is explicitly asking for a CV, resume, document, spreadsheet, or physical file (such as a PDF, Word .docx, or Excel .xlsx). 
+Because you are integrated with our custom client-side file compiler, YOU ABSOLUTELY CAN AND MUST GENERATE AND EMIT THIS FILE!
+- NEVER refuse, say you cannot write/create/compile files, or suggest standard tools like Word/Google Docs.
+- Say "Sure, I have generated the file" and display a beautiful preview formatting for it in markdown.
+- At the absolute end of your response, write exactly one code block with label \`\`\`json-file-data ... \`\`\` containing the full correct JSON configuration (with fileType, fileName, title, sections, etc.) as detailed in rule #7 above. Our compiler will automatically detect this and render actual [Download PDF], [Download Word], and [Download Excel] buttons so the user can download the real physical file!`;
+    }
 
     const openAiMessages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [
       { role: "system", content: systemInstruction },
@@ -452,6 +529,21 @@ export default async function handler(req: any, res: any) {
         return { role: m.role, content: m.content || "" };
       })
     ];
+
+    // Deep analysis of general document intent to overcome any pre-trained LLM refusal tendencies
+    if (isDocRequest) {
+      console.log(`[API Generate] Activating maximum document compiler reinforcement for: "${lastMessageContent.substring(0, 40)}..."`);
+      openAiMessages.push({
+        role: "system",
+        content: `CRITICAL ACTION REQUIRED:
+The user wants a CV, resume, document, spreadsheet, or physical file.
+Because you are integrated with our custom frontend compiler, YOU CAN and MUST create the file!
+- Do NOT apologize, claim that you cannot generate files, or tell the user to use visual processors.
+- Provide a clean, elegant preview in your markdown output.
+- Print a single, valid, correctly formulated \`\`\`json-file-data ... \`\`\` code block at the absolute end of your response. This block is parsed by the custom UI compiler to compile a download button for the user automatically.
+- Do NOT wrap this block inside another block, and don't omit it.`
+      });
+    }
 
     // --- Grounding Logic ---
     if (isUltra && (searchRequired || model === "trelvix-ultra")) {
