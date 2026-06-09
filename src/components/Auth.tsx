@@ -1,7 +1,12 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { 
   Eye, 
-  EyeOff 
+  EyeOff,
+  Copy,
+  ExternalLink,
+  AlertTriangle,
+  Check,
+  X
 } from 'lucide-react';
 import { motion } from 'motion/react';
 import { clsx, type ClassValue } from 'clsx';
@@ -20,6 +25,30 @@ export const Auth = ({ onAuthSuccess, isDarkMode }: { onAuthSuccess: () => void;
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
+
+  // Fallback states for Android APK WebViews / Disallowed Useragent protection
+  const [googleAuthUrl, setGoogleAuthUrl] = useState('');
+  const [showFallback, setShowFallback] = useState(false);
+  const [copied, setCopied] = useState(false);
+
+  // Package configuration for automated App return
+  const [customPackageId, setCustomPackageId] = useState(() => {
+    return typeof localStorage !== 'undefined' 
+      ? localStorage.getItem('trelvix_apk_package_id') || 'io.kodular.emmanuelnwaije21.trelvix_ai'
+      : 'io.kodular.emmanuelnwaije21.trelvix_ai';
+  });
+
+  // Detect Android WebView/WebViewer or APK runtime environments
+  const isWebView = typeof window !== 'undefined' && (
+    /wv|WebView|InAppBrowser|Android.*Version\/[0-9.]+/i.test(navigator.userAgent) ||
+    (window as any).Android !== undefined ||
+    window.location.search.includes('apk=true') ||
+    window.location.search.includes('webview=true')
+  );
+
+  // Detect if current session is loading in external Chrome browser as OAuth Redirect page
+  const hasAccessToken = typeof window !== 'undefined' && window.location.hash.includes('access_token=');
+  const isChromeCallback = !isWebView && hasAccessToken;
 
   const handleAuth = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -42,19 +71,239 @@ export const Auth = ({ onAuthSuccess, isDarkMode }: { onAuthSuccess: () => void;
     }
   };
 
+  const handleCopyLink = () => {
+    if (googleAuthUrl) {
+      navigator.clipboard.writeText(googleAuthUrl);
+      setCopied(true);
+      toast.success('Google Sign-In link copied!');
+      setTimeout(() => setCopied(false), 2500);
+    }
+  };
+
   const handleGoogleSignIn = async () => {
     try {
-      const { error } = await supabase.auth.signInWithOAuth({
+      setLoading(true);
+      // Fetch the explicit OAuth Redirection URL from Supabase safely without executing redirect in browser
+      const { data, error } = await supabase.auth.signInWithOAuth({
         provider: 'google',
         options: {
-          redirectTo: window.location.origin
+          redirectTo: window.location.origin,
+          skipBrowserRedirect: true
         }
       });
       if (error) throw error;
+
+      if (data?.url) {
+        setGoogleAuthUrl(data.url);
+        if (isWebView) {
+          // If in an APK WebViewer context, render the Chrome external browser bypass helper
+          setShowFallback(true);
+        } else {
+          // Normal desktop or mobile web browser: redirect directly
+          window.location.href = data.url;
+        }
+      }
     } catch (error: any) {
       toast.error(error.message);
+    } finally {
+      setLoading(false);
     }
   };
+
+  // Auto-trigger secure Chrome launch for seamless experience inside Android App!
+  useEffect(() => {
+    if (showFallback && googleAuthUrl) {
+      const cleanUrl = googleAuthUrl.replace(/^https?:\/\//, '');
+      const chromeIntentUrl = `intent://${cleanUrl}#Intent;scheme=https;package=com.android.chrome;end`;
+      const genericIntentUrl = `intent://${cleanUrl}#Intent;scheme=https;end`;
+
+      toast.info('Auto-opening Google Chrome...');
+      
+      // Attempt Chrome Intent first to bypass WebView sandboxing completely
+      try {
+        window.location.href = chromeIntentUrl;
+      } catch (e) {
+        try {
+          window.location.href = genericIntentUrl;
+        } catch (e2) {
+          window.open(googleAuthUrl, '_system');
+        }
+      }
+
+      // Automatically fallback to standard system browser handler if needed
+      const t = setTimeout(() => {
+        window.open(googleAuthUrl, '_blank');
+      }, 600);
+
+      return () => clearTimeout(t);
+    }
+  }, [showFallback, googleAuthUrl]);
+
+  const handleLaunchApkSync = () => {
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('trelvix_apk_package_id', customPackageId);
+      
+      // Extract active auth token hash to sync session directly inside the APK WebViewer
+      const hash = window.location.hash;
+      const targetUrl = window.location.origin + '/' + hash;
+      const cleanTargetUrl = targetUrl.replace(/^https?:\/\//, '');
+      
+      // Intent URL forces Google Chrome to pass auth session directly inside the specific APK WebViewer
+      const intentUrl = `intent://${cleanTargetUrl}#Intent;scheme=https;package=${customPackageId};end`;
+      
+      toast.success('Syncing session back to Trelvix APK...');
+      
+      try {
+        window.location.href = intentUrl;
+      } catch (e) {
+        window.open(targetUrl, '_system');
+      }
+    }
+  };
+
+  // Automated hands-free synchronization once Chrome secures the login
+  useEffect(() => {
+    if (isChromeCallback) {
+      const timer = setTimeout(() => {
+        handleLaunchApkSync();
+      }, 1000);
+      return () => clearTimeout(timer);
+    }
+  }, [isChromeCallback]);
+
+  if (isChromeCallback) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-zinc-950 p-6 relative overflow-hidden">
+        <div className="absolute top-0 left-0 w-full h-full opacity-25 pointer-events-none">
+          <div className="absolute top-[-10%] left-[-10%] w-[50%] h-[50%] bg-emerald-500 rounded-full blur-[140px]" />
+          <div className="absolute bottom-[-10%] right-[-10%] w-[50%] h-[50%] bg-blue-500 rounded-full blur-[140px]" />
+        </div>
+
+        <motion.div 
+          initial={{ opacity: 0, scale: 0.95 }}
+          animate={{ opacity: 1, scale: 1 }}
+          className="w-full max-w-md bg-zinc-900 border border-zinc-850 rounded-[2.5rem] p-10 shadow-2xl relative z-10 flex flex-col text-center"
+        >
+          <div className="w-20 h-20 rounded-3xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 flex items-center justify-center mx-auto mb-6 shadow-glow">
+            <Check className="w-10 h-10 animate-bounce" />
+          </div>
+
+          <h2 className="text-2xl font-black text-white mb-3">Google Login Secured</h2>
+          <p className="text-zinc-400 text-sm mb-6 leading-relaxed">
+            Your login has been verified. We are automatically launching Trelvix AI to sync your workspace profile.
+          </p>
+
+          <div className="w-full bg-zinc-950/60 border border-zinc-800 rounded-2xl p-5 mb-6 text-left">
+            <label className="block text-[10px] uppercase font-black text-zinc-500 tracking-wider mb-2">
+              Android APK Package ID (Configurable)
+            </label>
+            <input 
+              type="text"
+              value={customPackageId}
+              onChange={(e) => setCustomPackageId(e.target.value)}
+              className="w-full bg-zinc-900 border border-zinc-805 text-white rounded-xl px-3 py-2 text-xs font-mono focus:ring-1 focus:ring-emerald-500 outline-none"
+              placeholder="e.g. io.kodular.emmanuelnwaije21.trelvix_ai"
+            />
+            <p className="text-[10px] text-zinc-500 mt-1.5 leading-normal">
+              Change this if your custom built Kodular App is using a different package scheme.
+            </p>
+          </div>
+
+          <div className="space-y-3">
+            <button
+              type="button"
+              onClick={handleLaunchApkSync}
+              className="w-full py-4 bg-emerald-500 text-white rounded-xl font-bold text-sm hover:bg-emerald-400 transition-all shadow-lg active:scale-[0.98] flex items-center justify-center gap-2 cursor-pointer"
+            >
+              <ExternalLink className="w-5 h-5" />
+              Sync & Launch Trelvix App
+            </button>
+
+            <p className="text-[11px] text-zinc-500 animate-pulse">
+              Launching automatically in 1 second...
+            </p>
+          </div>
+        </motion.div>
+      </div>
+    );
+  }
+
+  if (showFallback) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-zinc-950 p-4 relative overflow-hidden">
+        <div className="absolute top-0 left-0 w-full h-full opacity-20 pointer-events-none">
+          <div className="absolute top-[-10%] left-[-10%] w-[40%] h-[40%] bg-emerald-500 rounded-full blur-[120px]" />
+          <div className="absolute bottom-[-10%] right-[-10%] w-[40%] h-[40%] bg-blue-500 rounded-full blur-[120px]" />
+        </div>
+
+        <motion.div 
+          initial={{ opacity: 0, scale: 0.95 }}
+          animate={{ opacity: 1, scale: 1 }}
+          className="w-full max-w-md bg-zinc-900 border border-zinc-800 rounded-[2.5rem] p-10 md:p-12 shadow-2xl relative z-10 flex flex-col items-center text-center"
+        >
+          <div className="w-16 h-16 rounded-2xl bg-emerald-500/10 flex items-center justify-center border border-emerald-500/20 mb-6 shadow-inner animate-pulse">
+            <TrelvixLogo className="w-10 h-10 text-emerald-400" />
+          </div>
+
+          <h2 className="text-xl font-black text-white mb-2">Opening Google Chrome...</h2>
+          
+          <p className="text-sm text-zinc-400 leading-relaxed mb-6 max-w-[280px]">
+            To comply with Google safety guidelines, Sign-In runs in external Chrome. You will be redirected back automatically.
+          </p>
+
+          <div className="w-full space-y-3">
+            <a
+              href={googleAuthUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              onClick={() => {
+                toast.success('Launching secure system browser...');
+              }}
+              className="w-full py-4 bg-emerald-500 text-white rounded-xl font-bold text-sm hover:bg-emerald-450 transition-all active:scale-[0.98] flex items-center justify-center gap-2 shadow-lg cursor-pointer"
+            >
+              <ExternalLink className="w-5 h-5 text-white" />
+              Log In inside Chrome
+            </a>
+
+            <button
+              onClick={() => {
+                const cleanUrl = googleAuthUrl.replace(/^https?:\/\//, '');
+                const chromeIntentUrl = `intent://${cleanUrl}#Intent;scheme=https;package=com.android.chrome;end`;
+                window.location.href = chromeIntentUrl;
+              }}
+              className="w-full py-3 bg-zinc-800 text-zinc-300 rounded-xl font-medium text-xs hover:bg-zinc-750 transition-all border border-zinc-700/50 cursor-pointer"
+            >
+              Force Launch Chrome Intent
+            </button>
+
+            <button
+              type="button"
+              onClick={() => {
+                toast.info('Enabling manual credentials fallback');
+                setShowFallback(false);
+              }}
+              className="w-full py-2.5 text-xs font-semibold text-zinc-500 hover:text-zinc-300 transition-colors"
+            >
+              Cancel & Use Email Login
+            </button>
+          </div>
+          
+          <div className="border-t border-zinc-800/60 mt-6 pt-5 w-full">
+            <button
+              onClick={() => {
+                navigator.clipboard.writeText(googleAuthUrl);
+                toast.success('Manual link copied!');
+              }}
+              className="inline-flex items-center gap-1.5 text-[10px] text-zinc-500 hover:text-zinc-300 transition-colors font-medium decoration-dotted underline cursor-pointer"
+            >
+              <Copy className="w-3 h-3" />
+              Stuck? Copy manual redirect URL
+            </button>
+          </div>
+        </motion.div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-zinc-950 p-4 relative overflow-hidden">
@@ -80,7 +329,7 @@ export const Auth = ({ onAuthSuccess, isDarkMode }: { onAuthSuccess: () => void;
           <button 
             type="button"
             onClick={handleGoogleSignIn}
-            className="w-full flex items-center justify-center gap-3 bg-white text-zinc-900 py-3.5 rounded-xl font-bold text-sm hover:bg-zinc-100 transition-all active:scale-[0.98] shadow-lg"
+            className="w-full flex items-center justify-center gap-3 bg-white text-zinc-900 py-3.5 rounded-xl font-bold text-sm hover:bg-zinc-100 transition-all active:scale-[0.98] shadow-lg cursor-pointer"
           >
             <svg className="w-5 h-5" viewBox="0 0 24 24">
               <path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" fill="#4285F4"/>
@@ -90,8 +339,36 @@ export const Auth = ({ onAuthSuccess, isDarkMode }: { onAuthSuccess: () => void;
             </svg>
             Continue with Google
           </button>
+
+          {/* Quick link to trigger Chrome fallback manually if users run into Webview obstacles */}
+          <div className="text-center pt-1.5">
+            <button
+              type="button"
+              onClick={async () => {
+                try {
+                  const { data, error } = await supabase.auth.signInWithOAuth({
+                    provider: 'google',
+                    options: {
+                      redirectTo: window.location.origin,
+                      skipBrowserRedirect: true
+                    }
+                  });
+                  if (error) throw error;
+                  if (data?.url) {
+                    setGoogleAuthUrl(data.url);
+                    setShowFallback(true);
+                  }
+                } catch (e: any) {
+                  toast.error(e.message);
+                }
+              }}
+              className="text-[11px] font-medium text-zinc-500 hover:text-emerald-400 transition-colors underline decoration-dotted underline-offset-4 cursor-pointer"
+            >
+              Google Sign-In Issue on Android APK? Tap here.
+            </button>
+          </div>
           
-          <div className="flex items-center gap-4 py-3">
+          <div className="flex items-center gap-4 py-2">
             <div className="flex-1 h-[1px] bg-zinc-800" />
             <span className="text-[10px] font-bold text-zinc-600 uppercase tracking-widest whitespace-nowrap">or use email</span>
             <div className="flex-1 h-[1px] bg-zinc-800" />

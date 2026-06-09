@@ -2564,14 +2564,19 @@ export default function App() {
                             initial={{ opacity: 0, scale: 0.8, width: 0 }}
                             animate={{ opacity: 1, scale: 1, width: 'auto' }}
                             exit={{ opacity: 0, scale: 0.8, width: 0 }}
-                            onClick={toggleListening}
+                            onClick={() => {
+                              setShowVoiceMode(true);
+                              if (!isListening) {
+                                toggleListening();
+                              }
+                            }}
                             className={cn(
                               "p-3 md:p-3.5 transition-all rounded-full overflow-hidden flex-shrink-0",
                               isListening 
                                 ? "bg-emerald-500/10 text-emerald-500 animate-pulse ring-2 ring-emerald-500/20" 
                                 : "text-zinc-400 dark:text-zinc-300 hover:text-zinc-900 dark:hover:text-white hover:bg-white dark:hover:bg-zinc-800"
                             )}
-                            title="Hands-free typing"
+                            title="Open Voice Mode"
                           >
                             <Mic className={cn("w-4 h-4 md:w-5 md:h-5", isListening && "fill-emerald-500/20")} />
                           </motion.button>
