@@ -2011,6 +2011,15 @@ export default function App() {
             onComplete={() => setIsSplashing(false)} 
           />
         )}
+        {isSidebarOpen && (
+          <motion.div 
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            onClick={() => setIsSidebarOpen(false)}
+            className="fixed inset-0 z-30 bg-black/40 backdrop-blur-[2px] lg:hidden cursor-pointer"
+          />
+        )}
       </AnimatePresence>
       <Sidebar 
         isOpen={isSidebarOpen}

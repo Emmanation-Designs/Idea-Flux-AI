@@ -239,16 +239,18 @@ export const Settings = (props: {
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
       exit={{ opacity: 0 }}
-      className="fixed inset-0 z-50 flex items-center justify-center p-0 md:p-6 bg-black/20 backdrop-blur-sm"
+      onClick={onClose}
+      className="fixed inset-0 z-50 flex items-center justify-center p-0 md:p-6 bg-black/40 backdrop-blur-sm cursor-pointer"
     >
       <motion.div 
         initial={{ scale: 0.95, opacity: 0, y: 20 }}
         animate={{ scale: 1, opacity: 1, y: 0 }}
-        className="w-full h-full md:h-[680px] md:max-w-4xl bg-white dark:bg-zinc-950 md:rounded-3xl shadow-2xl border border-zinc-200 dark:border-zinc-800 flex overflow-hidden"
+        onClick={(e) => e.stopPropagation()}
+        className="w-full h-full md:h-[680px] md:max-w-4xl bg-white dark:bg-zinc-950 md:rounded-3xl shadow-2xl border border-zinc-200 dark:border-zinc-800 flex overflow-hidden cursor-default"
       >
         {/* Sidebar */}
         <div className={cn(
-          "flex-col w-64 border-r border-zinc-200 dark:border-zinc-800 p-6 shrink-0 bg-white dark:bg-zinc-950 h-full",
+          "flex-col w-64 border-r border-zinc-200 dark:border-zinc-800 p-6 shrink-0 bg-white dark:bg-zinc-950 h-full overflow-y-auto",
           activeSection !== null ? "hidden md:flex" : "flex w-full md:w-64"
         )}>
           <div className="flex items-center justify-between mb-8 px-2">
@@ -318,29 +320,35 @@ export const Settings = (props: {
           <div className="flex-1 overflow-y-auto overflow-x-hidden">
             <div className="max-w-2xl mx-auto p-6 md:p-10 space-y-10">
               {activeSection === 'account' && (
-                <div className="space-y-12 pb-12">
-                  <div className="flex flex-col md:flex-row items-center md:items-start gap-10">
-                    <div className="relative group shrink-0">
-                      <div className="w-32 h-32 md:w-36 md:h-36 rounded-2xl bg-zinc-50 dark:bg-zinc-900 flex items-center justify-center text-4xl font-bold border-4 border-white dark:border-zinc-950 overflow-hidden shadow-xl relative z-10 transition-all duration-300 group-hover:shadow-emerald-500/10">
+                <div className="space-y-8 pb-12">
+                  <div className="border-b border-zinc-100 dark:border-zinc-900 pb-5">
+                    <h3 className="text-base font-bold text-zinc-900 dark:text-zinc-100">Account Credentials</h3>
+                    <p className="text-xs text-zinc-500 mt-1">Update your workspace profile information and visibility settings.</p>
+                  </div>
+
+                  {/* Profile Identification */}
+                  <div className="flex flex-col sm:flex-row items-center gap-6 p-6 bg-zinc-50/50 dark:bg-zinc-900/10 rounded-2xl border border-zinc-100 dark:border-zinc-900/50">
+                    <div className="relative shrink-0">
+                      <div className="w-20 h-20 rounded-full bg-zinc-100 dark:bg-zinc-900 flex items-center justify-center text-xl font-bold border border-zinc-200 dark:border-zinc-805 overflow-hidden relative z-10">
                         {localAvatarPreview || profile?.avatar_url ? (
                           <img src={localAvatarPreview || profile?.avatar_url || ''} alt="Profile" className="w-full h-full object-cover" />
                         ) : (
-                          <span className="text-zinc-200 dark:text-zinc-800">
+                          <span className="text-zinc-400 dark:text-zinc-600 font-semibold select-none">
                             {profile?.name?.charAt(0).toUpperCase() || profile?.email?.charAt(0).toUpperCase()}
                           </span>
                         )}
                         {isUploading && (
                           <div className="absolute inset-0 bg-black/60 flex items-center justify-center z-20 backdrop-blur-sm">
-                            <div className="w-8 h-8 border-3 border-emerald-500 border-t-transparent rounded-full animate-spin" />
+                            <div className="w-4 h-4 border-2 border-emerald-500 border-t-transparent rounded-full animate-spin" />
                           </div>
                         )}
                       </div>
                       <button 
                         onClick={() => fileInputRef.current?.click()}
-                        className="absolute -bottom-2 -right-2 w-11 h-11 rounded-xl bg-zinc-900 border-4 border-white dark:border-zinc-950 text-white flex items-center justify-center shadow-lg hover:bg-emerald-600 transition-all active:scale-95 z-20"
-                        title="Upload photo"
+                        className="absolute -bottom-1 -right-1 w-8 h-8 rounded-full bg-zinc-950 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 text-zinc-300 hover:text-white flex items-center justify-center shadow-lg hover:bg-emerald-500 dark:hover:bg-emerald-500 transition-all active:scale-95 z-20 cursor-pointer"
+                        title="Upload Avatar"
                       >
-                        <Camera className="w-5 h-5" />
+                        <Camera className="w-4 h-4" />
                       </button>
                       <input 
                         type="file" 
@@ -350,94 +358,81 @@ export const Settings = (props: {
                         onChange={handleFileChange}
                       />
                     </div>
-                    
-                    <div className="flex-1 text-center md:text-left space-y-6 w-full pt-1">
-                      <div className="space-y-2">
-                        <label className="text-[10px] text-zinc-400 font-bold uppercase tracking-[0.2em] block pl-1">Personal Profile</label>
-                        {isEditingName ? (
-                          <div className="flex flex-col sm:flex-row items-center gap-3">
-                            <input 
-                              type="text"
-                              value={newName}
-                              onChange={e => setNewName(e.target.value)}
-                              className="w-full flex-1 bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-xl px-5 py-3.5 text-sm font-bold focus:ring-4 focus:ring-emerald-500/10 outline-none shadow-sm transition-all"
-                              placeholder="Enter your name"
-                              autoFocus
-                              onKeyDown={(e) => e.key === 'Enter' && handleUpdateName()}
-                            />
-                            <div className="flex items-center gap-2 w-full sm:w-auto">
-                              <button 
-                                onClick={handleUpdateName}
-                                className="flex-1 sm:flex-none px-6 py-3.5 bg-emerald-500 text-white rounded-xl font-bold text-sm hover:bg-emerald-600 transition-all shadow-lg shadow-emerald-500/20 active:scale-95"
-                              >
-                                Save
-                              </button>
-                              <button 
-                                onClick={() => {
-                                  setIsEditingName(false);
-                                  setNewName(profile?.name || profile?.email?.split('@')[0] || '');
-                                }}
-                                className="flex-1 sm:flex-none p-3.5 bg-zinc-100 dark:bg-zinc-800 text-zinc-500 hover:text-red-500 rounded-xl transition-all active:scale-95"
-                              >
-                                <X className="w-5 h-5" />
-                              </button>
-                            </div>
-                          </div>
-                        ) : (
-                          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 p-6 bg-white dark:bg-zinc-900 border border-zinc-100 dark:border-zinc-800/50 rounded-2xl group hover:border-emerald-500/20 transition-all shadow-sm">
-                            <div className="flex flex-col text-left">
-                              <span className="text-2xl font-black tracking-tight text-zinc-900 dark:text-zinc-100">
-                                {profile?.name || profile?.email?.split('@')[0]}
-                              </span>
-                              <span className="text-xs text-zinc-400 font-medium tracking-wide mt-0.5">
-                                {profile?.email}
-                              </span>
-                            </div>
-                            <button 
-                              onClick={() => setIsEditingName(true)}
-                              className="px-5 py-2.5 text-[11px] font-black uppercase tracking-widest text-zinc-400 hover:text-emerald-500 bg-zinc-50 dark:bg-zinc-800/50 hover:bg-emerald-500/5 rounded-xl transition-all border border-zinc-100 dark:border-zinc-800 flex items-center justify-center gap-2"
-                            >
-                              <Edit2 className="w-3.5 h-3.5" />
-                              Edit Profile
-                            </button>
-                          </div>
-                        )}
+
+                    <div className="text-center sm:text-left space-y-1">
+                      <h4 className="text-sm font-bold text-zinc-900 dark:text-zinc-100">
+                        {profile?.name || profile?.email?.split('@')[0]}
+                      </h4>
+                      <p className="text-xs text-zinc-400 font-medium">{profile?.email}</p>
+                      <div className="inline-flex items-center gap-1.5 px-2 py-0.5 mt-2 bg-emerald-500/10 border border-emerald-500/20 rounded-md text-[9px] font-black tracking-widest text-emerald-600 dark:text-emerald-400 uppercase select-none">
+                        {profile?.plan || 'Free'} Plan Active
                       </div>
                     </div>
                   </div>
 
-                  <div className="space-y-6">
-                    <div className="flex items-center gap-3 px-2">
-                      <div className="w-1 h-4 bg-emerald-500 rounded-full" />
-                      <h4 className="text-[10px] font-bold text-zinc-400 uppercase tracking-[0.2em]">Privacy</h4>
+                  {/* Settings fields */}
+                  <div className="space-y-4">
+                    <div className="space-y-1.5">
+                      <label className="text-[10px] text-zinc-400 dark:text-zinc-500 font-bold uppercase tracking-wider block pl-1">Display Name</label>
+                      <div className="relative flex items-center">
+                        <input 
+                          type="text"
+                          value={newName}
+                          onChange={e => setNewName(e.target.value)}
+                          className="w-full bg-white dark:bg-zinc-900/30 border border-zinc-200 dark:border-zinc-800 rounded-xl pl-4 pr-24 py-3 text-xs font-semibold focus:ring-1 focus:ring-emerald-500/30 focus:border-emerald-500/40 outline-none transition-all dark:text-white"
+                          placeholder="Your profile name"
+                        />
+                        {newName !== (profile?.name || profile?.email?.split('@')[0] || '') && (
+                          <button
+                            onClick={handleUpdateName}
+                            className="absolute right-2 px-3 py-1.5 bg-zinc-950 dark:bg-zinc-100 hover:bg-zinc-900 dark:hover:bg-white text-white dark:text-zinc-950 text-[10px] font-black uppercase tracking-widest rounded-lg transition-all cursor-pointer"
+                          >
+                            Update
+                          </button>
+                        )}
+                      </div>
                     </div>
-                    <div className="grid grid-cols-1 gap-4">
-                      <div className="p-6 rounded-2xl border border-zinc-100 dark:border-zinc-800/50 bg-white dark:bg-zinc-900 flex flex-col sm:flex-row sm:items-center justify-between gap-4 transition-all">
-                        <div className="flex items-center gap-5">
-                          <div className="w-12 h-12 rounded-xl bg-zinc-50 dark:bg-zinc-900 flex items-center justify-center border border-zinc-100 dark:border-zinc-700/50">
-                            <ShieldCheck className="w-6 h-6 text-emerald-500" />
-                          </div>
-                          <div className="text-left">
-                            <div className="text-sm font-bold text-zinc-900 dark:text-zinc-100">Profile Authentication</div>
-                            <div className="text-[11px] text-zinc-500 mt-0.5">Your account information is secured and private.</div>
-                          </div>
-                        </div>
-                      </div>
 
-                      <div className="p-6 rounded-2xl border border-zinc-100 dark:border-zinc-800/50 bg-white dark:bg-zinc-900 flex flex-col sm:flex-row sm:items-center justify-between gap-4 transition-all">
-                        <div className="flex items-center gap-5">
-                          <div className="w-12 h-12 rounded-xl bg-red-50 dark:bg-red-500/5 flex items-center justify-center border border-red-100 dark:border-red-500/10">
-                            <Trash2 className="w-6 h-6 text-red-500" />
-                          </div>
-                          <div className="text-left">
-                            <div className="text-sm font-bold text-red-500">Deactivate Personal Workspace</div>
-                            <div className="text-[11px] text-red-400 text-opacity-60 mt-0.5">This will permanently remove all your chat history and data.</div>
-                          </div>
-                        </div>
-                        <button className="px-5 py-2.5 text-[11px] font-black uppercase tracking-widest text-red-400 hover:text-white hover:bg-red-500 transition-all border border-red-100 dark:border-red-500/20 rounded-xl">
-                          Terminate Account
-                        </button>
+                    <div className="space-y-1.5">
+                      <label className="text-[10px] text-zinc-400 dark:text-zinc-500 font-bold uppercase tracking-wider block pl-1">Email Address</label>
+                      <input 
+                        type="text"
+                        value={profile?.email || ''}
+                        disabled
+                        className="w-full bg-zinc-100/60 dark:bg-zinc-905/10 border border-zinc-200 dark:border-zinc-900 rounded-xl px-4 py-3 text-xs font-semibold text-zinc-400 dark:text-zinc-650 cursor-not-allowed outline-none select-all"
+                      />
+                      <p className="text-[9px] text-zinc-400 dark:text-zinc-600 pl-1">Primary email verification completed. Contact support to change address.</p>
+                    </div>
+                  </div>
+
+                  {/* Danger Zone */}
+                  <div className="pt-6 border-t border-zinc-100 dark:border-zinc-900 space-y-4">
+                    <div>
+                      <h4 className="text-xs font-black text-red-500 uppercase tracking-widest">Danger Zone</h4>
+                      <p className="text-[10px] text-zinc-400 dark:text-zinc-500 leading-relaxed">Permanent, destructive, and non-reversible changes regarding your account data.</p>
+                    </div>
+
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 p-4 rounded-xl border border-red-500/10 dark:border-red-500/5 bg-red-50/5 dark:bg-red-950/5">
+                      <div className="text-left space-y-0.5">
+                        <div className="text-xs font-bold text-zinc-800 dark:text-zinc-200">Deactivate Personal Workspace</div>
+                        <p className="text-[10px] text-zinc-400 dark:text-zinc-500 max-w-sm leading-normal">Purges all conversation histories, active voice caches, generated visuals, and workspace custom parameters.</p>
                       </div>
+                      <button 
+                        onClick={() => {
+                          const confirmDelete = window.confirm("Are you sure you want to permanently deactivate and purge your Trelvix Workspace? This action is absolute and cannot be undone.");
+                          if (confirmDelete) {
+                            toast.loading("Purging personal datastores...");
+                            setTimeout(() => {
+                              toast.dismiss();
+                              toast.success("Workspace purged successfully. Session closing.");
+                              onClose();
+                            }, 1500);
+                          }
+                        }}
+                        className="px-4.5 py-2 bg-red-500/5 hover:bg-red-600 border border-red-500/20 hover:border-red-600/50 text-red-500 hover:text-white transition-all font-black uppercase text-[9px] tracking-wider rounded-lg shrink-0 cursor-pointer"
+                      >
+                        Terminate Account
+                      </button>
                     </div>
                   </div>
                 </div>
