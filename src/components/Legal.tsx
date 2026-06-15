@@ -23,7 +23,7 @@ export const LegalModal = ({
             <p className="font-medium">Owned by: Ingenium Virtual Assistant Limited</p>
             <p className="opacity-80">Registered in the United Kingdom</p>
             <p className="opacity-80">Focused on creative ideas and virtual services</p>
-            <p>Website: <a href="https://www.ingeniumvirtualassistant.com" target="_blank" rel="noopener noreferrer" className="text-zinc-900 dark:text-white underline font-medium">www.ingeniumvirtualassistant.com</a></p>
+            <p>Website: <a href="https://www.ingeniumva.com" target="_blank" rel="noopener noreferrer" className="text-zinc-900 dark:text-white underline font-medium">www.ingeniumva.com</a></p>
           </div>
         </div>
       )

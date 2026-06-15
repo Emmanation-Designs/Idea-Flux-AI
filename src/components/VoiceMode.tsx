@@ -147,21 +147,24 @@ export const VoiceMode = ({
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}
-          className="fixed inset-0 z-[100] bg-[#020203] text-white flex flex-col items-center justify-between overflow-hidden font-sans select-none"
+          className="fixed inset-0 z-[100] bg-black text-white flex flex-col items-center justify-between overflow-hidden font-sans select-none"
         >
-          {/* Hardware-Accelerated Ambient Glowing Backdrops (Aqua/Teal Accents) */}
+          {/* Hardware-Accelerated Ambient Glowing Backdrops (Emerald green glow at bottom, soft space core) */}
           <div className="absolute inset-0 z-0 pointer-events-none">
-            {/* Dynamic Center Aura Gradient */}
-            <motion.div 
+            {/* Soft Ambient Green Rising Glow from the bottom edge */}
+            <motion.div
               animate={{
-                scale: state === 'speaking' ? [1, 1.15, 1] : state === 'thinking' ? [1.1, 0.9, 1.1] : 1,
-                opacity: state === 'speaking' ? 0.45 : state === 'listening' ? 0.35 : state === 'thinking' ? 0.4 : 0.25,
+                opacity: state === 'speaking' ? 0.65 : state === 'listening' ? 0.5 : state === 'thinking' ? 0.55 : 0.4,
               }}
-              transition={{ duration: 4, repeat: Infinity, ease: "easeInOut" }}
-              className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[85vw] max-w-lg h-[80%] bg-[radial-gradient(circle_at_center,rgba(6,182,212,0.18)_0%,rgba(16,185,129,0.06)_45%,transparent_70%)] rounded-full transition-all duration-1000 blur-[60px]"
+              transition={{ duration: 3, repeat: Infinity, ease: "easeInOut" }}
+              className="absolute bottom-0 inset-x-0 h-[60%] bg-[radial-gradient(ellipse_at_bottom,rgba(16,185,129,0.22)_0%,rgba(4,120,87,0.06)_50%,transparent_85%)] pointer-events-none filter blur-[35px]"
             />
-            {/* Subtle light speed floating dust overlay */}
-            <div className="absolute inset-0 opacity-[0.02] bg-[radial-gradient(#ffffff_1px,transparent_1px)] [background-size:16px_16px] pointer-events-none" />
+            
+            {/* Center Core Ambient soft green light */}
+            <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[90vw] max-w-2xl h-[50vw] bg-[radial-gradient(circle_at_center,rgba(16,185,129,0.06)_0%,transparent_70%)] pointer-events-none filter blur-[50px]" />
+
+            {/* Subtle starry background texture */}
+            <div className="absolute inset-0 opacity-[0.015] bg-[radial-gradient(#ffffff_1px,transparent_1px)] [background-size:20px_20px] pointer-events-none" />
           </div>
 
           {/* Top Bar Navigation (Logo & Actions) */}
@@ -172,10 +175,10 @@ export const VoiceMode = ({
                 <Zap className="w-5 h-5 text-emerald-400 fill-emerald-500/20" strokeWidth={1.8} />
               </div>
               <div className="flex flex-col text-left">
-                <span className="text-xs uppercase font-black tracking-[0.25em] bg-gradient-to-r from-emerald-400 to-teal-400 bg-clip-text text-transparent">
+                <span className="text-xs uppercase font-black tracking-[0.25em] bg-gradient-to-r from-emerald-400 to-teal-400 bg-clip-text text-transparent block">
                   TRELVIX AI
                 </span>
-                <span className="text-[8px] font-bold text-zinc-500 tracking-wider">
+                <span className="text-[8px] font-bold text-zinc-500 tracking-wider block">
                   SECURE VOICE CORE
                 </span>
               </div>
@@ -186,16 +189,16 @@ export const VoiceMode = ({
               {/* Voice select slider trigger */}
               <button
                 onClick={() => setShowVoiceDrawer(true)}
-                className="flex items-center gap-2 px-4 py-2 bg-zinc-900/60 hover:bg-zinc-800 text-zinc-300 hover:text-white transition-all rounded-full border border-zinc-800/80 hover:border-zinc-700 font-bold text-xs cursor-pointer shadow-md"
+                className="flex items-center gap-2 px-4 py-2 bg-zinc-900/60 hover:bg-zinc-800 text-zinc-300 hover:text-white transition-all rounded-full border border-zinc-850 hover:border-zinc-700 font-bold text-xs cursor-pointer shadow-md"
               >
-                <Sliders className="w-3.5 h-3.5 text-teal-400" />
+                <Sliders className="w-3.5 h-3.5 text-emerald-400" />
                 <span className="hidden sm:inline font-black uppercase tracking-wider text-[10px]">Voices</span>
-                <span className="px-1.5 py-0.5 bg-teal-500/10 border border-teal-500/20 text-teal-400 text-[8px] rounded font-black uppercase tracking-widest">{voiceOption}</span>
+                <span className="px-1.5 py-0.5 bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 text-[8px] rounded font-black uppercase tracking-widest">{voiceOption}</span>
               </button>
 
               <button 
                 onClick={onClose} 
-                className="p-2.5 text-zinc-400 hover:text-white transition-all bg-zinc-900/60 hover:bg-zinc-800 rounded-xl border border-zinc-800/80 cursor-pointer shadow-md"
+                className="p-2.5 text-zinc-450 hover:text-white transition-all bg-zinc-900/60 hover:bg-zinc-800 rounded-xl border border-zinc-850 cursor-pointer shadow-md"
                 title="Minimize Voice Mode"
               >
                 <X className="w-5 h-5" />
@@ -205,159 +208,116 @@ export const VoiceMode = ({
 
           {/* Central Immersive Stage */}
           <main className="relative z-10 flex-1 flex flex-col items-center justify-center w-full max-w-2xl px-6">
-            <div className="relative w-full h-80 flex items-center justify-center">
+            <div className="relative w-full flex flex-col items-center justify-center gap-8">
               
-              {/* Master Multi-Colored Glowing Morphing Fluid Orb (Gemini Live-inspired) */}
-              <div className="absolute flex items-center justify-center pointer-events-none">
-                
-                {/* 1. Concentric Radial Sound Ripples */}
-                <AnimatePresence>
-                  {(state === 'speaking' || state === 'listening') && (
-                    [...Array(3)].map((_, i) => (
-                      <motion.div
-                        key={`ring-${i}`}
-                        initial={{ scale: 0.7, opacity: 0.5 }}
-                        animate={{
-                          scale: state === 'speaking' ? 3.2 : 2.2,
-                          opacity: 0,
-                          rotate: i * 45
-                        }}
-                        transition={{
-                          duration: state === 'speaking' ? 2.0 : 2.8,
-                          repeat: Infinity,
-                          delay: i * 0.65,
-                          ease: "easeOut"
-                        }}
-                        className={cn(
-                          "absolute w-44 h-44 rounded-full border border-dashed text-teal-400/20 transition-colors duration-1000",
-                          i === 0 ? "border-cyan-400/20" : i === 1 ? "border-emerald-400/15" : "border-indigo-400/10"
-                        )}
-                      />
-                    ))
-                  )}
-                </AnimatePresence>
-
-                {/* 2. Deep Glowing Halo Blur Backdrop */}
+              {/* Single Elegant 4-Point Sparkle Star Centerpiece */}
+              <div className="relative flex items-center justify-center min-h-[160px]">
+                {/* Ambient Soft Halo behind the star - themed using the brand green */}
                 <motion.div
                   animate={{
-                    scale: state === 'speaking' ? [1, 1.25, 0.95, 1.15, 1] : state === 'listening' ? [1, 1.06, 0.96, 1.04, 1] : [1, 1.02, 1.0],
+                    scale: state === 'speaking' ? [1, 1.25, 0.95, 1.15, 1] : state === 'listening' ? [1, 1.08, 0.96, 1.04, 1] : [1, 1.02, 1],
+                    opacity: state === 'speaking' ? 0.7 : state === 'listening' ? 0.45 : state === 'thinking' ? 0.55 : 0.35,
                   }}
-                  transition={{ duration: 3.5, repeat: Infinity, ease: "easeInOut" }}
-                  className="absolute w-52 h-52 rounded-full bg-gradient-to-r from-emerald-500/20 via-cyan-500/20 to-indigo-500/20 blur-[50px]"
+                  transition={{ duration: 3, repeat: Infinity, ease: "easeInOut" }}
+                  className="absolute w-44 h-44 rounded-full bg-emerald-500/20 blur-[50px]"
                 />
 
-                {/* 3. Layer A Fluid Blobs (Cyan-Teal Gradient) */}
+                {/* Sparkling Astroid Star with beautiful linear gradient */}
                 <motion.div
-                  animate={{
-                    scale: state === 'speaking' ? [1, 1.2, 0.92, 1.15, 1] : state === 'listening' ? [1, 1.05, 0.97, 1.03, 1] : [1, 1.02, 1],
-                    rotate: [0, 120, 240, 360],
-                    borderRadius: [
-                      "43% 57% 65% 35% / 45% 42% 58% 55%",
-                      "62% 38% 50% 50% / 55% 45% 55% 45%",
-                      "43% 57% 65% 35% / 45% 42% 58% 55%",
-                    ]
-                  }}
+                  animate={
+                    state === 'speaking' ? {
+                      scale: [1, 1.1, 0.94, 1.06, 1],
+                      filter: [
+                        'drop-shadow(0 0 20px rgba(16,185,129,0.3))',
+                        'drop-shadow(0 0 35px rgba(16,185,129,0.5))',
+                        'drop-shadow(0 0 20px rgba(16,185,129,0.3))'
+                      ]
+                    } : state === 'thinking' ? {
+                      scale: [0.94, 1.06, 0.94],
+                      rotate: [0, 180, 360],
+                    } : state === 'listening' ? {
+                      scale: [1, 1.05, 1],
+                      filter: 'drop-shadow(0 0 15px rgba(255,255,255,0.15))'
+                    } : {
+                      scale: 0.9,
+                      filter: 'drop-shadow(0 0 8px rgba(255,255,255,0.05))'
+                    }
+                  }
                   transition={{
-                    scale: { duration: state === 'speaking' ? 2.2 : 4.4, repeat: Infinity, ease: "easeInOut" },
-                    rotate: { duration: 16, repeat: Infinity, ease: "linear" },
-                    borderRadius: { duration: 10, repeat: Infinity, ease: "easeInOut" }
+                    scale: { duration: 2.4, repeat: Infinity, ease: "easeInOut" },
+                    rotate: { duration: 4.5, repeat: Infinity, ease: "linear" },
+                    filter: { duration: 1.8, repeat: Infinity, ease: "easeInOut" }
                   }}
-                  className="absolute w-48 h-48 bg-gradient-to-tr from-cyan-400 via-teal-400 to-emerald-500/90 opacity-90 blur-sm mix-blend-screen shadow-[inset_0_0_20px_rgba(255,255,255,0.2)]"
-                />
-
-                {/* 4. Layer B Fluid Blobs (Emerald-Indigo Gradient) */}
-                <motion.div
-                  animate={{
-                    scale: state === 'speaking' ? [1, 0.88, 1.15, 0.93, 1] : state === 'listening' ? [1, 0.94, 1.04, 1] : [1, 0.98, 1.02, 1],
-                    rotate: [360, 240, 120, 0],
-                    borderRadius: [
-                      "50% 50% 30% 70% / 50% 60% 40% 50%",
-                      "35% 65% 65% 35% / 55% 35% 65% 45%",
-                      "50% 50% 30% 70% / 50% 60% 40% 50%",
-                    ]
-                  }}
-                  transition={{
-                    scale: { duration: state === 'speaking' ? 2.8 : 5.6, repeat: Infinity, ease: "easeInOut" },
-                    rotate: { duration: 20, repeat: Infinity, ease: "linear" },
-                    borderRadius: { duration: 12, repeat: Infinity, ease: "easeInOut" }
-                  }}
-                  className="absolute w-44 h-44 bg-gradient-to-bl from-teal-400 via-emerald-400 to-indigo-500/80 opacity-80 blur-[2px] mix-blend-screen"
-                />
-
-                {/* 5. Star-like Sparkle Elements (Rotate softly) */}
-                <motion.div
-                  animate={{ rotate: 360 }}
-                  transition={{ duration: 40, repeat: Infinity, ease: "linear" }}
-                  className="absolute w-60 h-60"
+                  className="relative z-10 select-none pointer-events-none"
                 >
-                  <Sparkles className="absolute top-5 left-5 w-4 h-4 text-cyan-300 opacity-60 animate-bounce" />
-                  <Sparkles className="absolute bottom-5 right-5 w-3.5 h-3.5 text-teal-300 opacity-50 animate-pulse" />
-                  <Sparkles className="absolute top-1/2 right-4 w-3 h-3 text-emerald-300 opacity-40 animate-pulse" />
+                  <svg 
+                    viewBox="0 0 100 100" 
+                    className="w-24 h-24 md:w-28 md:h-28"
+                  >
+                    <defs>
+                      <linearGradient id="sparkle-grad" x1="0%" y1="0%" x2="100%" y2="100%">
+                        <stop offset="0%" stopColor="#FFFCC4" />       {/* Golden Yellow */}
+                        <stop offset="35%" stopColor="#FF9BE5" />      {/* Radiant Pink */}
+                        <stop offset="65%" stopColor="#A5B4FC" />      {/* Lavender Soft Blue */}
+                        <stop offset="100%" stopColor="#34D399" />     {/* Brand Green (Emerald-400) */}
+                      </linearGradient>
+                    </defs>
+                    <path
+                      d="M 50 0 Q 50 50 100 50 Q 50 50 50 100 Q 50 50 0 50 Q 50 50 50 0 Z"
+                      fill="url(#sparkle-grad)"
+                    />
+                  </svg>
                 </motion.div>
-
-                {/* 6. Sharp Glassy Center Core Core */}
-                <motion.div 
-                  animate={{
-                    scale: state === 'speaking' ? [0.95, 1.1, 0.95] : [1, 1.02, 1]
-                  }}
-                  transition={{ duration: 1.2, repeat: Infinity }}
-                  className="absolute w-28 h-28 rounded-full bg-black/40 backdrop-blur-md border border-white/20 flex items-center justify-center shadow-lg"
-                >
-                  <Activity className={cn(
-                    "w-8 h-8 text-white transition-all duration-500",
-                    state === 'speaking' ? "scale-110 text-cyan-400" : state === 'listening' ? "animate-pulse" : "opacity-40"
-                  )} />
-                </motion.div>
-                
               </div>
-            </div>
 
-            {/* Dynamic Status Display & Big Text Headline inside center */}
-            <div className="mt-8 text-center space-y-4">
-              <AnimatePresence mode="wait">
-                <motion.div
-                  key={state}
-                  initial={{ opacity: 0, y: 12 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  exit={{ opacity: 0, y: -12 }}
-                  transition={{ duration: 0.35 }}
-                  className="flex flex-col items-center gap-3.5"
-                >
-                  {/* Dynamic main premium text */}
-                  <h1 className="text-3xl md:text-4xl font-light tracking-wide bg-gradient-to-b from-white via-white to-zinc-400 bg-clip-text text-transparent px-4">
-                    {state === 'listening' ? "Ready when you are" : 
-                     state === 'thinking' ? "Synthesizing answer..." : 
-                     state === 'speaking' ? "Trelvix responding..." : "Voice Stream Off"}
-                  </h1>
-                  
-                  {/* Status subtext pill with teal pulsing indicator */}
-                  <div className="inline-flex items-center gap-2.5 px-4.5 py-1.5 bg-zinc-900/50 backdrop-blur-md rounded-full border border-zinc-800/80">
-                    <span className="relative flex h-2 w-2">
-                      <span className={cn(
-                        "absolute inline-flex h-full w-full rounded-full opacity-75",
-                        state === 'speaking' ? "animate-ping bg-cyan-400" : 
-                        state === 'listening' ? "animate-ping bg-emerald-400" : 
-                        state === 'thinking' ? "animate-ping bg-yellow-400" : "bg-zinc-600"
-                      )} />
-                      <span className={cn(
-                        "relative inline-flex rounded-full h-2 w-2",
-                        state === 'speaking' ? "bg-cyan-500" : 
-                        state === 'listening' ? "bg-emerald-500" : 
-                        state === 'thinking' ? "bg-yellow-500" : "bg-zinc-500"
-                      )} />
-                    </span>
-                    <span className="text-[10px] font-black uppercase tracking-[0.2em] text-zinc-400">
-                      {state === 'listening' ? "Listening..." : 
-                       state === 'thinking' ? "Thinking..." : 
-                       state === 'speaking' ? "Speaking..." : "Idle"}
-                    </span>
-                  </div>
-                </motion.div>
-              </AnimatePresence>
+              {/* Text Area */}
+              <div className="text-center space-y-4">
+                <AnimatePresence mode="wait">
+                  <motion.div
+                    key={state}
+                    initial={{ opacity: 0, y: 12 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    exit={{ opacity: 0, y: -12 }}
+                    transition={{ duration: 0.35 }}
+                    className="flex flex-col items-center gap-3.5"
+                  >
+                    {/* Caption matched exactly to the video layout */}
+                    <h1 className="text-3xl md:text-4xl font-light tracking-wide bg-gradient-to-b from-white via-white to-zinc-400 bg-clip-text text-transparent px-4 select-none">
+                      {state === 'listening' ? "Ready when you are" : 
+                       state === 'thinking' ? "Synthesizing answer..." : 
+                       state === 'speaking' ? "Trelvix responding..." : "Voice Stream Off"}
+                    </h1>
+                    
+                    {/* Compact pill matching the high standard design */}
+                    <div className="inline-flex items-center gap-2.5 px-4 py-1.5 bg-zinc-900/50 backdrop-blur-md rounded-full border border-zinc-800/80">
+                      <span className="relative flex h-1.5 w-1.5">
+                        <span className={cn(
+                          "absolute inline-flex h-full w-full rounded-full opacity-75",
+                          state === 'speaking' ? "animate-ping bg-emerald-400" : 
+                          state === 'listening' ? "animate-ping bg-emerald-400" : 
+                          state === 'thinking' ? "animate-ping bg-yellow-400" : "bg-zinc-650"
+                        )} />
+                        <span className={cn(
+                          "relative inline-flex rounded-full h-1.5 w-1.5",
+                          state === 'speaking' ? "bg-emerald-500" : 
+                          state === 'listening' ? "bg-emerald-500" : 
+                          state === 'thinking' ? "bg-yellow-500" : "bg-zinc-500"
+                        )} />
+                      </span>
+                      <span className="text-[10px] font-black uppercase tracking-[0.2em] text-zinc-400 selection:bg-transparent">
+                        {state === 'listening' ? "Listening" : 
+                         state === 'thinking' ? "Thinking" : 
+                         state === 'speaking' ? "Speaking" : "Idle"}
+                      </span>
+                    </div>
+                  </motion.div>
+                </AnimatePresence>
+              </div>
+
             </div>
           </main>
 
-          {/* Premium Bottom Bar Controls (Glow Teal Accent matching app design) */}
+          {/* Premium Bottom Bar Controls (Glow Emerald Accent matching app design) */}
           <footer className="relative z-10 w-full max-w-lg flex flex-col items-center pb-12 px-6 shrink-0 gap-6">
             
             {/* Quick Informational Tip */}
@@ -371,7 +331,7 @@ export const VoiceMode = ({
               <button 
                 onClick={onToggleSpeaker}
                 className={cn(
-                  "w-14 h-14 md:w-16 md:h-16 mx-auto rounded-[1.5rem] flex items-center justify-center transition-all bg-zinc-900/60 hover:bg-zinc-800 border cursor-pointer",
+                  "w-14 h-14 md:w-16 md:h-16 mx-auto rounded-[1.5rem] flex items-center justify-center transition-all bg-zinc-900/60 hover:bg-zinc-805 border cursor-pointer",
                   !isSpeakerOn 
                     ? "text-red-400 bg-red-950/20 border-red-900/30 ring-2 ring-red-500/10" 
                     : "text-zinc-400 hover:text-white border-zinc-800/80 hover:border-zinc-700"
@@ -437,7 +397,7 @@ export const VoiceMode = ({
                   <div className="flex flex-col flex-1 overflow-hidden">
                     <div className="flex items-center justify-between pb-6 border-b border-zinc-900">
                       <div className="flex items-center gap-2">
-                        <Globe className="w-4 h-4 text-teal-400" />
+                        <Globe className="w-4 h-4 text-emerald-400" />
                         <h2 className="text-sm font-black uppercase tracking-widest text-white">Voice Settings</h2>
                       </div>
                       <button 
@@ -462,7 +422,7 @@ export const VoiceMode = ({
                             className={cn(
                               "w-full flex items-center justify-between p-3 rounded-2xl transition-all border cursor-pointer select-none",
                               isSelected 
-                                ? "bg-zinc-900 border-teal-500/60 shadow-[0_4px_20px_rgba(20,184,166,0.1)]" 
+                                ? "bg-zinc-900 border-emerald-500/60 shadow-[0_4px_20px_rgba(16,185,129,0.1)]" 
                                 : "bg-zinc-950/20 border-zinc-900 hover:bg-zinc-900/40 hover:border-zinc-850"
                             )}
                           >
@@ -475,7 +435,7 @@ export const VoiceMode = ({
                                 className={cn(
                                   "w-10 h-10 rounded-xl flex items-center justify-center transition-all cursor-pointer border",
                                   previewingVoice === voice.id 
-                                    ? "bg-teal-500 border-teal-400 text-black shadow-lg shadow-teal-500/30" 
+                                    ? "bg-emerald-500 border-emerald-400 text-white shadow-lg shadow-emerald-500/30" 
                                     : "bg-zinc-950/60 border-zinc-800 text-zinc-300 hover:text-white"
                                 )}
                                 title="Preview Voice"
@@ -500,8 +460,8 @@ export const VoiceMode = ({
                             </div>
 
                             {isSelected && (
-                              <div className="w-6 h-6 rounded-full bg-teal-500/10 border border-teal-500/30 flex items-center justify-center">
-                                <Check className="w-3.5 h-3.5 text-teal-400" strokeWidth={2.5} />
+                              <div className="w-6 h-6 rounded-full bg-emerald-500/10 border border-emerald-500/30 flex items-center justify-center">
+                                <Check className="w-3.5 h-3.5 text-emerald-400" strokeWidth={2.5} />
                               </div>
                             )}
                           </div>

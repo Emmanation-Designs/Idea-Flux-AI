@@ -85,7 +85,7 @@ Ensure you have the following tables in your Supabase database:
 ## Company Information
 
 - **Company Name**: Ingenium Virtual Assistant Limited
-- **Website**: [Ingeniumvirtualassistant.com](https://Ingeniumvirtualassistant.com)
+- **Website**: [ingeniumva.com](https://www.ingeniumva.com)
 - **Owner**: Ingenium Virtual Assistant Limited
 
 ## Credits

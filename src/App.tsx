@@ -61,6 +61,15 @@ import { applyWatermark } from './utils/watermark';
 
 import type { Message, ConversationType, Profile } from './types';
 
+const VOICES = [
+  { id: 'onyx', name: 'Onyx', desc: 'Deep & Resonant', gender: 'male' },
+  { id: 'echo', name: 'Echo', desc: 'Warm & Authoritative', gender: 'male' },
+  { id: 'atlas', name: 'Atlas', desc: 'Confident & Crisp', gender: 'male' },
+  { id: 'fable', name: 'Fable', desc: 'British & Eloquent', gender: 'female' },
+  { id: 'nova', name: 'Nova', desc: 'Energetic & Bright', gender: 'female' },
+  { id: 'shimmer', name: 'Shimmer', desc: 'Soft & Ethereal', gender: 'female' },
+];
+
 const safeUUID = (): string => {
   if (typeof window !== 'undefined' && window.crypto && window.crypto.randomUUID) {
     try {
@@ -274,7 +283,7 @@ export default function App() {
   const [streamingMessage, setStreamingMessage] = useState('');
   const [activeView, setActiveView] = useState<'chat' | 'history' | 'apps' | 'images' | 'settings'>('chat');
   const [isListening, setIsListening] = useState(false);
-  const [voiceOption, setVoiceOption] = useState<'alloy' | 'echo'>('alloy');
+  const [voiceOption, setVoiceOption] = useState<string>('echo');
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentAudio, setCurrentAudio] = useState<HTMLAudioElement | null>(null);
   const [currentlyPlayingMessageId, setCurrentlyPlayingMessageId] = useState<string | null>(null);
@@ -740,11 +749,14 @@ export default function App() {
           
           // Barge-in sensing: If user speaks meaningfully while AI is playing, stop AI
           if (interimTranscript.trim().length > 2 && (isPlaying || isLoading)) {
+             if (window.speechSynthesis.speaking) {
+               window.speechSynthesis.cancel();
+             }
              if (currentAudio) {
                currentAudio.pause();
-               setIsPlaying(false);
-               setCurrentlyPlayingMessageId(null);
              }
+             setIsPlaying(false);
+             setCurrentlyPlayingMessageId(null);
              // If we were loading/thinking, abort the active LLM generation
              if (isLoading && generationAbortControllerRef.current) {
                generationAbortControllerRef.current.abort("User interrupted during thinking");
@@ -865,97 +877,119 @@ export default function App() {
     if (currentAudio) {
       currentAudio.muted = !isSpeakerOn;
     }
+    if (!isSpeakerOn && window.speechSynthesis.speaking) {
+      window.speechSynthesis.cancel();
+      setIsPlaying(false);
+      setCurrentlyPlayingMessageId(null);
+    }
   }, [isSpeakerOn, currentAudio]);
 
   const playVoice = async (text: string, messageId?: string) => {
     if (!text) return;
     
-    if (messageId && currentlyPlayingMessageId === messageId && currentAudio) {
+    // Toggle play/pause if clicking the active speaker button
+    if (messageId && currentlyPlayingMessageId === messageId) {
       togglePlayback();
       return;
     }
+
+    // Cancel any active SpeechSynthesis speaking or queued utterances immediately
+    window.speechSynthesis.cancel();
 
     if (currentAudio) {
       currentAudio.pause();
       currentAudio.onended = null;
       setCurrentAudio(null);
     }
-    if (voiceAbortControllerRef.current) {
-      voiceAbortControllerRef.current.abort("New voice request");
-    }
-
-    const controller = new AbortController();
-    voiceAbortControllerRef.current = controller;
-    const timeoutId = setTimeout(() => controller.abort("Timeout"), 30000);
 
     try {
       setIsPlaying(true);
       if (messageId) setCurrentlyPlayingMessageId(messageId);
 
-      const response = await fetch('/api/generate', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          type: 'tts',
-          prompt: text,
-          voice_option: voiceOption
-        }),
-        signal: controller.signal
-      });
-      clearTimeout(timeoutId);
+      // Clean Markdown of asterisks, hashes, backticks, and code blocks for smooth natural reading
+      const cleanText = text
+        .replace(/```[\s\S]*?```/g, '') // remove code blocks entirely
+        .replace(/[*_`#\-]/g, ' ')      // strip markdown markers
+        .replace(/\s+/g, ' ')           // collapse whitespace
+        .trim();
 
-      if (!response.ok) {
-        console.error(`Voice API Error (${response.status}):`, response.statusText);
-        const errorText = await response.text().catch(() => "Could not read error body");
-        console.error("Voice Error body:", errorText);
-        throw new Error('Failed to generate voice');
+      const utterance = new SpeechSynthesisUtterance(cleanText);
+      utterance.volume = isSpeakerOn ? 1.0 : 0.0;
+
+      // Select matching gender/personality local voice from device
+      const voices = window.speechSynthesis.getVoices();
+      const voiceData = VOICES.find(v => v.id === voiceOption);
+      let selectedVoice = voices.find(v => v.name.toLowerCase().includes(voiceOption.toLowerCase()));
+
+      if (!selectedVoice && voiceData) {
+        const targetGender = voiceData.gender || 'male';
+        const maleKeywords = ['male', 'david', 'mark', 'guy', 'daniel', 'alex', 'james', 'thomas', 'george', 'paul'];
+        const femaleKeywords = ['female', 'zira', 'samantha', 'victoria', 'susan', 'amy', 'linda', 'mary', 'emma', 'hazel', 'ira'];
+        const keywords = targetGender === 'male' ? maleKeywords : femaleKeywords;
+
+        selectedVoice = voices.find(v => {
+          const name = v.name.toLowerCase();
+          return keywords.some(k => name.includes(k));
+        });
       }
-      
-      const { audio } = await response.json();
-      if (!audio) throw new Error("No audio data");
 
-      const audioBlob = new Blob([Uint8Array.from(atob(audio), c => c.charCodeAt(0))], { type: 'audio/mp3' });
-      const audioUrl = URL.createObjectURL(audioBlob);
-      const audioObj = new Audio(audioUrl);
-      
-      audioObj.muted = !isSpeakerOn;
-      
-      if (voiceAbortControllerRef.current !== controller) return;
+      if (selectedVoice) {
+        utterance.voice = selectedVoice;
+      }
 
-      setCurrentAudio(audioObj);
-      audioObj.play().catch(err => {
-        console.error("Audio play error:", err);
+      // Configure beautiful native pitch/rate calibrations for the selected persona
+      if (voiceOption === 'onyx' || voiceOption === 'echo' || voiceOption === 'atlas') {
+        utterance.pitch = voiceOption === 'onyx' ? 0.8 : voiceOption === 'echo' ? 0.85 : 0.95;
+        utterance.rate = 0.95;
+      } else if (voiceOption === 'fable') {
+        utterance.pitch = 1.05;
+        utterance.rate = 1.0;
+      } else if (voiceOption === 'shimmer') {
+        utterance.pitch = 1.22;
+        utterance.rate = 1.08;
+      } else if (voiceOption === 'nova') {
+        utterance.pitch = 1.15;
+        utterance.rate = 1.05;
+      }
+
+      utterance.onend = () => {
         setIsPlaying(false);
-        setCurrentlyPlayingMessageId(null);
-      });
-      
-      audioObj.onended = () => {
-        setIsPlaying(false);
-        setCurrentAudio(null);
         setCurrentlyPlayingMessageId(null);
         if (showVoiceMode && !isMuted) {
           setTimeout(() => {
-            try { recognitionRef.current?.start(); } catch(e) {}
+            try { recognitionRef.current?.start(); } catch (e) {}
           }, 300);
         }
       };
 
-      audioObj.onerror = () => {
+      utterance.onerror = (e) => {
+        console.error("SpeechSynthesis error:", e);
         setIsPlaying(false);
-        setCurrentAudio(null);
         setCurrentlyPlayingMessageId(null);
+        if (showVoiceMode && !isMuted) {
+          setTimeout(() => {
+            try { recognitionRef.current?.start(); } catch (e) {}
+          }, 300);
+        }
       };
-    } catch (error: any) {
-      clearTimeout(timeoutId);
-      if (error.name === 'AbortError') return;
-      console.error("Voice error:", error);
+
+      window.speechSynthesis.speak(utterance);
+    } catch (error) {
+      console.error("SpeechSynthesis initiation error:", error);
       setIsPlaying(false);
       setCurrentlyPlayingMessageId(null);
     }
   };
 
   const togglePlayback = () => {
-    if (currentAudio) {
+    if (window.speechSynthesis.speaking) {
+      if (isPlaying) {
+        window.speechSynthesis.pause();
+      } else {
+        window.speechSynthesis.resume();
+      }
+      setIsPlaying(!isPlaying);
+    } else if (currentAudio) {
       if (isPlaying) {
         currentAudio.pause();
       } else {
@@ -2662,6 +2696,7 @@ export default function App() {
           isOpen={showVoiceMode}
           onClose={() => {
             setShowVoiceMode(false);
+            window.speechSynthesis.cancel();
             if (currentAudio) {
               currentAudio.pause();
               setCurrentAudio(null);
