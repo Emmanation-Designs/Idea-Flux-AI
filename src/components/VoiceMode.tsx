@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
   X, 
@@ -11,14 +11,11 @@ import {
   Copy, 
   ThumbsUp, 
   ThumbsDown, 
-  MoreHorizontal,
-  ChevronRight,
   Sliders,
   PlayCircle,
   HelpCircle,
-  Activity,
   Keyboard,
-  Upload
+  ArrowLeft
 } from 'lucide-react';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
@@ -58,6 +55,7 @@ interface VoiceModeProps {
   currentTranscript?: string;
   currentResponse?: string;
   onInterruptPlayback?: () => void;
+  isDarkMode?: boolean;
 }
 
 export const VoiceMode = ({ 
@@ -74,13 +72,14 @@ export const VoiceMode = ({
   profile,
   currentTranscript = "",
   currentResponse = "",
-  onInterruptPlayback
+  onInterruptPlayback,
+  isDarkMode = true
 }: VoiceModeProps) => {
   const [showVoiceDrawer, setShowVoiceDrawer] = useState(false);
   const [previewingVoice, setPreviewingVoice] = useState<string | null>(null);
   const [availableVoices, setAvailableVoices] = useState<SpeechSynthesisVoice[]>([]);
   
-  // Custom states matching requested UX
+  // Custom states
   const [showTextResponse, setShowTextResponse] = useState<boolean>(() => {
     const saved = localStorage.getItem('trelvix_show_text_response');
     return saved !== null ? saved === 'true' : true;
@@ -113,14 +112,14 @@ export const VoiceMode = ({
     };
   }, []);
 
-  // Monitor transcript activity to trigger transition between starting-greeting mode and active-text mode
+  // Monitor transcripts to transition to active dialogue layout gracefully
   useEffect(() => {
     if (currentTranscript.trim().length > 0 || currentResponse.trim().length > 0) {
       setHasSpeechOccurred(true);
     }
   }, [currentTranscript, currentResponse]);
 
-  // Reset dialogue activity memory when opening VoiceMode fresh
+  // Reset dialogue markers on mount/unmount
   useEffect(() => {
     if (isOpen) {
       setHasSpeechOccurred(false);
@@ -180,7 +179,6 @@ export const VoiceMode = ({
   const state = isLoading ? 'thinking' : isPlaying ? 'speaking' : isListening ? 'listening' : 'idle';
   const displayUserName = profile?.name ? profile.name.trim().split(' ')[0] : 'Emmanuel';
 
-  // Determine whether to display the text screen (Screenshot 2) or the minimalist sparkle screen (Screenshot 1)
   const isDisplayingTextLayout = showTextResponse && hasSpeechOccurred && (currentTranscript || currentResponse);
 
   return (
@@ -190,387 +188,463 @@ export const VoiceMode = ({
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}
-          className="fixed inset-0 z-[100] bg-black text-white flex flex-col items-center justify-between overflow-hidden font-sans select-none"
+          transition={{ duration: 0.35, ease: 'easeInOut' }}
+          className={cn(
+            "fixed inset-0 z-[100] flex flex-col items-center justify-between overflow-hidden font-sans select-none pb-safe",
+            isDarkMode 
+              ? "bg-[#0b0b0e] text-zinc-100" 
+              : "bg-zinc-50/95 text-zinc-900"
+          )}
         >
-          {/* Subtle bottom lighting atmosphere */}
-          <div className="absolute inset-0 z-0 pointer-events-none">
+          {/* Ambient Glowing Background Orb Filter Module */}
+          <div className="absolute inset-0 z-0 overflow-hidden pointer-events-none">
+            {/* Dynamic Ambient Fluid Colors */}
             <motion.div
               animate={{
-                opacity: state === 'speaking' ? 0.35 : state === 'listening' ? 0.25 : state === 'thinking' ? 0.3 : 0.15,
+                scale: state === 'speaking' ? [1, 1.15, 1] : state === 'listening' ? [1, 1.08, 1] : 0.95,
+                opacity: state === 'speaking' ? 0.35 : state === 'listening' ? 0.28 : state === 'thinking' ? 0.32 : 0.15,
+                x: state === 'speaking' ? [-10, 10, -10] : 0,
+                y: state === 'speaking' ? [5, -10, 5] : 0,
               }}
-              transition={{ duration: 3, repeat: Infinity, ease: "easeInOut" }}
-              className="absolute bottom-0 inset-x-0 h-[50%] bg-[radial-gradient(ellipse_at_bottom,rgba(59,130,246,0.18)_0%,rgba(4,12,30,0.04)_60%,transparent_90%)] pointer-events-none filter blur-[40px]"
+              transition={{ duration: 6, repeat: Infinity, ease: "easeInOut" }}
+              className={cn(
+                "absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[500px] h-[500px] rounded-full blur-[110px] pointer-events-none mix-blend-screen",
+                isDarkMode 
+                  ? "bg-[radial-gradient(circle_at_center,rgba(59,130,246,0.18)_0%,rgba(147,51,234,0.1)_40%,rgba(0,0,0,0)_70%)]"
+                  : "bg-[radial-gradient(circle_at_center,rgba(59,130,246,0.09)_0%,rgba(147,51,234,0.05)_50%,rgba(0,0,0,0)_75%)]"
+              )}
             />
-            {/* Soft background pattern */}
-            <div className="absolute inset-0 opacity-[0.012] bg-[radial-gradient(#ffffff_1px,transparent_1px)] [background-size:24px_24px] pointer-events-none" />
+            {/* Fine Tech Noise / Grid Mesh Overlay */}
+            <div className={cn(
+              "absolute inset-0 opacity-[0.012] pointer-events-none",
+              isDarkMode 
+                ? "bg-[radial-gradient(#ffffff_1px,transparent_1px)] [background-size:20px_20px]"
+                : "bg-[radial-gradient(#000000_1px,transparent_1px)] [background-size:20px_20px]"
+            )} />
           </div>
 
-          {/* Top Row Header Nav Bar */}
-          <header className="relative z-10 w-full flex items-center justify-between px-6 py-5 md:px-10 shrink-0 select-none">
-            {/* Double Horizontal Strip Menu - Matches UI screenshot left-header */}
+          {/* Liquid Fluid Mask Filter Definition for high-performance organic blob */}
+          <svg className="hidden">
+            <defs>
+              <filter id="goo">
+                <feGaussianBlur in="SourceGraphic" stdDeviation="12" result="blur" />
+                <feColorMatrix in="blur" mode="matrix" values="1 0 0 0 0  0 1 0 0 0  0 0 1 0 0  0 0 0 18 -8" result="goo" />
+                <feBlend in="SourceGraphic" in2="goo" />
+              </filter>
+            </defs>
+          </svg>
+
+          {/* Premium Header Nav Bar */}
+          <header className="relative z-10 w-full flex items-center justify-between px-6 py-5 md:px-8 shrink-0 select-none">
+            {/* Minimal Back Chevron Handle */}
             <button 
               onClick={onClose}
-              className="flex flex-col gap-1.5 p-2 focus:outline-none cursor-pointer group"
-              title="Close Voice Mode"
+              className={cn(
+                "p-2.5 rounded-full transition-all cursor-pointer flex items-center justify-center border",
+                isDarkMode 
+                  ? "bg-zinc-950/20 border-zinc-900/60 hover:bg-zinc-900/60 hover:border-zinc-800 text-zinc-400 hover:text-white" 
+                  : "bg-white border-zinc-200/80 hover:bg-zinc-100 hover:border-zinc-300 text-zinc-500 hover:text-zinc-900"
+              )}
+              title="Exit Voice Mode"
             >
-              <div className="w-5 h-0.5 bg-white rounded-full group-hover:bg-zinc-300 transition-colors"></div>
-              <div className="w-5 h-0.5 bg-white rounded-full group-hover:bg-zinc-300 transition-colors"></div>
+              <ArrowLeft className="w-4 h-4" />
             </button>
 
-            {/* Top Right Sidebar Control & Options Trigger */}
-            <div className="flex items-center gap-3">
-              {/* Rounded device style outline sidebar icon */}
-              <button 
-                onClick={() => setShowVoiceDrawer(true)}
-                className="p-2 border border-zinc-900 rounded-xl hover:bg-zinc-900/60 hover:border-zinc-800 transition-all cursor-pointer shadow-md flex items-center justify-center bg-zinc-950/40"
-              >
-                <div className="w-5 h-5 border-2 border-white/90 rounded-[5px] flex items-center justify-start p-[2px]">
-                  <div className="w-1.5 h-full bg-white/90 rounded-[1.5px]"></div>
-                </div>
-              </button>
-
-              {/* Three dots option trigger */}
-              <button 
-                onClick={() => setShowVoiceDrawer(true)}
-                className="p-2 border border-zinc-900 rounded-xl hover:bg-zinc-900/60 hover:border-zinc-800 transition-all cursor-pointer shadow-md bg-zinc-950/40"
-                title="Voice Settings"
-              >
-                <MoreHorizontal className="w-5 h-5 text-white" />
-              </button>
+            {/* Smart Branding Capsule */}
+            <div className={cn(
+              "flex items-center gap-2 px-3.5 py-1.5 rounded-full border text-[10px] font-bold tracking-[0.18em] uppercase shadow-xs",
+              isDarkMode 
+                ? "bg-zinc-950/40 border-zinc-900 text-zinc-400" 
+                : "bg-white border-zinc-200/60 text-zinc-500"
+            )}>
+              <span className={cn(
+                "inline-block w-1.5 h-1.5 rounded-full",
+                state === 'listening' ? "bg-emerald-500 animate-pulse" :
+                state === 'speaking' ? "bg-blue-500 animate-pulse" :
+                state === 'thinking' ? "bg-amber-500" : "bg-zinc-400"
+              )} />
+              TRELVIX VOICE
             </div>
+
+            {/* Config Button */}
+            <button 
+              onClick={() => setShowVoiceDrawer(true)}
+              className={cn(
+                "p-2.5 rounded-full border transition-all cursor-pointer shadow-xs flex items-center justify-center",
+                isDarkMode 
+                  ? "bg-zinc-950/40 border-zinc-900 hover:bg-zinc-900/60 hover:border-zinc-800 text-zinc-400 hover:text-white" 
+                  : "bg-white border-zinc-200/80 hover:bg-zinc-100 hover:border-zinc-300 text-zinc-500 hover:text-zinc-900"
+              )}
+              title="Voice Configurations"
+            >
+              <Sliders className="w-4 h-4" />
+            </button>
           </header>
 
-          {/* Core Interactive Center Canvas Stage */}
-          <main className="relative z-10 flex-1 flex flex-col justify-center w-full max-w-2xl px-6 py-4 overflow-y-auto">
+          {/* Main Visualizer Content Core */}
+          <main className="relative z-10 flex-1 flex flex-col justify-center items-center w-full max-w-xl px-6 py-2 overflow-y-auto no-scrollbar">
             
             <AnimatePresence mode="wait">
               {!isDisplayingTextLayout ? (
-                /* START SCREEN - MINIMALIST VIEW WITHOUT TALK PREVIEW (Screenshot 1) */
+                /* SCREEN 1: THE LIQUID MORPHING BULB INTERACTIVE VIEW (MASTERPIECE OF UI) */
                 <motion.div
-                  key="minimalist-layout"
-                  initial={{ opacity: 0, scale: 0.98 }}
+                  key="fluid-visualizer"
+                  initial={{ opacity: 0, scale: 0.96 }}
                   animate={{ opacity: 1, scale: 1 }}
-                  exit={{ opacity: 0, scale: 0.98 }}
-                  transition={{ duration: 0.4 }}
-                  className="flex flex-col items-center justify-center py-8 gap-8"
+                  exit={{ opacity: 0, scale: 0.96 }}
+                  transition={{ duration: 0.35, ease: "easeOut" }}
+                  className="flex flex-col items-center justify-center py-6 gap-12 w-full"
                 >
-                  {/* Central Radiant 4-Point Star Piece resembling Gemini logo */}
-                  <div className="relative flex items-center justify-center min-h-[160px]">
-                    <motion.div
-                      animate={{
-                        scale: state === 'speaking' ? [1, 1.2, 0.95, 1.1, 1] : state === 'listening' ? [1, 1.05, 0.97, 1.03, 1] : [1, 1.01, 1],
-                        opacity: state === 'speaking' ? 0.65 : state === 'listening' ? 0.45 : state === 'thinking' ? 0.55 : 0.35,
-                      }}
-                      transition={{ duration: 3.2, repeat: Infinity, ease: "easeInOut" }}
-                      className="absolute w-44 h-44 rounded-full bg-blue-500/10 blur-[50px] pointer-events-none"
-                    />
+                  
+                  {/* Organic Liquid Fluid Waveform Orb with Gooey effect */}
+                  <div className="relative flex items-center justify-center w-64 h-64 select-none">
+                    
+                    {/* Background Fluid Core Glow */}
+                    <div className="absolute w-[180px] h-[180px] rounded-full filter blur-[40px] opacity-25 mix-blend-screen bg-gradient-to-tr from-cyan-400 via-blue-500 to-purple-600 animate-pulse" />
 
-                    <motion.div
-                      animate={
-                        state === 'speaking' ? {
-                          scale: [1, 1.08, 0.95, 1.05, 1],
-                          filter: [
-                            'drop-shadow(0 0 15px rgba(59,130,246,0.25))',
-                            'drop-shadow(0 0 28px rgba(59,130,246,0.45))',
-                            'drop-shadow(0 0 15px rgba(59,130,246,0.25))'
-                          ]
-                        } : state === 'thinking' ? {
-                          scale: [0.95, 1.05, 0.95],
-                          rotate: [0, 180, 360],
-                        } : state === 'listening' ? {
-                          scale: [1, 1.04, 1],
-                          filter: 'drop-shadow(0 0 12px rgba(255,255,255,0.1))'
-                        } : {
-                          scale: 0.92,
-                          filter: 'drop-shadow(0 0 5px rgba(255,255,255,0.02))'
-                        }
-                      }
-                      transition={{
-                        scale: { duration: 2.5, repeat: Infinity, ease: "easeInOut" },
-                        rotate: { duration: 5, repeat: Infinity, ease: "linear" },
-                        filter: { duration: 2, repeat: Infinity, ease: "easeInOut" }
-                      }}
-                      className="relative z-10 pointer-events-none"
+                    {/* Gooey Blob Mesh Container */}
+                    <div 
+                      className="absolute inset-0 flex items-center justify-center"
+                      style={{ filter: 'url(#goo)' }}
                     >
-                      <svg viewBox="0 0 100 100" className="w-24 h-24 md:w-28 md:h-28">
-                        <defs>
-                          <linearGradient id="gemini-star-gradient" x1="0%" y1="0%" x2="100%" y2="100%">
-                            <stop offset="0%" stopColor="#FFFCC4" />       {/* Soft Gold Yellow */}
-                            <stop offset="30%" stopColor="#FF8AEB" />      {/* Warm Neon Pink */}
-                            <stop offset="65%" stopColor="#818CF8" />      {/* Vivid Violet Blue */}
-                            <stop offset="100%" stopColor="#67e8f9" />     {/* Radiant Cyan */}
-                          </linearGradient>
-                        </defs>
-                        <path
-                          d="M 50 0 Q 50 50 100 50 Q 50 50 50 100 Q 50 50 0 50 Q 50 50 50 0 Z"
-                          fill="url(#gemini-star-gradient)"
-                        />
-                      </svg>
-                    </motion.div>
+                      {/* Blob 1 */}
+                      <motion.div
+                        animate={{
+                          x: state === 'speaking' ? [-25, 20, -15, 10, -25] : state === 'listening' ? [-8, 6, -4, 8, -8] : 0,
+                          y: state === 'speaking' ? [15, -25, 10, -15, 15] : state === 'listening' ? [4, -6, 5, -8, 4] : 0,
+                          scale: state === 'speaking' ? [1, 1.25, 0.9, 1.15, 1] : state === 'listening' ? [1, 1.08, 0.95, 1.05, 1] : 1,
+                        }}
+                        transition={{ duration: 4.5, repeat: Infinity, ease: "easeInOut" }}
+                        className={cn(
+                          "absolute w-28 h-28 rounded-full",
+                          isDarkMode 
+                            ? "bg-gradient-to-tr from-blue-600 to-indigo-500 opacity-80" 
+                            : "bg-gradient-to-tr from-blue-400 to-indigo-300 opacity-85"
+                        )}
+                      />
+
+                      {/* Blob 2 */}
+                      <motion.div
+                        animate={{
+                          x: state === 'speaking' ? [20, -20, 25, -15, 20] : state === 'listening' ? [6, -8, 5, -4, 6] : 0,
+                          y: state === 'speaking' ? [-15, 20, -15, 22, -15] : state === 'listening' ? [-5, 6, -8, 4, -5] : 0,
+                          scale: state === 'speaking' ? [0.95, 1.2, 1.02, 0.88, 0.95] : state === 'listening' ? [0.98, 1.05, 1.0, 0.95, 0.98] : 0.95,
+                        }}
+                        transition={{ duration: 3.8, repeat: Infinity, ease: "easeInOut" }}
+                        className={cn(
+                          "absolute w-24 h-24 rounded-full",
+                          isDarkMode 
+                            ? "bg-gradient-to-br from-indigo-500 via-purple-500 to-pink-500 opacity-75" 
+                            : "bg-gradient-to-br from-indigo-350 via-purple-300 to-pink-350 opacity-80"
+                        )}
+                      />
+
+                      {/* Blob 3 (Evershifting Cyan accent) */}
+                      <motion.div
+                        animate={{
+                          x: state === 'speaking' ? [-10, 25, -20, 15, -10] : state === 'listening' ? [-4, 6, -5, 5, -4] : 0,
+                          y: state === 'speaking' ? [-25, 15, -10, -20, -25] : state === 'listening' ? [-6, 5, -4, -6, -6] : 0,
+                          scale: state === 'speaking' ? [1.1, 0.85, 1.2, 0.95, 1.1] : state === 'listening' ? [1.02, 0.96, 1.05, 0.98, 1.02] : 1,
+                        }}
+                        transition={{ duration: 5.2, repeat: Infinity, ease: "easeInOut" }}
+                        className={cn(
+                          "absolute w-26 h-26 rounded-full",
+                          isDarkMode 
+                            ? "bg-gradient-to-r from-cyan-500 to-blue-400 opacity-85" 
+                            : "bg-gradient-to-r from-cyan-300 to-blue-300 opacity-90"
+                        )}
+                      />
+
+                      {/* Center Static Solid Core */}
+                      <div className={cn(
+                        "absolute w-20 h-20 rounded-full flex items-center justify-center border shadow-lg z-20 transition-all",
+                        isDarkMode 
+                          ? "bg-zinc-950/90 border-white/10" 
+                          : "bg-white border-zinc-200/80"
+                      )}>
+                        <AnimatePresence mode="wait">
+                          <motion.div
+                            key={state}
+                            initial={{ opacity: 0, scale: 0.8 }}
+                            animate={{ opacity: 0.9, scale: 1 }}
+                            exit={{ opacity: 0, scale: 0.8 }}
+                            transition={{ duration: 0.2 }}
+                          >
+                            {state === 'thinking' ? (
+                              <Sparkles className="w-6 h-6 text-indigo-400 animate-pulse" />
+                            ) : state === 'speaking' ? (
+                              <Volume2 className="w-6 h-6 text-blue-500" />
+                            ) : (
+                              <Mic className={cn("w-6 h-6", state === 'listening' ? "text-emerald-500" : (isDarkMode ? "text-zinc-500" : "text-zinc-400"))} />
+                            )}
+                          </motion.div>
+                        </AnimatePresence>
+                      </div>
+                    </div>
                   </div>
 
-                  {/* Centered User Greeting Title matches Screenshot 1 */}
-                  <div className="text-center px-4 max-w-md">
-                    <h1 className="text-3xl md:text-4xl font-semibold tracking-tight leading-snug text-white/95">
-                      Hi {displayUserName}, let's get into it
+                  {/* Elegant typography details matching ChatGPT simple display */}
+                  <div className="text-center px-4 max-w-sm">
+                    <h1 className={cn(
+                      "text-2xl md:text-2.5xl font-semibold tracking-tight leading-snug",
+                      isDarkMode ? "color-white text-zinc-100" : "text-zinc-800"
+                    )}>
+                      {state === 'listening' ? "Listening..." : 
+                       state === 'thinking' ? "Thinking..." : 
+                       state === 'speaking' ? "Speaking..." : `Let's talk, ${displayUserName}`}
                     </h1>
-                    <p className="text-xs text-zinc-550 tracking-wide mt-3 max-w-xs mx-auto opacity-75 leading-relaxed uppercase">
-                      {state === 'listening' ? "Speaking stream active" : 
-                       state === 'thinking' ? "Processing dialogue..." : 
-                       state === 'speaking' ? "Streaming synthesis response..." : "Voice core initialized"}
+                    <p className={cn(
+                      "text-[10px] tracking-[0.2em] font-semibold mt-3.5 leading-relaxed uppercase opacity-60",
+                      isDarkMode ? "text-zinc-500" : "text-zinc-400"
+                    )}>
+                      {state === 'listening' ? "continuous microphone active" : 
+                       state === 'thinking' ? "processing response stream" : 
+                       state === 'speaking' ? "real-time audio synthesis active" : "tap visualizer to wake stream"}
                     </p>
                   </div>
                 </motion.div>
               ) : (
-                /* DIALOGUE ACTIVE SCREEN - TEXT VIEW (Screenshot 2) */
+                /* SCREEN 2: ACTIVE DIALOGUE CONTENT SCREEN */
                 <motion.div
-                  key="text-layout"
-                  initial={{ opacity: 0, y: 15 }}
+                  key="chat-dialogue"
+                  initial={{ opacity: 0, y: 12 }}
                   animate={{ opacity: 1, y: 0 }}
-                  exit={{ opacity: 0, y: -15 }}
-                  transition={{ duration: 0.35, ease: "easeOut" }}
-                  className="flex flex-col justify-start items-stretch gap-10 py-6 min-h-[50vh] text-left"
+                  exit={{ opacity: 0, y: -12 }}
+                  transition={{ duration: 0.3, ease: "easeOut" }}
+                  className="flex flex-col justify-start items-stretch gap-8 py-4 w-full select-text"
                 >
-                  {/* Top Right Compact Speech Bubble for the User statement if available */}
-                  {currentTranscript && (
-                    <div className="flex justify-end select-text">
-                      <motion.div 
-                        initial={{ opacity: 0, scale: 0.95 }}
-                        animate={{ opacity: 1, scale: 1 }}
-                        className="max-w-[80%] rounded-[24px] px-6 py-3 bg-[#18181b] border border-zinc-850 text-white font-medium text-base text-right tracking-tight shadow-sm"
-                      >
-                        {currentTranscript}
-                      </motion.div>
-                    </div>
-                  )}
-
-                  {/* Assistant response block: Large bold stark white left-aligned text (no bubble container) */}
-                  {currentResponse && (
-                    <div className="flex flex-col gap-6 items-start w-full select-text select-none">
-                      <motion.div 
-                        initial={{ opacity: 0 }}
-                        animate={{ opacity: 1 }}
-                        className="text-2xl md:text-3xl font-bold text-white tracking-tight leading-relaxed max-w-full text-left"
-                      >
-                        {currentResponse}
-                      </motion.div>
-
-                      {/* Small inline reaction bar matches Screenshot 2 */}
-                      <div className="flex items-center gap-5 pt-2 text-zinc-500">
-                        <button 
-                          onClick={() => setLiked(true)}
-                          className={cn("p-1.5 rounded-lg hover:text-white transition-colors cursor-pointer", liked === true && "text-blue-400")}
-                        >
-                          <ThumbsUp className="w-4 h-4" />
-                        </button>
-                        <button 
-                          onClick={() => setLiked(false)}
-                          className={cn("p-1.5 rounded-lg hover:text-white transition-colors cursor-pointer", liked === false && "text-red-400")}
-                        >
-                          <ThumbsDown className="w-4 h-4" />
-                        </button>
-                        <button 
-                          onClick={copyToClipboard}
-                          className={cn("p-1.5 rounded-lg hover:text-white transition-colors cursor-pointer relative", copied && "text-emerald-400")}
-                          title="Copy text response"
-                        >
-                          <Copy className="w-4 h-4" />
-                        </button>
-                        <button 
-                          onClick={() => setShowVoiceDrawer(true)}
-                          className="p-1.5 rounded-lg hover:text-white transition-colors cursor-pointer"
-                        >
-                          <MoreHorizontal className="w-4 h-4" />
-                        </button>
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Secondary user continuous utterance transcript badge below output */}
-                  {currentTranscript && (
+                  {/* User Question */}
+                  <div className="flex justify-end w-full">
                     <motion.div 
-                      initial={{ opacity: 0 }}
-                      animate={{ opacity: 0.8 }}
-                      className="mt-4 self-start rounded-full px-5 py-2.5 bg-zinc-900/60 border border-zinc-805/60 text-zinc-400 italic font-medium text-sm shadow-inner"
+                      className={cn(
+                        "max-w-[85%] rounded-2xl px-4.5 py-3 font-medium text-sm md:text-base text-right tracking-tight shadow-xs border",
+                        isDarkMode 
+                          ? "bg-zinc-900 border-zinc-850 text-zinc-100" 
+                          : "bg-white border-zinc-200 text-zinc-800"
+                      )}
                     >
                       {currentTranscript}
                     </motion.div>
-                  )}
+                  </div>
+
+                  {/* Assistant response text - matches Grok/Gpt simplicity */}
+                  <div className="flex flex-col gap-4.5 items-start w-full">
+                    <motion.div 
+                      key={currentResponse}
+                      initial={{ opacity: 0.95 }}
+                      animate={{ opacity: 1 }}
+                      className={cn(
+                        "text-lg md:text-xl.5 font-medium tracking-tight leading-relaxed text-left max-w-full select-text",
+                        isDarkMode ? "text-zinc-200" : "text-zinc-800"
+                      )}
+                    >
+                      {currentResponse}
+                    </motion.div>
+
+                    {/* Compact reactions overlay */}
+                    <div className="flex items-center gap-4 pt-1 text-zinc-400 select-none">
+                      <button 
+                        onClick={() => setLiked(true)}
+                        className={cn(
+                          "p-2 rounded-full transition-all cursor-pointer hover:bg-zinc-900",
+                          liked === true && "text-blue-500 bg-blue-500/10"
+                        )}
+                      >
+                        <ThumbsUp className="w-3.5 h-3.5" />
+                      </button>
+                      <button 
+                        onClick={() => setLiked(false)}
+                        className={cn(
+                          "p-2 rounded-full transition-all cursor-pointer hover:bg-zinc-900",
+                          liked === false && "text-rose-500 bg-rose-500/10"
+                        )}
+                      >
+                        <ThumbsDown className="w-3.5 h-3.5" />
+                      </button>
+                      <button 
+                        onClick={copyToClipboard}
+                        className={cn(
+                          "p-2 rounded-full transition-all cursor-pointer hover:bg-zinc-900 relative",
+                          copied && "text-emerald-500 bg-emerald-500/10"
+                        )}
+                        title="Copy text response"
+                      >
+                        <Copy className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  </div>
                 </motion.div>
               )}
             </AnimatePresence>
             
           </main>
 
-          {/* Premium Bottom Panel Toolbar (5 buttons) */}
-          <footer className="relative z-10 w-full max-w-xl flex flex-col items-center pb-10 px-6 shrink-0 gap-6 select-none">
+          {/* Symmetrical Controls Bar - Floating Clean Capsule Design */}
+          <footer className="relative z-10 w-full max-w-md flex flex-col items-center pb-10 px-6 shrink-0 gap-6 select-none">
             
-            {/* Minimal Help Prompt */}
-            {state === 'idle' && (
-              <p className="text-[10px] text-zinc-500 tracking-wider flex items-center gap-1 opacity-60">
-                <Sparkles className="w-3 h-3 text-blue-400 animate-pulse" />
-                Tap microphone to wake secure speech stream
-              </p>
-            )}
-
-            {/* Row of 5 Circular Control Buttons */}
-            <div className="w-full flex items-center justify-between px-3">
-              
-              {/* Button 1: Keyboard/Show-Text Toggle */}
+            {/* Integrated Symmetrical Central Capsule Toolbar Container */}
+            <div className={cn(
+              "p-2 w-full rounded-2.5xl flex items-center justify-between border gap-2 shadow-lg backdrop-blur-md",
+              isDarkMode 
+                ? "bg-zinc-950/70 border-zinc-900/80" 
+                : "bg-white/90 border-zinc-200"
+            )}>
+              {/* Button 1: Keyboard Text Visibility Toggle */}
               <button 
                 onClick={() => setShowTextResponse(!showTextResponse)}
                 className={cn(
-                  "w-12 h-12 rounded-xl flex items-center justify-center transition-all bg-zinc-950/80 border cursor-pointer",
+                  "w-11 h-11 rounded-2xl flex items-center justify-center transition-all cursor-pointer",
                   showTextResponse 
-                    ? "border-blue-500/20 text-blue-400 ring-2 ring-blue-500/5 hover:bg-zinc-900" 
-                    : "border-zinc-900 text-zinc-500 hover:text-zinc-300 hover:bg-zinc-900"
+                    ? (isDarkMode 
+                        ? "bg-zinc-900 text-blue-400" 
+                        : "bg-zinc-100 text-blue-600 shadow-xs")
+                    : (isDarkMode 
+                        ? "text-zinc-500 hover:text-zinc-200" 
+                        : "text-zinc-400 hover:text-zinc-700")
                 )}
-                title={showTextResponse ? "Disable Transcript Display" : "Enable Transcript Display"}
+                title={showTextResponse ? "Hide Response Text" : "Show Response Text"}
               >
-                <Keyboard className="w-5 h-5" />
+                <Keyboard className="w-4.5 h-4.5" />
               </button>
 
-              {/* Button 2: Share / Upload Media Arrow (matches Screenshot bottom bar format) */}
+              {/* Button 2: Mute Output Speaker Speaker */}
               <button 
                 onClick={onToggleSpeaker}
                 className={cn(
-                  "w-12 h-12 rounded-xl flex items-center justify-center transition-all bg-zinc-950/80 border cursor-pointer",
+                  "w-11 h-11 rounded-2xl flex items-center justify-center transition-all cursor-pointer",
                   isSpeakerOn 
-                    ? "border-blue-500/10 text-white hover:bg-zinc-900" 
-                    : "border-red-900/20 text-red-500/80 bg-red-950/10 hover:bg-red-950/20"
+                    ? (isDarkMode ? "text-zinc-300 hover:text-white" : "text-zinc-650 hover:text-zinc-900")
+                    : "text-rose-500 bg-rose-500/10 hover:bg-rose-500/20"
                 )}
-                title={isSpeakerOn ? "Mute Output Speaker" : "Unmute Output Speaker"}
+                title={isSpeakerOn ? "Mute Output Sound" : "Listen Output Sound"}
               >
-                {isSpeakerOn ? <Upload className="w-5 h-5" /> : <VolumeX className="w-5 h-5" />}
+                {isSpeakerOn ? <Volume2 className="w-4.5 h-4.5" /> : <VolumeX className="w-4.5 h-4.5" />}
               </button>
 
-              {/* Button 3: CENTRAL WIDE VOICE CAPSULE VISUALIZER (Breathes and Glows Atmospheric Blue) */}
-              <div 
-                onClick={onToggleListening}
-                className="flex justify-center flex-1 mx-4 max-w-[140px] md:max-w-[160px]"
-              >
-                <div 
-                  className={cn(
-                    "w-full h-11 rounded-[22px] bg-zinc-950 border transition-all duration-300 relative cursor-pointer flex items-center justify-center",
-                    state === 'speaking' 
-                      ? "border-blue-500/40 shadow-[0_0_25px_rgba(59,130,246,0.35)] scale-102" 
-                      : state === 'listening' 
-                      ? "border-blue-500/20 shadow-[0_0_15px_rgba(59,130,246,0.15)] bg-zinc-950" 
-                      : "border-zinc-900 shadow-none"
-                  )}
-                  title={isListening ? "Pause stream" : "Wake stream"}
-                >
-                  {/* Glowing core bar representing speech presence */}
-                  <div className="absolute inset-0 rounded-[22px] overflow-hidden">
-                    <motion.div 
-                      animate={
-                        state === 'speaking' ? {
-                          opacity: [0.15, 0.45, 0.15],
-                          background: 'linear-gradient(90deg, transparent, rgba(59,130,246,0.5), transparent)'
-                        } : state === 'listening' ? {
-                          opacity: [0.08, 0.22, 0.08],
-                          background: 'linear-gradient(90deg, transparent, rgba(59,130,246,0.2), transparent)'
-                        } : {
-                          opacity: 0,
-                        }
-                      }
-                      transition={{ duration: 1.8, repeat: Infinity, ease: "easeInOut" }}
-                      className="absolute inset-0"
-                    />
-                  </div>
-
-                  {/* Micro lines inside visualizer capsule indicating state */}
-                  <div className="flex items-center gap-[3px] z-10">
-                    {[1, 2, 3, 4, 5].map((i) => (
-                      <motion.div
-                        key={i}
-                        animate={
-                          state === 'speaking' ? {
-                            height: [6, 22, 8, 18, 6][i - 1] * 0.8 + Math.random() * 5
-                          } : state === 'listening' ? {
-                            height: [8, 12, 6, 14, 8][i - 1] * 0.5 + Math.random() * 2
-                          } : {
-                            height: 4
-                          }
-                        }
-                        transition={{
-                          duration: 0.6 + i * 0.1,
-                          repeat: Infinity,
-                          ease: "easeInOut",
-                          repeatType: "reverse"
-                        }}
-                        className="w-[3px] bg-blue-400 rounded-full"
-                      />
-                    ))}
-                  </div>
-                </div>
-              </div>
-
-              {/* Button 4: Standard Microphone input Toggle */}
+              {/* Central Dual Capsule Controller representing visual listening or speaking stream (Touch to Interact) */}
               <button 
                 onClick={onToggleListening}
                 className={cn(
-                  "w-12 h-12 rounded-xl flex items-center justify-center transition-all bg-zinc-950/80 border cursor-pointer",
+                  "h-11 px-6 rounded-2xl flex items-center justify-center gap-2 border flex-1 transition-all duration-300 relative cursor-pointer font-semibold text-xs tracking-wide shadow-xs",
+                  state === 'speaking' 
+                    ? (isDarkMode 
+                        ? "border-blue-500/40 bg-zinc-900/60 text-blue-400" 
+                        : "border-blue-500/35 bg-blue-50 text-blue-600") 
+                    : state === 'listening' 
+                    ? (isDarkMode 
+                        ? "border-emerald-500/40 bg-zinc-900/60 text-emerald-400" 
+                        : "border-emerald-500/35 bg-emerald-50 text-emerald-600")
+                    : (isDarkMode 
+                        ? "border-zinc-800 bg-zinc-900 text-zinc-300 hover:bg-zinc-850 hover:border-zinc-700" 
+                        : "border-zinc-200 bg-zinc-50 text-zinc-600 hover:bg-zinc-100")
+                )}
+                title={isListening ? "Hold/Pause Session" : "Start Conversation stream"}
+              >
+                <span className="relative z-10 flex items-center gap-2">
+                  <span className={cn(
+                    "w-2 h-2 rounded-full",
+                    state === 'speaking' ? "bg-blue-500 animate-ping" : 
+                    state === 'listening' ? "bg-emerald-500 animate-ping" : "bg-transparent border border-current"
+                  )} />
+                  {state === 'speaking' ? "TAP CORES" : state === 'listening' ? "LISTENING" : "START"}
+                </span>
+
+                {/* Internal audio wave visual animation inside capsule button */}
+                <div className="absolute right-3.5 flex items-center gap-[2.5px] opacity-40">
+                  {[1, 2, 3].map((v) => (
+                    <motion.div
+                      key={v}
+                      animate={state === 'speaking' || state === 'listening' ? {
+                        height: [6, 14, 8][v - 1] + Math.random() * 4
+                      } : {
+                        height: 4
+                      }}
+                      transition={{ duration: 0.45, repeat: Infinity, repeatType: "reverse" }}
+                      className={cn("w-[2px] rounded-full", state === 'speaking' ? "bg-blue-500" : state === 'listening' ? "bg-emerald-500" : "bg-zinc-500")}
+                    />
+                  ))}
+                </div>
+              </button>
+
+              {/* Button 4: Standard mic toggle */}
+              <button 
+                onClick={onToggleListening}
+                className={cn(
+                  "w-11 h-11 rounded-2xl flex items-center justify-center transition-all cursor-pointer",
                   isListening 
-                    ? "border-blue-500/20 text-blue-400 font-bold bg-zinc-900" 
-                    : "border-zinc-900 text-zinc-500 hover:text-zinc-300 hover:bg-zinc-900"
+                    ? (isDarkMode ? "bg-emerald-500/10 text-emerald-400" : "bg-emerald-500/5 text-emerald-600") 
+                    : (isDarkMode ? "text-zinc-500 hover:text-zinc-200" : "text-zinc-400 hover:text-zinc-700")
                 )}
                 title={isListening ? "Mute Mic" : "Unmute Mic"}
               >
-                {isListening ? <Mic className="w-5 h-5 animate-pulse" /> : <MicOff className="w-5 h-5" />}
+                {isListening ? <Mic className="w-4.5 h-4.5 animate-pulse" /> : <MicOff className="w-4.5 h-4.5" />}
               </button>
 
-              {/* Button 5: Secure Phone Close / Exit Call */}
+              {/* Button 5: Symmetrical Call Hangup Red Action Button */}
               <button 
                 onClick={onClose}
-                className="w-12 h-12 rounded-xl bg-gradient-to-br from-red-650 to-red-600 hover:from-red-600 hover:to-red-500 text-white flex items-center justify-center cursor-pointer shadow-lg border border-red-500/10 hover:scale-105 active:scale-95 transition-all"
-                title="Exit Voice Mode"
+                className={cn(
+                  "w-11 h-11 rounded-2xl flex items-center justify-center transition-all cursor-pointer text-white shadow-xs",
+                  isDarkMode ? "bg-rose-600 hover:bg-rose-500" : "bg-red-500 hover:bg-red-400"
+                )}
+                title="End Voice call session"
               >
-                <X className="w-5 h-5" />
+                <X className="w-4.5 h-4.5" strokeWidth={2.5} />
               </button>
 
             </div>
           </footer>
 
-          {/* Slide-Up Voice & Rate Settings Settings Drawer popup Overlay (Screenshot 3-dots target) */}
+          {/* Core Configuration slide drawer */}
           <AnimatePresence>
             {showVoiceDrawer && (
               <>
-                {/* Backdrop Glasses Overlay */}
+                {/* Backdrop overlay */}
                 <motion.div 
                   initial={{ opacity: 0 }}
-                  animate={{ opacity: 0.7 }}
+                  animate={{ opacity: 0.5 }}
                   exit={{ opacity: 0 }}
                   onClick={() => setShowVoiceDrawer(false)}
-                  className="fixed inset-0 z-40 bg-black/85 backdrop-blur-md cursor-pointer"
+                  className="fixed inset-0 z-45 bg-black/60 backdrop-blur-xs cursor-pointer"
                 />
 
                 {/* Right Side Control Drawer */}
                 <motion.div
-                  initial={{ y: "100%" }}
-                  animate={{ y: 0 }}
-                  exit={{ y: "100%" }}
-                  transition={{ type: "spring", damping: 26, stiffness: 220 }}
-                  className="fixed bottom-0 inset-x-0 md:inset-x-auto md:right-0 md:top-0 md:bottom-0 md:w-96 z-50 bg-[#0c0c0e] border-t md:border-t-0 md:border-l border-zinc-850 p-6 flex flex-col justify-between overflow-y-auto"
+                  initial={{ x: "100%", opacity: 0.95 }}
+                  animate={{ x: 0, opacity: 1 }}
+                  exit={{ x: "100%", opacity: 0.95 }}
+                  transition={{ type: "spring", damping: 28, stiffness: 220 }}
+                  className={cn(
+                    "fixed right-0 top-0 bottom-0 w-full sm:w-[360px] z-50 p-6 flex flex-col justify-between border-l shadow-2xl",
+                    isDarkMode 
+                      ? "bg-[#0b0b0d] border-zinc-850 text-zinc-100" 
+                      : "bg-white border-zinc-200 text-zinc-900"
+                  )}
                 >
                   <div className="flex flex-col flex-1">
-                    <div className="flex items-center justify-between pb-5 border-b border-zinc-900">
+                    {/* Drawer Header Toolbar */}
+                    <div className={cn("flex items-center justify-between pb-4 border-b", isDarkMode ? "border-zinc-900" : "border-zinc-100")}>
                       <div className="flex items-center gap-2">
-                        <Sliders className="w-4.5 h-4.5 text-blue-400" />
-                        <h2 className="text-xs font-bold uppercase tracking-widest text-white">Voice Core Config</h2>
+                        <Sliders className="w-4 h-4 text-blue-500" />
+                        <h2 className="text-[11px] font-bold uppercase tracking-widest leading-none">Voice Settings</h2>
                       </div>
                       <button 
                         onClick={() => setShowVoiceDrawer(false)}
-                        className="p-1 px-3 rounded-lg bg-zinc-900 border border-zinc-800 text-zinc-400 hover:text-white text-xs cursor-pointer font-bold"
+                        className={cn(
+                          "px-2.5 py-1 rounded-md text-[10px] font-bold cursor-pointer border transition-colors",
+                          isDarkMode 
+                            ? "bg-zinc-900 border-zinc-800 text-zinc-400 hover:text-white" 
+                            : "bg-zinc-100 border-zinc-200 text-zinc-650 hover:text-zinc-900"
+                        )}
                       >
                         Done
                       </button>
                     </div>
 
-                    {/* Standard speech speed preference option */}
-                    <div className="mt-5 space-y-3">
-                      <label className="text-[10px] font-black uppercase tracking-widest text-zinc-450 block">Voice Speed / Tempo</label>
-                      <div className="grid grid-cols-4 gap-2">
+                    {/* Speed Selector */}
+                    <div className="mt-6 space-y-2.5">
+                      <label className={cn("text-[9px] font-bold uppercase tracking-wider block", isDarkMode ? "text-zinc-500" : "text-zinc-400")}>Speech Speed</label>
+                      <div className="grid grid-cols-4 gap-1.5">
                         {SPEEDS.map((sp) => {
                           const isSpSelected = voiceSpeed === sp.value;
                           return (
@@ -578,10 +652,14 @@ export const VoiceMode = ({
                               key={sp.value}
                               onClick={() => setVoiceSpeed(sp.value)}
                               className={cn(
-                                "py-1.5 rounded-lg text-[10px] font-bold border transition-all cursor-pointer",
+                                "py-1.5 rounded-xl text-[10px] font-bold border transition-all cursor-pointer",
                                 isSpSelected 
-                                  ? "bg-blue-500/10 border-blue-500 text-blue-400 shadow-[0_2px_8px_rgba(59,130,246,0.15)]" 
-                                  : "bg-zinc-950 border-zinc-900 text-zinc-450 hover:text-zinc-200"
+                                  ? (isDarkMode 
+                                      ? "bg-blue-500/10 border-blue-500/60 text-blue-400" 
+                                      : "bg-blue-50 border-blue-400 text-blue-600")
+                                  : (isDarkMode 
+                                      ? "bg-zinc-900/40 border-zinc-850 text-zinc-400 hover:text-zinc-200 hover:bg-zinc-900" 
+                                      : "bg-zinc-50 border-zinc-200 text-zinc-550 hover:text-zinc-800 hover:bg-zinc-100")
                               )}
                             >
                               {sp.value}x
@@ -591,11 +669,12 @@ export const VoiceMode = ({
                       </div>
                     </div>
 
-                    <p className="text-xs text-zinc-500 mt-6 mb-3 leading-relaxed">
-                      Select a premium generative text-to-speech option. The selected option is stored automatically.
+                    {/* Assistant speaker options */}
+                    <p className={cn("text-xs mt-6 mb-3 leading-relaxed", isDarkMode ? "text-zinc-500" : "text-zinc-400")}>
+                      Select a premium generative speaker avatar of choice:
                     </p>
 
-                    <div className="flex-1 overflow-y-auto space-y-2 pr-1 h-[30vh] md:h-auto scrollbar-thin scrollbar-thumb-zinc-800">
+                    <div className="flex-1 overflow-y-auto space-y-1.5 pr-0.5 max-h-[40vh] md:max-h-none scrollbar-none">
                       {VOICES.map((voice) => {
                         const isSelected = voiceOption === voice.id;
                         return (
@@ -603,48 +682,58 @@ export const VoiceMode = ({
                             key={voice.id}
                             onClick={() => onVoiceOptionChange(voice.id)}
                             className={cn(
-                              "w-full flex items-center justify-between p-3 rounded-2xl transition-all border cursor-pointer select-none",
+                              "w-full flex items-center justify-between p-2.5 rounded-xl transition-all border cursor-pointer select-none",
                               isSelected 
-                                ? "bg-zinc-900 border-blue-500/50 shadow-[0_4px_20px_rgba(59,130,246,0.1)]" 
-                                : "bg-zinc-950/20 border-zinc-900 hover:bg-zinc-900/40 hover:border-zinc-805"
+                                ? (isDarkMode 
+                                    ? "bg-zinc-900/80 border-blue-500/50" 
+                                    : "bg-blue-500/5 border-blue-500/35")
+                                : (isDarkMode 
+                                    ? "bg-transparent border-zinc-900 hover:bg-zinc-900/40 hover:border-zinc-800" 
+                                    : "bg-transparent border-zinc-100 hover:bg-zinc-50 hover:border-zinc-200")
                             )}
                           >
-                            <div className="flex items-center gap-3">
+                            <div className="flex items-center gap-2.5">
+                              {/* Preview Play Circle */}
                               <button
                                 onClick={(e) => {
                                   e.stopPropagation();
                                   handlePreviewVoice(voice.id);
                                 }}
                                 className={cn(
-                                  "w-9 h-9 rounded-xl flex items-center justify-center transition-all cursor-pointer border",
+                                  "w-8 h-8 rounded-lg flex items-center justify-center transition-all cursor-pointer border",
                                   previewingVoice === voice.id 
-                                    ? "bg-blue-500 border-blue-400 text-white shadow-md shadow-blue-500/20" 
-                                    : "bg-zinc-950 border-zinc-850 text-zinc-400 hover:text-white"
+                                    ? "bg-blue-500 border-blue-400 text-white" 
+                                    : (isDarkMode 
+                                        ? "bg-zinc-950 border-zinc-800 text-zinc-400 hover:text-white" 
+                                        : "bg-white border-zinc-200 text-zinc-500 hover:text-zinc-800")
                                 )}
                                 title="Preview Voice"
                               >
-                                <PlayCircle className={cn("w-4.5 h-4.5", previewingVoice === voice.id && "animate-pulse")} />
+                                <PlayCircle className={cn("w-4 h-4", previewingVoice === voice.id && "animate-pulse")} />
                               </button>
                               
                               <div className="text-left">
                                 <div className="flex items-center gap-1.5">
-                                  <span className="text-xs font-bold text-white leading-none">{voice.name}</span>
+                                  <span className="text-xs font-bold leading-none">{voice.name}</span>
                                   <span className={cn(
-                                    "px-1 py-0.2 rounded text-[7px] font-black uppercase tracking-wider border",
+                                    "px-1 py-0.2 rounded text-[6.5px] font-bold uppercase tracking-wider border",
                                     voice.gender === 'male' 
-                                      ? "bg-cyan-500/10 border-cyan-500/20 text-cyan-400" 
-                                      : "bg-pink-500/10 border-pink-500/20 text-pink-400"
+                                      ? "bg-cyan-500/10 border-cyan-500/20 text-cyan-500" 
+                                      : "bg-pink-500/10 border-pink-500/20 text-pink-500"
                                   )}>
                                     {voice.gender}
                                   </span>
                                 </div>
-                                <span className="text-[10px] text-zinc-500 leading-relaxed block mt-0.5">{voice.desc}</span>
+                                <span className={cn("text-[9.5px] leading-relaxed block mt-0.5", isDarkMode ? "text-zinc-500" : "text-zinc-400")}>{voice.desc}</span>
                               </div>
                             </div>
 
                             {isSelected && (
-                              <div className="w-5 h-5 rounded-full bg-blue-500/10 border border-blue-500/30 flex items-center justify-center">
-                                <Check className="w-3 text-blue-400" strokeWidth={3} />
+                              <div className={cn(
+                                "w-4.5 h-4.5 rounded-full flex items-center justify-center border",
+                                isDarkMode ? "bg-blue-500/10 border-blue-500/40" : "bg-blue-500/15 border-blue-500/40"
+                              )}>
+                                <Check className="w-2.5 text-blue-500" strokeWidth={3} />
                               </div>
                             )}
                           </div>
@@ -653,11 +742,15 @@ export const VoiceMode = ({
                     </div>
                   </div>
 
-                  <div className="pt-4 border-t border-zinc-900 flex flex-col gap-2 shrink-0">
-                    <div className="bg-zinc-900/40 border border-zinc-850 p-3 rounded-xl flex items-start gap-2.5">
-                      <HelpCircle className="w-4 h-4 text-blue-400 shrink-0 mt-0.5" />
-                      <p className="text-[10px] text-zinc-500 leading-normal">
-                        To stop playback at any time during active streams, speak normally or tap the visualizer capsule.
+                  {/* Info Footer popup inside drawer */}
+                  <div className={cn("pt-4 border-t shrink-0 flex flex-col gap-2", isDarkMode ? "border-zinc-900" : "border-zinc-100")}>
+                    <div className={cn(
+                      "p-3 rounded-lg flex items-start gap-2.5 border",
+                      isDarkMode ? "bg-zinc-900/30 border-zinc-850" : "bg-zinc-50 border-zinc-200/60"
+                    )}>
+                      <HelpCircle className="w-4 h-4 text-blue-500 shrink-0 mt-0.5" />
+                      <p className={cn("text-[9.5px] leading-normal", isDarkMode ? "text-zinc-550" : "text-zinc-500")}>
+                        To interrupt spoken response, speak clearly or tap the central START/TAP CORES button.
                       </p>
                     </div>
                   </div>

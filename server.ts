@@ -98,8 +98,10 @@ wss.on("connection", (ws) => {
 
       let fullAccumulatedText = "";
       let sentenceAccumulator = "";
+      let isFirstChunkSent = false;
+      let ttsQueue = Promise.resolve();
 
-      const generateVoiceChunk = async (textChunk: string) => {
+      const generateVoiceChunk = (textChunk: string) => {
         const cleanText = textChunk
           .replace(/```[\s\S]*?```/g, '') // strip code blocks
           .replace(/[*_`#\-]/g, ' ')      // clean markdown styles
@@ -108,26 +110,30 @@ wss.on("connection", (ws) => {
         
         if (cleanText.length < 2) return;
         
-        try {
-          console.log(`[WebSocket] Synthesizing TTS segment: "${cleanText.substring(0, 40)}..."`);
-          const mp3 = await openai.audio.speech.create({
-            model: "tts-1",
-            voice: voice_option as any,
-            input: cleanText,
-          });
-          const buffer = Buffer.from(await mp3.arrayBuffer());
-          const base64Audio = buffer.toString("base64");
-          
-          if (!signal.aborted && ws.readyState === WebSocket.OPEN) {
-            ws.send(JSON.stringify({
-              type: "audio",
-              audio: base64Audio,
-              text: cleanText
-            }));
+        // Chain the promise to ensure strict in-order synthesis and WebSocket delivery
+        ttsQueue = ttsQueue.then(async () => {
+          if (signal.aborted || ws.readyState !== WebSocket.OPEN) return;
+          try {
+            console.log(`[WebSocket] Synthesizing TTS segment: "${cleanText.substring(0, 40)}..."`);
+            const mp3 = await openai.audio.speech.create({
+              model: "tts-1",
+              voice: voice_option as any,
+              input: cleanText,
+            });
+            const buffer = Buffer.from(await mp3.arrayBuffer());
+            const base64Audio = buffer.toString("base64");
+            
+            if (!signal.aborted && ws.readyState === WebSocket.OPEN) {
+              ws.send(JSON.stringify({
+                type: "audio",
+                audio: base64Audio,
+                text: cleanText
+              }));
+            }
+          } catch (err: any) {
+            console.error("[WebSocket] TTS segment generation error:", err.message || err);
           }
-        } catch (err: any) {
-          console.error("[WebSocket] TTS segment generation error:", err.message || err);
-        }
+        });
       };
 
       for await (const chunk of stream) {
@@ -139,14 +145,43 @@ wss.on("connection", (ws) => {
           
           ws.send(JSON.stringify({ type: "text", chunk: text }));
 
-          // Look for sentence bounds to generate TTS asynchronously and immediately
-          const sentenceBoundMatch = sentenceAccumulator.match(/[.!?\n]/);
-          if (sentenceBoundMatch) {
-            const index = sentenceBoundMatch.index || 0;
-            const completeSentence = sentenceAccumulator.substring(0, index + 1).trim();
-            sentenceAccumulator = sentenceAccumulator.substring(index + 1);
+          // For the absolute first segment, if we have accumulated enough words (e.g., 4 or more), trigger TTS immediately
+          let shouldTriggerFirstTTS = false;
+          if (!isFirstChunkSent) {
+            const words = sentenceAccumulator.trim().split(/\s+/);
+            if (words.length >= 4 || sentenceAccumulator.match(/[.!?\n]/)) {
+              shouldTriggerFirstTTS = true;
+            }
+          }
 
-            if (completeSentence.length > 2) {
+          const boundMatch = sentenceAccumulator.match(/[,;:.!?\n]/);
+          let shouldSplit = shouldTriggerFirstTTS;
+          let splitIndex = -1;
+
+          if (shouldSplit) {
+            if (boundMatch) {
+              splitIndex = boundMatch.index || 0;
+            } else {
+              // Split on the last space
+              splitIndex = sentenceAccumulator.lastIndexOf(" ");
+            }
+          } else if (boundMatch) {
+            shouldSplit = true;
+            splitIndex = boundMatch.index || 0;
+          } else if (sentenceAccumulator.length > 55) {
+            const lastSpace = sentenceAccumulator.lastIndexOf(" ");
+            if (lastSpace > 25) {
+              shouldSplit = true;
+              splitIndex = lastSpace;
+            }
+          }
+
+          if (shouldSplit && splitIndex !== -1) {
+            const completeSentence = sentenceAccumulator.substring(0, splitIndex + 1).trim();
+            sentenceAccumulator = sentenceAccumulator.substring(splitIndex + 1);
+
+            if (completeSentence.length > 1) {
+              isFirstChunkSent = true;
               generateVoiceChunk(completeSentence);
             }
           }
@@ -154,8 +189,11 @@ wss.on("connection", (ws) => {
       }
 
       if (!signal.aborted && sentenceAccumulator.trim().length > 2) {
-        await generateVoiceChunk(sentenceAccumulator.trim());
+        generateVoiceChunk(sentenceAccumulator.trim());
       }
+
+      // Wait for all active speech synthesis tasks in queue to finish transmitting before completing stream event
+      await ttsQueue;
 
       if (!signal.aborted && ws.readyState === WebSocket.OPEN) {
         ws.send(JSON.stringify({ type: "done", fullText: fullAccumulatedText }));

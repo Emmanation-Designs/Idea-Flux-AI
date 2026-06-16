@@ -755,7 +755,7 @@ export default function App() {
           if (silenceTimer) clearTimeout(silenceTimer);
           silenceTimer = setTimeout(() => {
             handleSpeechEnd();
-          }, 850); // Slightly lowered for snappier feel
+          }, 350); // Cut down to 350ms for ultra-responsive voice control
         } else {
           interimTranscript = currentResult[0].transcript;
           setStreamingMessage(interimTranscript);
@@ -782,7 +782,7 @@ export default function App() {
           if (silenceTimer) clearTimeout(silenceTimer);
           silenceTimer = setTimeout(() => {
             handleSpeechEnd();
-          }, 1100); // Wait a bit longer for interim since user might still be talking
+          }, 650); // Lowered to 650ms for extremely snappy conversational responses
         }
 
         function handleSpeechEnd() {
@@ -844,6 +844,13 @@ export default function App() {
       return () => clearTimeout(timer);
     }
   }, [currentResponse]);
+
+  useEffect(() => {
+    if (showVoiceMode) {
+      // Eagerly pre-warm and connect WebSocket when Voice Mode enters
+      connectWebSocket();
+    }
+  }, [showVoiceMode]);
 
   useEffect(() => {
     if (showVoiceMode && !isListening && !isPlaying && !isLoading && !isMuted && !isVoiceQueuePlayingRef.current) {
@@ -995,6 +1002,90 @@ export default function App() {
       console.error("SpeechSynthesis initiation error:", error);
       setIsPlaying(false);
       setCurrentlyPlayingMessageId(null);
+    }
+  };
+
+  const speakSegment = (text: string) => {
+    if (!text) return;
+    try {
+      // Clean Markdown of asterisks, hashes, backticks, and code blocks for smooth natural reading
+      const cleanText = text
+        .replace(/```[\s\S]*?```/g, '') // remove code blocks entirely
+        .replace(/[*_`#\-]/g, ' ')      // strip markdown markers
+        .replace(/\s+/g, ' ')           // collapse whitespace
+        .trim();
+
+      if (!cleanText) return;
+
+      const utterance = new SpeechSynthesisUtterance(cleanText);
+      utterance.volume = isSpeakerOn ? 1.0 : 0.0;
+
+      // Select matching gender/personality local voice from device
+      const voices = window.speechSynthesis.getVoices();
+      const voiceData = VOICES.find(v => v.id === voiceOption);
+      let selectedVoice = voices.find(v => v.name.toLowerCase().includes(voiceOption.toLowerCase()));
+
+      if (!selectedVoice && voiceData) {
+        const targetGender = voiceData.gender || 'male';
+        const maleKeywords = ['male', 'david', 'mark', 'guy', 'daniel', 'alex', 'james', 'thomas', 'george', 'paul'];
+        const femaleKeywords = ['female', 'zira', 'samantha', 'victoria', 'susan', 'amy', 'linda', 'mary', 'emma', 'hazel', 'ira'];
+        const keywords = targetGender === 'male' ? maleKeywords : femaleKeywords;
+
+        selectedVoice = voices.find(v => {
+          const name = v.name.toLowerCase();
+          return keywords.some(k => name.includes(k));
+        });
+      }
+
+      if (selectedVoice) {
+        utterance.voice = selectedVoice;
+      }
+
+      // Configure beautiful native pitch/rate calibrations for the selected persona
+      if (voiceOption === 'onyx' || voiceOption === 'echo' || voiceOption === 'atlas') {
+        utterance.pitch = voiceOption === 'onyx' ? 0.8 : voiceOption === 'echo' ? 0.85 : 0.95;
+        utterance.rate = 0.95;
+      } else if (voiceOption === 'fable') {
+        utterance.pitch = 1.05;
+        utterance.rate = 1.0;
+      } else if (voiceOption === 'shimmer') {
+        utterance.pitch = 1.22;
+        utterance.rate = 1.08;
+      } else if (voiceOption === 'nova') {
+        utterance.pitch = 1.15;
+        utterance.rate = 1.05;
+      }
+
+      utterance.onstart = () => {
+        setIsPlaying(true);
+      };
+
+      utterance.onend = () => {
+        if (!window.speechSynthesis.speaking && !window.speechSynthesis.pending) {
+          setIsPlaying(false);
+          if (showVoiceMode && !isMuted) {
+            setTimeout(() => {
+              try { recognitionRef.current?.start(); } catch (e) {}
+            }, 300);
+          }
+        }
+      };
+
+      utterance.onerror = (e) => {
+        console.error("SpeechSynthesis segment error:", e);
+        if (!window.speechSynthesis.speaking && !window.speechSynthesis.pending) {
+          setIsPlaying(false);
+          if (showVoiceMode && !isMuted) {
+            setTimeout(() => {
+              try { recognitionRef.current?.start(); } catch (e) {}
+            }, 300);
+          }
+        }
+      };
+
+      window.speechSynthesis.speak(utterance);
+    } catch (error) {
+      console.error("SpeechSynthesis speakSegment error:", error);
     }
   };
 
@@ -1852,10 +1943,13 @@ export default function App() {
       const reader = response.body?.getReader();
       const decoder = new TextDecoder();
       let fullContent = '';
+      let sentenceAccumulator = '';
 
       if (!reader) {
         throw new Error('Streaming response not available');
       }
+
+      const isVoicePlaybackEnabled = (conv.type === 'voice' || showVoiceMode) && (shouldPlayVoice || autoPlayVoice);
 
       while (true) {
         const { done, value } = await reader.read();
@@ -1866,6 +1960,26 @@ export default function App() {
         if (showVoiceMode) {
           setCurrentResponse(prev => prev + chunk);
         }
+
+        if (isVoicePlaybackEnabled) {
+          sentenceAccumulator += chunk;
+          // Match sentence boundary (., !, ?, \n)
+          const terminators = /[.!?\n]/;
+          const match = sentenceAccumulator.match(terminators);
+          if (match && match.index !== undefined) {
+            const splitIndex = match.index;
+            const completedSentence = sentenceAccumulator.substring(0, splitIndex + 1).trim();
+            sentenceAccumulator = sentenceAccumulator.substring(splitIndex + 1);
+
+            if (completedSentence.length > 1) {
+              speakSegment(completedSentence);
+            }
+          }
+        }
+      }
+
+      if (isVoicePlaybackEnabled && sentenceAccumulator.trim().length > 1) {
+        speakSegment(sentenceAccumulator.trim());
       }
 
       const assistantMessage: Message = {
@@ -1880,8 +1994,7 @@ export default function App() {
       setMessages(finalMessages);
       setStreamingMessage('');
 
-      if ((conv.type === 'voice' || showVoiceMode) && (shouldPlayVoice || autoPlayVoice)) {
-        playVoice(fullContent);
+      if (isVoicePlaybackEnabled) {
         setShouldPlayVoice(false);
       }
 
@@ -2950,6 +3063,7 @@ export default function App() {
           profile={profile}
           currentTranscript={currentTranscript}
           currentResponse={currentResponse}
+          isDarkMode={isDarkMode}
         />
       </AnimatePresence>
 
