@@ -283,7 +283,12 @@ export default function App() {
   const [streamingMessage, setStreamingMessage] = useState('');
   const [activeView, setActiveView] = useState<'chat' | 'history' | 'apps' | 'images' | 'settings'>('chat');
   const [isListening, setIsListening] = useState(false);
-  const [voiceOption, setVoiceOption] = useState<string>('echo');
+  const [voiceOption, setVoiceOption] = useState<string>(() => {
+    return localStorage.getItem('trelvix_voice_option') || 'echo';
+  });
+  const [voiceSpeed, setVoiceSpeed] = useState<number>(() => {
+    return Number(localStorage.getItem('trelvix_voice_speed') || '1.0');
+  });
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentAudio, setCurrentAudio] = useState<HTMLAudioElement | null>(null);
   const [currentlyPlayingMessageId, setCurrentlyPlayingMessageId] = useState<string | null>(null);
@@ -305,6 +310,14 @@ export default function App() {
   const [currentImagePrompt, setCurrentImagePrompt] = useState('');
   const [timerCount, setTimerCount] = useState(0);
   const [currentStageText, setCurrentStageText] = useState('Initializing Trelvix Visual Engine...');
+
+  useEffect(() => {
+    localStorage.setItem('trelvix_voice_option', voiceOption);
+  }, [voiceOption]);
+
+  useEffect(() => {
+    localStorage.setItem('trelvix_voice_speed', voiceSpeed.toString());
+  }, [voiceSpeed]);
 
   // Dynamically resolve absolute URL paths for OpenGraph & Twitter crawler compatibility
   useEffect(() => {
@@ -780,8 +793,7 @@ export default function App() {
             transcriptRef.current = '';
             setCurrentTranscript('');
             setStreamingMessage('');
-            setShouldPlayVoice(true);
-            sendMessage(finalSpeech);
+            sendVoiceMessageWS(finalSpeech);
             try { recognitionRef.current?.stop(); } catch(e) {}
           } else {
             // For regular input "handsfree", we might want to auto-send if it's a significant pause
@@ -800,22 +812,23 @@ export default function App() {
       };
 
       recognitionRef.current.onerror = (event: any) => {
-        if (event.error !== 'no-speech') console.error("Speech error:", event.error);
+        if (event.error !== 'no-speech' && event.error !== 'aborted') {
+          console.error("Speech error:", event.error);
+        }
         setIsListening(false);
       };
 
       recognitionRef.current.onend = () => {
         setIsListening(false);
-        // More aggressive restart: restart if voice mode is on and we are not Muted.
-        // We handle isPlaying/isLoading inside onresult to prevent loops.
-        if (showVoiceMode && !isMuted) {
+        // Aggressively restart if voice mode is active and we are not muted or in playback
+        if (showVoiceMode && !isMuted && !isVoiceQueuePlayingRef.current && !isLoading && !isPlaying) {
           setTimeout(() => {
             try { 
               if (showVoiceMode && !isListening) {
                 recognitionRef.current?.start(); 
               }
             } catch(e) {}
-          }, 200);
+          }, 150);
         }
       };
     }
@@ -827,15 +840,19 @@ export default function App() {
   useEffect(() => {
     if (currentResponse && currentTranscript) {
       // Keep transcript for a moment then clear
-      const timer = setTimeout(() => setCurrentTranscript(''), 2000);
+      const timer = setTimeout(() => setCurrentTranscript(''), 3000);
       return () => clearTimeout(timer);
     }
   }, [currentResponse]);
 
   useEffect(() => {
-    if (showVoiceMode && !isListening && !isPlaying && !isLoading && !isMuted) {
+    if (showVoiceMode && !isListening && !isPlaying && !isLoading && !isMuted && !isVoiceQueuePlayingRef.current) {
       setTimeout(() => {
-        try { recognitionRef.current?.start(); } catch(e) {}
+        try { 
+          if (showVoiceMode && !isListening) {
+            recognitionRef.current?.start(); 
+          }
+        } catch(e) {}
       }, 500);
     }
   }, [showVoiceMode, isListening, isPlaying, isLoading, isMuted]);
@@ -1390,6 +1407,217 @@ export default function App() {
     if (fileInputRef.current) {
       fileInputRef.current.value = '';
     }
+  };
+
+  // Real-Time Streaming WebSocket and Audio Queue Refs and States
+  const socketRef = useRef<WebSocket | null>(null);
+  const playVoiceQueueRef = useRef<string[]>([]);
+  const isVoiceQueuePlayingRef = useRef<boolean>(false);
+
+  const connectWebSocket = () => {
+    if (socketRef.current && socketRef.current.readyState === WebSocket.OPEN) {
+      return socketRef.current;
+    }
+    
+    const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws';
+    const wsUrl = `${wsProtocol}//${window.location.host}`;
+    console.log("[WebSocket] Connecting to", wsUrl);
+    
+    const socket = new WebSocket(wsUrl);
+    socketRef.current = socket;
+    
+    socket.onopen = () => {
+      console.log("[WebSocket] Opened stream channel");
+    };
+    
+    socket.onclose = () => {
+      console.log("[WebSocket] Closed stream channel");
+      socketRef.current = null;
+    };
+    
+    socket.onerror = (err) => {
+      console.error("[WebSocket] Connection error:", err);
+    };
+    
+    return socket;
+  };
+
+  const stopPlayingVoiceQueue = () => {
+    if (currentAudio) {
+      currentAudio.pause();
+      currentAudio.onended = null;
+      setCurrentAudio(null);
+    }
+    // Clean all URLs in play queue
+    playVoiceQueueRef.current.forEach(url => {
+      try { URL.revokeObjectURL(url); } catch(e) {}
+    });
+    playVoiceQueueRef.current = [];
+    isVoiceQueuePlayingRef.current = false;
+    setIsPlaying(false);
+  };
+
+  const startPlayingVoiceQueue = () => {
+    if (isVoiceQueuePlayingRef.current) return;
+    isVoiceQueuePlayingRef.current = true;
+    playNextInVoiceQueue();
+  };
+
+  const playNextInVoiceQueue = () => {
+    if (!showVoiceMode || playVoiceQueueRef.current.length === 0) {
+      isVoiceQueuePlayingRef.current = false;
+      setIsPlaying(false);
+      // Continuous micro resume
+      if (showVoiceMode && !isMuted && !isLoading) {
+        setTimeout(() => {
+          try { 
+            if (showVoiceMode && !isListening) {
+              recognitionRef.current?.start(); 
+            }
+          } catch(e) {}
+        }, 300);
+      }
+      return;
+    }
+
+    const nextAudioUrl = playVoiceQueueRef.current.shift();
+    if (!nextAudioUrl) {
+      isVoiceQueuePlayingRef.current = false;
+      setIsPlaying(false);
+      return;
+    }
+
+    const audio = new Audio(nextAudioUrl);
+    // Sync speed preference
+    const savedSpeed = Number(localStorage.getItem('trelvix_voice_speed') || '1.0');
+    audio.playbackRate = savedSpeed;
+
+    setCurrentAudio(audio);
+    setIsPlaying(true);
+
+    audio.onended = () => {
+      try { URL.revokeObjectURL(nextAudioUrl); } catch(e) {}
+      playNextInVoiceQueue();
+    };
+
+    audio.onerror = (e) => {
+      console.error("Audio block playback error:", e);
+      try { URL.revokeObjectURL(nextAudioUrl); } catch(e) {}
+      playNextInVoiceQueue();
+    };
+
+    audio.play().catch(err => {
+      console.error("[Audio] Could not run audio chunk play:", err);
+      try { URL.revokeObjectURL(nextAudioUrl); } catch(e) {}
+      playNextInVoiceQueue();
+    });
+  };
+
+  const sendVoiceMessageWS = async (content: string) => {
+    const userMessage: Message = {
+      id: safeUUID(),
+      role: 'user',
+      content,
+      created_at: new Date().toISOString()
+    };
+
+    const updatedMessages = [...messages, userMessage];
+    setMessages(updatedMessages);
+    setIsLoading(true);
+    setCurrentTranscript(content);
+    setCurrentResponse('');
+    setStreamingMessage('');
+
+    // Ensure we stop and clear standard audio
+    stopPlayingVoiceQueue();
+    window.speechSynthesis.cancel();
+
+    let conv = currentConversation;
+    try {
+      if (!conv) {
+        conv = await startConversation('voice', content.slice(0, 30) || 'Voice Session', content, {}, false);
+      }
+      if (conv) {
+        await updateConversationMessages(conv.id, updatedMessages);
+        setConversations(prev => prev.map(c => c.id === conv.id ? { ...c, messages: updatedMessages, updated_at: new Date().toISOString() } : c));
+      }
+    } catch(e) {
+      console.warn("Lazily syncing conversation in WS stream failed:", e);
+    }
+
+    const socket = connectWebSocket();
+    
+    socket.onmessage = async (event) => {
+      try {
+        const data = JSON.parse(event.data);
+        if (data.type === "text") {
+          setCurrentResponse(prev => prev + data.chunk);
+          setStreamingMessage(prev => prev + data.chunk);
+        } else if (data.type === "audio") {
+          if (isSpeakerOn) {
+            const binaryStr = atob(data.audio);
+            const len = binaryStr.length;
+            const bytes = new Uint8Array(len);
+            for (let i = 0; i < len; i++) {
+              bytes[i] = binaryStr.charCodeAt(i);
+            }
+            const blob = new Blob([bytes], { type: 'audio/mp3' });
+            const audioUrl = URL.createObjectURL(blob);
+            
+            playVoiceQueueRef.current.push(audioUrl);
+            startPlayingVoiceQueue();
+          }
+        } else if (data.type === "done") {
+          setIsLoading(false);
+          setStreamingMessage('');
+          
+          const assistantMessage: Message = {
+            id: safeUUID(),
+            role: 'assistant',
+            content: data.fullText,
+            model: 'trelvix-mini',
+            created_at: new Date().toISOString()
+          };
+          
+          const finalMessages = [...updatedMessages, assistantMessage];
+          setMessages(finalMessages);
+          
+          if (conv) {
+            await updateConversationMessages(conv.id, finalMessages);
+          }
+        } else if (data.type === "error") {
+          toast.error(data.message);
+          setIsLoading(false);
+        }
+      } catch (err) {
+        console.error("WebSocket message parse error:", err);
+      }
+    };
+
+    if (socket.readyState !== WebSocket.OPEN) {
+      await new Promise<void>((resolve, reject) => {
+        const checkState = () => {
+          if (socket.readyState === WebSocket.OPEN) {
+            resolve();
+          } else if (socket.readyState === WebSocket.CLOSED) {
+            reject(new Error("Socket connection closed"));
+          } else {
+            setTimeout(checkState, 50);
+          }
+        };
+        checkState();
+      });
+    }
+
+    socket.send(JSON.stringify({
+      type: "chat",
+      messages: updatedMessages.map(m => ({ role: m.role, content: m.content })),
+      voice_option: voiceOption,
+      personality: profile?.personality || 'creative',
+      model: 'trelvix-mini',
+      conversationId: conv?.id,
+      userId: user?.id
+    }));
   };
 
   const sendMessage = async (content: string, convOverride?: any) => {
@@ -2190,7 +2418,7 @@ export default function App() {
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pb-12">
                     {conversations.map((conv, index) => (
                       <div
-                        key={`${conv.id || index}-${index}`}
+                        key={`history-conv-${conv.id || index}`}
                         className="p-6 bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-3xl text-left hover:border-zinc-400 dark:hover:border-zinc-600 transition-all group relative hover:shadow-xl"
                       >
                       <div onClick={() => {
@@ -2237,7 +2465,7 @@ export default function App() {
                 <div className="max-w-3xl mx-auto w-full px-4 py-8 md:py-12 space-y-10 pb-36">
                   {messages.map((m, index) => (
                     <div 
-                      key={`${m.id || index}-${index}`} 
+                      key={`chat-msg-${m.id || index}`} 
                       onClick={() => setActiveMessageId(activeMessageId === m.id ? null : m.id)}
                       className={cn(
                         "flex w-full cursor-pointer md:cursor-default",
@@ -2697,9 +2925,10 @@ export default function App() {
           onClose={() => {
             setShowVoiceMode(false);
             window.speechSynthesis.cancel();
-            if (currentAudio) {
-              currentAudio.pause();
-              setCurrentAudio(null);
+            stopPlayingVoiceQueue();
+            if (socketRef.current) {
+              socketRef.current.close();
+              socketRef.current = null;
             }
             try {
               recognitionRef.current?.stop();
@@ -2718,6 +2947,9 @@ export default function App() {
           onToggleSpeaker={() => setIsSpeakerOn(!isSpeakerOn)}
           voiceOption={voiceOption}
           onVoiceOptionChange={(voice) => setVoiceOption(voice as any)}
+          profile={profile}
+          currentTranscript={currentTranscript}
+          currentResponse={currentResponse}
         />
       </AnimatePresence>
 

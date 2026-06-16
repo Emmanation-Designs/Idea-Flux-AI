@@ -6,6 +6,8 @@ import Stripe from "stripe";
 import { createClient } from "@supabase/supabase-js";
 import fs from "fs";
 import crypto from "crypto";
+import http from "http";
+import { WebSocketServer, WebSocket } from "ws";
 
 // Import Vite types only for type checking
 import type { ViteDevServer } from "vite";
@@ -14,6 +16,188 @@ console.log("Server script starting...");
 dotenv.config();
 
 const app = express();
+const server = http.createServer(app);
+const wss = new WebSocketServer({ noServer: true });
+
+// Upgrade incoming HTTP protocol requests safely to WebSockets on the same port
+server.on("upgrade", (request, socket, head) => {
+  wss.handleUpgrade(request, socket, head, (ws) => {
+    wss.emit("connection", ws, request);
+  });
+});
+
+// Setup Real-Time Streaming Websocket connections
+wss.on("connection", (ws) => {
+  console.log("[WebSocket] Client connected");
+  let openAiStreamAbortController: AbortController | null = null;
+
+  ws.on("message", async (messageStr) => {
+    try {
+      const payload = JSON.parse(messageStr.toString());
+      if (payload.type === "ping") {
+        ws.send(JSON.stringify({ type: "pong" }));
+        return;
+      }
+      if (payload.type === "abort") {
+        if (openAiStreamAbortController) {
+          openAiStreamAbortController.abort();
+          openAiStreamAbortController = null;
+        }
+        return;
+      }
+
+      const { messages = [], voice_option = "echo", personality = "creative", model = "trelvix-mini", conversationId, userId } = payload;
+      
+      if (openAiStreamAbortController) {
+        openAiStreamAbortController.abort();
+      }
+      openAiStreamAbortController = new AbortController();
+      const signal = openAiStreamAbortController.signal;
+
+      const apiKey = process.env.OPENAI_API_KEY;
+      if (!apiKey) {
+        ws.send(JSON.stringify({ type: "error", message: "API Key missing" }));
+        return;
+      }
+      const openai = new OpenAI({ apiKey });
+
+      let realModel = "gpt-4o-mini";
+      if (model === "trelvix-ultra") {
+        realModel = "gpt-4o";
+      }
+
+      const attributionRules = `Your name is Trelvix AI. Developed by Ingenium Virtual Assistant Limited. You are powered by a custom, high-intelligence engine.`;
+      const personalityPrompts = {
+        professional: "Be direct, authoritative, and sharp. No fluff.",
+        creative: "Be wild, vividly descriptive, and boundary-pushing.",
+        witty: "Use a sharp, edgy, and slightly rebellious tone. Think Grok Fun Mode—unfiltered and clever.",
+        concise: "Ultra-brief. Butcher the word count.",
+        empathetic: "Be real. Skip the fake warmth; show actual understanding.",
+        academic: "Cold, hard facts. Precise and lethal logic."
+      };
+      
+      let systemInstruction = `You are Trelvix AI. ${attributionRules}
+      Persona: ${personalityPrompts[personality as keyof typeof personalityPrompts] || personalityPrompts.creative}
+      CORE PROTOCOL:
+      - BE DIRECT. Do not behave like an over-polished corporate AI assistant. Keep statements conversational, highly readable, and medium-brief for natural spoken voice output.
+      - NEVER mention OpenAI or your status as an AI unless strictly necessary.`;
+
+      const openAiMessages = [
+        { role: "system", content: systemInstruction },
+        ...messages.map((m: any) => ({ role: m.role, content: m.content || "" }))
+      ];
+
+      console.log(`[WebSocket] Starting OpenAI chat stream with model ${realModel}...`);
+      const stream = await openai.chat.completions.create({
+        model: realModel,
+        messages: openAiMessages as any,
+        stream: true,
+        temperature: 0.7,
+        max_tokens: 1500,
+      }, { signal });
+
+      let fullAccumulatedText = "";
+      let sentenceAccumulator = "";
+
+      const generateVoiceChunk = async (textChunk: string) => {
+        const cleanText = textChunk
+          .replace(/```[\s\S]*?```/g, '') // strip code blocks
+          .replace(/[*_`#\-]/g, ' ')      // clean markdown styles
+          .replace(/\s+/g, ' ')
+          .trim();
+        
+        if (cleanText.length < 2) return;
+        
+        try {
+          console.log(`[WebSocket] Synthesizing TTS segment: "${cleanText.substring(0, 40)}..."`);
+          const mp3 = await openai.audio.speech.create({
+            model: "tts-1",
+            voice: voice_option as any,
+            input: cleanText,
+          });
+          const buffer = Buffer.from(await mp3.arrayBuffer());
+          const base64Audio = buffer.toString("base64");
+          
+          if (!signal.aborted && ws.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify({
+              type: "audio",
+              audio: base64Audio,
+              text: cleanText
+            }));
+          }
+        } catch (err: any) {
+          console.error("[WebSocket] TTS segment generation error:", err.message || err);
+        }
+      };
+
+      for await (const chunk of stream) {
+        if (signal.aborted) break;
+        const text = chunk.choices[0]?.delta?.content || "";
+        if (text) {
+          fullAccumulatedText += text;
+          sentenceAccumulator += text;
+          
+          ws.send(JSON.stringify({ type: "text", chunk: text }));
+
+          // Look for sentence bounds to generate TTS asynchronously and immediately
+          const sentenceBoundMatch = sentenceAccumulator.match(/[.!?\n]/);
+          if (sentenceBoundMatch) {
+            const index = sentenceBoundMatch.index || 0;
+            const completeSentence = sentenceAccumulator.substring(0, index + 1).trim();
+            sentenceAccumulator = sentenceAccumulator.substring(index + 1);
+
+            if (completeSentence.length > 2) {
+              generateVoiceChunk(completeSentence);
+            }
+          }
+        }
+      }
+
+      if (!signal.aborted && sentenceAccumulator.trim().length > 2) {
+        await generateVoiceChunk(sentenceAccumulator.trim());
+      }
+
+      if (!signal.aborted && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: "done", fullText: fullAccumulatedText }));
+        
+        if (conversationId && userId) {
+          const assistantMessage = {
+            id: crypto.randomUUID(),
+            role: 'assistant',
+            content: fullAccumulatedText,
+            model: model,
+            created_at: new Date().toISOString()
+          };
+          appendReplyToConversation(
+            conversationId,
+            assistantMessage,
+            userId,
+            'voice',
+            messages
+          ).catch(console.error);
+        }
+      }
+
+    } catch (err: any) {
+      if (err.name === 'AbortError') {
+        console.log("[WebSocket] Active generation aborted by user");
+        return;
+      }
+      console.error("[WebSocket] Connection handler error:", err);
+      if (ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: "error", message: err.message || "Streaming failed" }));
+      }
+    }
+  });
+
+  ws.on("close", () => {
+    console.log("[WebSocket] Client disconnected");
+    if (openAiStreamAbortController) {
+      openAiStreamAbortController.abort();
+    }
+  });
+});
+
 const PORT = Number(process.env.PORT) || 3000;
 
 app.use(express.json({
@@ -1016,8 +1200,8 @@ if ((process.env.NODE_ENV !== "production" || !hasBuiltDist) && !process.env.VER
       appType: "spa",
     });
     app.use(vite.middlewares);
-    app.listen(PORT, "0.0.0.0", () => {
-      console.log(`Development server running on http://localhost:${PORT} (Vite mode)`);
+    server.listen(PORT, "0.0.0.0", () => {
+      console.log(`Development server running on http://localhost:${PORT} (Vite mode with WebSockets)`);
     });
   };
   startServer();
@@ -1029,7 +1213,7 @@ if ((process.env.NODE_ENV !== "production" || !hasBuiltDist) && !process.env.VER
   app.get("*", (req, res) => {
     res.sendFile(path.join(distPath, "index.html"));
   });
-  app.listen(PORT, "0.0.0.0", () => {
-    console.log(`Production server running on port ${PORT}`);
+  server.listen(PORT, "0.0.0.0", () => {
+    console.log(`Production server running on port ${PORT} with WebSockets`);
   });
 }

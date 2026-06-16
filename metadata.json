@@ -1,5 +1,6 @@
 {
   "name": "Trelvix AI",
   "description": "A clean, modern AI-powered idea and script generator inspired by Grok.",
-  "requestFramePermissions": ["microphone"]
+  "requestFramePermissions": ["microphone"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }
