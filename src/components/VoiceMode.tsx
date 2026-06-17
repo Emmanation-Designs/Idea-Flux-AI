@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
   X, 
@@ -19,6 +19,7 @@ import {
 } from 'lucide-react';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
+import { toast } from 'sonner';
 
 function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
@@ -93,6 +94,263 @@ export const VoiceMode = ({
   const [copied, setCopied] = useState<boolean>(false);
   const [liked, setLiked] = useState<boolean | null>(null);
 
+  // OpenAI Realtime WebRTC states
+  const [localIsListening, setLocalIsListening] = useState(false);
+  const [localIsPlaying, setLocalIsPlaying] = useState(false);
+  const [localIsLoading, setLocalIsLoading] = useState(false);
+  const [localCurrentTranscript, setLocalCurrentTranscript] = useState("");
+  const [localCurrentResponseText, setLocalCurrentResponseText] = useState("");
+  const [localIsSpeakerOn, setLocalIsSpeakerOn] = useState(true);
+  const [connectionStatus, setConnectionStatus] = useState<"idle" | "connecting" | "connected" | "error">("idle");
+
+  const peerConnectionRef = useRef<RTCPeerConnection | null>(null);
+  const dataChannelRef = useRef<RTCDataChannel | null>(null);
+  const localStreamRef = useRef<MediaStream | null>(null);
+  const audioElRef = useRef<HTMLAudioElement | null>(null);
+  const lastUserTextRef = useRef("");
+
+  // Dialogue synchronization callback from window bridge
+  const onAddMessagePair = (isOpen && (window as any).__addVoiceMessagePair) || undefined;
+
+  const startWebRTC = async () => {
+    try {
+      console.log("[WebRTC] Establishing peer connection channel...");
+      setConnectionStatus("connecting");
+      setLocalIsLoading(true);
+      setLocalCurrentTranscript("");
+      setLocalCurrentResponseText("");
+
+      // 1. Obtain ephemeral session token from backend Express secure proxy
+      const response = await fetch("/api/realtime/session", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          voice_option: voiceOption,
+          instructions: `Your name is Trelvix AI. Developed by Ingenium Virtual Assistant Limited. You are powered by a custom, high-intelligence engine. Personas/Tone: Crisp, direct, professional and engaging. Warm when needed, but never robotic. Avoid sounding overly corporate. Keep dialogue very brief and highly conversational.`
+        })
+      });
+
+      if (!response.ok) {
+        throw new Error(`Failed to initialize credentials handshake: Secure backend returned status ${response.status}`);
+      }
+
+      const data = await response.json();
+      const ephemeralToken = data.client_secret?.value;
+      if (!ephemeralToken) {
+        throw new Error("Client token was missing in session credential allocation object");
+      }
+
+      // 2. Initialize vanilla RTCPeerConnection over standard ICE candidates
+      const pc = new RTCPeerConnection({
+        iceServers: [{ urls: "stun:stun.l.google.com:19302" }]
+      });
+      peerConnectionRef.current = pc;
+
+      // 3. Audio output player configuration
+      const audioEl = document.createElement("audio");
+      audioEl.autoplay = true;
+      audioElRef.current = audioEl;
+
+      pc.ontrack = (event) => {
+        console.log("[WebRTC] Audio track linked from OpenAI system");
+        audioEl.srcObject = event.streams[0];
+        setLocalIsPlaying(true);
+      };
+
+      // 4. Connect Microphone Track locally
+      const mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      localStreamRef.current = mediaStream;
+      const micTrack = mediaStream.getTracks()[0];
+      pc.addTrack(micTrack);
+
+      // 5. Establish control Data Channel
+      const dc = pc.createDataChannel("oai-events");
+      dataChannelRef.current = dc;
+
+      dc.onopen = () => {
+        console.log("[WebRTC] Handshake completed successfully, channel active");
+        setConnectionStatus("connected");
+        setLocalIsListening(true);
+        setLocalIsLoading(false);
+
+        // Instruct OpenAI to enable automatic transcribing of our spoken voices
+        const sessionUpdate = {
+          type: "session.update",
+          session: {
+            modalities: ["audio", "text"],
+            instructions: `Your name is Trelvix AI. Developed by Ingenium Virtual Assistant Limited. You are powered by a custom, high-intelligence engine. Your persona is: direct, authoritative, engaging, concise. Keep statements extremely conversational and brief for spoken speech. NEVER mention OpenAI or your status as an AI unless strictly necessary.`,
+            input_audio_transcription: {
+              model: "whisper-1"
+            },
+            turn_detection: {
+              type: "server_vad",
+              threshold: 0.5,
+              prefix_padding_ms: 300,
+              silence_duration_ms: 500
+            }
+          }
+        };
+        dc.send(JSON.stringify(sessionUpdate));
+      };
+
+      dc.onmessage = (event) => {
+        try {
+          const ev = JSON.parse(event.data);
+          
+          if (ev.type === "response.created") {
+            setLocalIsLoading(true);
+            setLocalIsPlaying(false);
+          }
+
+          if (ev.type === "response.output_item.added") {
+            setLocalIsPlaying(true);
+            setLocalIsLoading(false);
+          }
+
+          if (ev.type === "response.audio_transcript.delta") {
+            setLocalIsPlaying(true);
+            setLocalIsLoading(false);
+            setLocalCurrentResponseText(prev => prev + ev.delta);
+          }
+
+          if (ev.type === "conversation.item.input_audio_transcription.completed") {
+            const userSpeechText = ev.transcript?.trim();
+            if (userSpeechText) {
+              setLocalCurrentTranscript(userSpeechText);
+              lastUserTextRef.current = userSpeechText;
+            }
+          }
+
+          if (ev.type === "input_audio_buffer.speech_started") {
+            console.log("[WebRTC Barge-in] User speech overlay detected. Silencing stream...");
+            setLocalIsPlaying(false);
+            setLocalIsLoading(false);
+            
+            if (dataChannelRef.current && dataChannelRef.current.readyState === "open") {
+              dataChannelRef.current.send(JSON.stringify({ type: "response.cancel" }));
+            }
+            
+            setLocalCurrentResponseText("");
+          }
+
+          if (ev.type === "response.done") {
+            setLocalIsLoading(false);
+            setLocalIsPlaying(false);
+
+            const userVal = lastUserTextRef.current;
+            const assistantVal = ev.response?.output?.[0]?.content?.[0]?.transcript || "";
+            if (userVal) {
+              console.log(`[WebRTC Exchange] Syncing User: "${userVal}", Assistant: "${assistantVal}"`);
+              if (onAddMessagePair) {
+                onAddMessagePair(userVal, assistantVal);
+              }
+              lastUserTextRef.current = ""; // Reset turn
+            }
+          }
+
+        } catch (err) {
+          console.error("WebRTC message parsing error:", err);
+        }
+      };
+
+      // 6. SDP negotiation handshake
+      const offer = await pc.createOffer();
+      await pc.setLocalDescription(offer);
+
+      const sdpResponse = await fetch("https://api.openai.com/v1/realtime?model=gpt-4o-mini-realtime-preview-2024-12-17", {
+        method: "POST",
+        body: offer.sdp,
+        headers: {
+          "Authorization": `Bearer ${ephemeralToken}`,
+          "Content-Type": "application/sdp"
+        }
+      });
+
+      if (!sdpResponse.ok) {
+        const errDetails = await sdpResponse.text();
+        throw new Error(`SDP Exchange handshake failed with status ${sdpResponse.status}: ${errDetails}`);
+      }
+
+      const answerSdp = await sdpResponse.text();
+      await pc.setRemoteDescription({ type: "answer", sdp: answerSdp });
+      console.log("[WebRTC] Session established successfully");
+
+    } catch (err: any) {
+      console.error("[WebRTC] Initialization error observed:", err);
+      setConnectionStatus("error");
+      setLocalIsLoading(false);
+      toast.error(err.message || "Failed to start real-time communications session.");
+    }
+  };
+
+  const shutdownWebRTC = () => {
+    console.log("[WebRTC] Dismantling communications peer link...");
+    
+    if (dataChannelRef.current) {
+      try { dataChannelRef.current.close(); } catch (e) {}
+      dataChannelRef.current = null;
+    }
+    if (peerConnectionRef.current) {
+      try { peerConnectionRef.current.close(); } catch (e) {}
+      peerConnectionRef.current = null;
+    }
+    if (localStreamRef.current) {
+      try { localStreamRef.current.getTracks().forEach(track => track.stop()); } catch (e) {}
+      localStreamRef.current = null;
+    }
+    if (audioElRef.current) {
+      try {
+        audioElRef.current.srcObject = null;
+        audioElRef.current.pause();
+      } catch (e) {}
+      audioElRef.current = null;
+    }
+
+    setConnectionStatus("idle");
+    setLocalIsListening(false);
+    setLocalIsPlaying(false);
+    setLocalIsLoading(false);
+    setLocalCurrentTranscript("");
+    setLocalCurrentResponseText("");
+    lastUserTextRef.current = "";
+  };
+
+  useEffect(() => {
+    if (isOpen) {
+      startWebRTC();
+    } else {
+      shutdownWebRTC();
+    }
+    return () => {
+      shutdownWebRTC();
+    };
+  }, [isOpen, voiceOption]);
+
+  const handleToggleListening = () => {
+    if (connectionStatus === "connected") {
+      if (localStreamRef.current) {
+        const audioTrack = localStreamRef.current.getAudioTracks()[0];
+        if (audioTrack) {
+          audioTrack.enabled = !audioTrack.enabled;
+          setLocalIsListening(audioTrack.enabled);
+        }
+      }
+    } else {
+      onToggleListening();
+    }
+  };
+
+  const handleToggleSpeaker = () => {
+    if (connectionStatus === "connected") {
+      if (audioElRef.current) {
+        audioElRef.current.muted = !audioElRef.current.muted;
+        setLocalIsSpeakerOn(!audioElRef.current.muted);
+      }
+    } else {
+      onToggleSpeaker();
+    }
+  };
+
   useEffect(() => {
     localStorage.setItem('trelvix_show_text_response', showTextResponse.toString());
   }, [showTextResponse]);
@@ -112,12 +370,26 @@ export const VoiceMode = ({
     };
   }, []);
 
+  // Map WebRTC transcripts & states to local variables
+  const activeTranscript = connectionStatus === "connected" ? localCurrentTranscript : currentTranscript;
+  const activeResponse = connectionStatus === "connected" ? localCurrentResponseText : currentResponse;
+  const activeIsListening = connectionStatus === "connected" ? localIsListening : isListening;
+  const activeIsSpeakerOn = connectionStatus === "connected" ? localIsSpeakerOn : isSpeakerOn;
+
+  const state = (connectionStatus === "connecting" || (connectionStatus === "connected" ? localIsLoading : isLoading))
+    ? 'thinking'
+    : (connectionStatus === "connected" ? localIsPlaying : isPlaying)
+    ? 'speaking'
+    : activeIsListening
+    ? 'listening'
+    : 'idle';
+
   // Monitor transcripts to transition to active dialogue layout gracefully
   useEffect(() => {
-    if (currentTranscript.trim().length > 0 || currentResponse.trim().length > 0) {
+    if (activeTranscript.trim().length > 0 || activeResponse.trim().length > 0) {
       setHasSpeechOccurred(true);
     }
-  }, [currentTranscript, currentResponse]);
+  }, [activeTranscript, activeResponse]);
 
   // Reset dialogue markers on mount/unmount
   useEffect(() => {
@@ -170,16 +442,15 @@ export const VoiceMode = ({
   };
 
   const copyToClipboard = () => {
-    if (!currentResponse) return;
-    navigator.clipboard.writeText(currentResponse);
+    if (!activeResponse) return;
+    navigator.clipboard.writeText(activeResponse);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
   };
 
-  const state = isLoading ? 'thinking' : isPlaying ? 'speaking' : isListening ? 'listening' : 'idle';
   const displayUserName = profile?.name ? profile.name.trim().split(' ')[0] : 'Emmanuel';
 
-  const isDisplayingTextLayout = showTextResponse && hasSpeechOccurred && (currentTranscript || currentResponse);
+  const isDisplayingTextLayout = showTextResponse && hasSpeechOccurred && (activeTranscript || activeResponse);
 
   return (
     <AnimatePresence>
@@ -509,21 +780,21 @@ export const VoiceMode = ({
 
               {/* Button 2: Mute Output Speaker Speaker */}
               <button 
-                onClick={onToggleSpeaker}
+                onClick={handleToggleSpeaker}
                 className={cn(
                   "w-11 h-11 rounded-2xl flex items-center justify-center transition-all cursor-pointer",
-                  isSpeakerOn 
+                  activeIsSpeakerOn 
                     ? (isDarkMode ? "text-zinc-300 hover:text-white" : "text-zinc-650 hover:text-zinc-900")
                     : "text-rose-500 bg-rose-500/10 hover:bg-rose-500/20"
                 )}
-                title={isSpeakerOn ? "Mute Output Sound" : "Listen Output Sound"}
+                title={activeIsSpeakerOn ? "Mute Output Sound" : "Listen Output Sound"}
               >
-                {isSpeakerOn ? <Volume2 className="w-4.5 h-4.5" /> : <VolumeX className="w-4.5 h-4.5" />}
+                {activeIsSpeakerOn ? <Volume2 className="w-4.5 h-4.5" /> : <VolumeX className="w-4.5 h-4.5" />}
               </button>
 
               {/* Central Dual Capsule Controller representing visual listening or speaking stream (Touch to Interact) */}
               <button 
-                onClick={onToggleListening}
+                onClick={handleToggleListening}
                 className={cn(
                   "h-11 px-6 rounded-2xl flex items-center justify-center gap-2 border flex-1 transition-all duration-300 relative cursor-pointer font-semibold text-xs tracking-wide shadow-xs",
                   state === 'speaking' 
@@ -538,7 +809,7 @@ export const VoiceMode = ({
                         ? "border-zinc-800 bg-zinc-900 text-zinc-300 hover:bg-zinc-850 hover:border-zinc-700" 
                         : "border-zinc-200 bg-zinc-50 text-zinc-600 hover:bg-zinc-100")
                 )}
-                title={isListening ? "Hold/Pause Session" : "Start Conversation stream"}
+                title={activeIsListening ? "Hold/Pause Session" : "Start Conversation stream"}
               >
                 <span className="relative z-10 flex items-center gap-2">
                   <span className={cn(
@@ -568,16 +839,16 @@ export const VoiceMode = ({
 
               {/* Button 4: Standard mic toggle */}
               <button 
-                onClick={onToggleListening}
+                onClick={handleToggleListening}
                 className={cn(
                   "w-11 h-11 rounded-2xl flex items-center justify-center transition-all cursor-pointer",
-                  isListening 
+                  activeIsListening 
                     ? (isDarkMode ? "bg-emerald-500/10 text-emerald-400" : "bg-emerald-500/5 text-emerald-600") 
                     : (isDarkMode ? "text-zinc-500 hover:text-zinc-200" : "text-zinc-400 hover:text-zinc-700")
                 )}
-                title={isListening ? "Mute Mic" : "Unmute Mic"}
+                title={activeIsListening ? "Mute Mic" : "Unmute Mic"}
               >
-                {isListening ? <Mic className="w-4.5 h-4.5 animate-pulse" /> : <MicOff className="w-4.5 h-4.5" />}
+                {activeIsListening ? <Mic className="w-4.5 h-4.5 animate-pulse" /> : <MicOff className="w-4.5 h-4.5" />}
               </button>
 
               {/* Button 5: Symmetrical Call Hangup Red Action Button */}

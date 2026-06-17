@@ -849,8 +849,72 @@ export default function App() {
     if (showVoiceMode) {
       // Eagerly pre-warm and connect WebSocket when Voice Mode enters
       connectWebSocket();
+    } else {
+      // Graceful and complete socket/reconnection timeout teardown when Voice Mode exits
+      isManuallyClosedRef.current = true;
+      if (reconnectTimeoutRef.current) {
+        clearTimeout(reconnectTimeoutRef.current);
+        reconnectTimeoutRef.current = null;
+      }
+      if (socketRef.current) {
+        try {
+          socketRef.current.close();
+        } catch (e) {}
+        socketRef.current = null;
+      }
+      reconnectAttemptRef.current = 0;
     }
   }, [showVoiceMode]);
+
+  useEffect(() => {
+    (window as any).__addVoiceMessagePair = async (userText: string, assistantText: string) => {
+      console.log("[Window Voice sync] Received pair:", userText, "---", assistantText);
+      const userMessage: Message = {
+        id: safeUUID(),
+        role: 'user',
+        content: userText,
+        created_at: new Date().toISOString()
+      };
+      
+      const assistantMessage: Message = {
+        id: safeUUID(),
+        role: 'assistant',
+        content: assistantText,
+        model: 'trelvix-mini',
+        created_at: new Date().toISOString()
+      };
+
+      setMessages(prev => {
+        const nextMsgs = [...prev, userMessage, assistantMessage];
+        
+        const syncDb = async () => {
+          let conv = currentConversation;
+          if (!conv) {
+            try {
+              conv = await startConversation('voice', userText.slice(0, 30) || 'Voice Session', userText, {}, false);
+            } catch (err) {
+              console.error("[Window Voice Sync] startConversation failed:", err);
+            }
+          }
+          if (conv) {
+            try {
+              await updateConversationMessages(conv.id, nextMsgs);
+              setConversations(p => p.map(c => c.id === conv?.id ? { ...c, messages: nextMsgs, updated_at: new Date().toISOString() } : c));
+            } catch (err) {
+              console.error("[Window Voice Sync] updateConversationMessages failed:", err);
+            }
+          }
+        };
+        
+        syncDb();
+        return nextMsgs;
+      });
+    };
+
+    return () => {
+      delete (window as any).__addVoiceMessagePair;
+    };
+  }, [currentConversation, conversations]);
 
   useEffect(() => {
     if (showVoiceMode && !isListening && !isPlaying && !isLoading && !isMuted && !isVoiceQueuePlayingRef.current) {
@@ -1002,90 +1066,6 @@ export default function App() {
       console.error("SpeechSynthesis initiation error:", error);
       setIsPlaying(false);
       setCurrentlyPlayingMessageId(null);
-    }
-  };
-
-  const speakSegment = (text: string) => {
-    if (!text) return;
-    try {
-      // Clean Markdown of asterisks, hashes, backticks, and code blocks for smooth natural reading
-      const cleanText = text
-        .replace(/```[\s\S]*?```/g, '') // remove code blocks entirely
-        .replace(/[*_`#\-]/g, ' ')      // strip markdown markers
-        .replace(/\s+/g, ' ')           // collapse whitespace
-        .trim();
-
-      if (!cleanText) return;
-
-      const utterance = new SpeechSynthesisUtterance(cleanText);
-      utterance.volume = isSpeakerOn ? 1.0 : 0.0;
-
-      // Select matching gender/personality local voice from device
-      const voices = window.speechSynthesis.getVoices();
-      const voiceData = VOICES.find(v => v.id === voiceOption);
-      let selectedVoice = voices.find(v => v.name.toLowerCase().includes(voiceOption.toLowerCase()));
-
-      if (!selectedVoice && voiceData) {
-        const targetGender = voiceData.gender || 'male';
-        const maleKeywords = ['male', 'david', 'mark', 'guy', 'daniel', 'alex', 'james', 'thomas', 'george', 'paul'];
-        const femaleKeywords = ['female', 'zira', 'samantha', 'victoria', 'susan', 'amy', 'linda', 'mary', 'emma', 'hazel', 'ira'];
-        const keywords = targetGender === 'male' ? maleKeywords : femaleKeywords;
-
-        selectedVoice = voices.find(v => {
-          const name = v.name.toLowerCase();
-          return keywords.some(k => name.includes(k));
-        });
-      }
-
-      if (selectedVoice) {
-        utterance.voice = selectedVoice;
-      }
-
-      // Configure beautiful native pitch/rate calibrations for the selected persona
-      if (voiceOption === 'onyx' || voiceOption === 'echo' || voiceOption === 'atlas') {
-        utterance.pitch = voiceOption === 'onyx' ? 0.8 : voiceOption === 'echo' ? 0.85 : 0.95;
-        utterance.rate = 0.95;
-      } else if (voiceOption === 'fable') {
-        utterance.pitch = 1.05;
-        utterance.rate = 1.0;
-      } else if (voiceOption === 'shimmer') {
-        utterance.pitch = 1.22;
-        utterance.rate = 1.08;
-      } else if (voiceOption === 'nova') {
-        utterance.pitch = 1.15;
-        utterance.rate = 1.05;
-      }
-
-      utterance.onstart = () => {
-        setIsPlaying(true);
-      };
-
-      utterance.onend = () => {
-        if (!window.speechSynthesis.speaking && !window.speechSynthesis.pending) {
-          setIsPlaying(false);
-          if (showVoiceMode && !isMuted) {
-            setTimeout(() => {
-              try { recognitionRef.current?.start(); } catch (e) {}
-            }, 300);
-          }
-        }
-      };
-
-      utterance.onerror = (e) => {
-        console.error("SpeechSynthesis segment error:", e);
-        if (!window.speechSynthesis.speaking && !window.speechSynthesis.pending) {
-          setIsPlaying(false);
-          if (showVoiceMode && !isMuted) {
-            setTimeout(() => {
-              try { recognitionRef.current?.start(); } catch (e) {}
-            }, 300);
-          }
-        }
-      };
-
-      window.speechSynthesis.speak(utterance);
-    } catch (error) {
-      console.error("SpeechSynthesis speakSegment error:", error);
     }
   };
 
@@ -1406,6 +1386,8 @@ export default function App() {
     await startConversation(type, title, prompt, data);
   };
 
+  const conversationLockRef = useRef<Promise<any> | null>(null);
+
   const startConversation = async (
     type: ConversationType, 
     title: string, 
@@ -1414,48 +1396,64 @@ export default function App() {
     shouldClearMessages = true
   ) => {
     if (!user) return null;
-    setIsLoading(true);
 
-    try {
-      const newConversation = {
-        user_id: user.id,
-        title: title || 'New Chat',
-        type: type,
-        messages: [],
-        metadata: metadata,
-        created_at: new Date().toISOString(),
-        updated_at: new Date().toISOString()
-      };
+    // Guard to avoid duplicate conversation creation in React StrictMode
+    if (conversationLockRef.current) {
+      console.log("[Chat] Deduplicating dynamic startConversation call...");
+      return conversationLockRef.current;
+    }
 
-      const { data, error } = await supabase
-        .from('conversations')
-        .insert(newConversation)
-        .select()
-        .single();
+    const newConversation = {
+      user_id: user.id,
+      title: title || 'New Chat',
+      type: type,
+      messages: [],
+      metadata: metadata,
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString()
+    };
 
-      if (error) {
-        console.error("Supabase insert error:", error);
-        toast.error(`Failed to create conversation history`);
+    const creationPromise = (async () => {
+      setIsLoading(true);
+      try {
+        const { data, error } = await supabase
+          .from('conversations')
+          .insert(newConversation)
+          .select()
+          .single();
+
+        if (error) {
+          console.error("Supabase insert error:", error);
+          toast.error(`Failed to create conversation history`);
+          setIsLoading(false);
+          return null;
+        }
+
+        console.log("[Chat] Conversation created:", data.id);
+        setCurrentConversation(data);
+        setConversations(prev => {
+          if (prev.some(c => c.id === data.id)) return prev;
+          return [data, ...prev];
+        });
+        if (shouldClearMessages) {
+          setMessages([]); // Ensure messages are cleared for new chat
+        }
+        
+        return data;
+      } catch (err) {
+        console.error("Error in startConversation:", err);
         setIsLoading(false);
         return null;
+      } finally {
+        // Clear active lock after a thin grace period so future chats can trigger smoothly
+        setTimeout(() => {
+          conversationLockRef.current = null;
+        }, 1000);
       }
+    })();
 
-      console.log("[Chat] Conversation created:", data.id);
-      setCurrentConversation(data);
-      setConversations(prev => {
-        if (prev.some(c => c.id === data.id)) return prev;
-        return [data, ...prev];
-      });
-      if (shouldClearMessages) {
-        setMessages([]); // Ensure messages are cleared for new chat
-      }
-      
-      return data;
-    } catch (err) {
-      console.error("Error in startConversation:", err);
-      setIsLoading(false);
-      return null;
-    }
+    conversationLockRef.current = creationPromise;
+    return creationPromise;
   };
 
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -1502,35 +1500,82 @@ export default function App() {
 
   // Real-Time Streaming WebSocket and Audio Queue Refs and States
   const socketRef = useRef<WebSocket | null>(null);
+  const reconnectAttemptRef = useRef<number>(0);
+  const reconnectTimeoutRef = useRef<any>(null);
+  const isManuallyClosedRef = useRef<boolean>(false);
   const playVoiceQueueRef = useRef<string[]>([]);
   const isVoiceQueuePlayingRef = useRef<boolean>(false);
+  const webSocketFailedRef = useRef<boolean>(false);
 
   const connectWebSocket = () => {
-    if (socketRef.current && socketRef.current.readyState === WebSocket.OPEN) {
-      return socketRef.current;
+    if (socketRef.current) {
+      if (socketRef.current.readyState === WebSocket.OPEN) {
+        return socketRef.current;
+      }
+      if (socketRef.current.readyState === WebSocket.CONNECTING) {
+        return socketRef.current;
+      }
     }
     
+    // Clear any active reconnect timeouts
+    if (reconnectTimeoutRef.current) {
+      clearTimeout(reconnectTimeoutRef.current);
+      reconnectTimeoutRef.current = null;
+    }
+    
+    isManuallyClosedRef.current = false;
     const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws';
     const wsUrl = `${wsProtocol}//${window.location.host}`;
-    console.log("[WebSocket] Connecting to", wsUrl);
+    console.log(`[WebSocket] Connecting to ${wsUrl} (Attempt #${reconnectAttemptRef.current + 1})`);
     
-    const socket = new WebSocket(wsUrl);
-    socketRef.current = socket;
-    
-    socket.onopen = () => {
-      console.log("[WebSocket] Opened stream channel");
-    };
-    
-    socket.onclose = () => {
-      console.log("[WebSocket] Closed stream channel");
-      socketRef.current = null;
-    };
-    
-    socket.onerror = (err) => {
-      console.error("[WebSocket] Connection error:", err);
-    };
-    
-    return socket;
+    try {
+      const socket = new WebSocket(wsUrl);
+      socketRef.current = socket;
+      
+      socket.onopen = () => {
+        console.log("[WebSocket] Opened stream channel successfully");
+        reconnectAttemptRef.current = 0; // Reset connection attempts on success
+        webSocketFailedRef.current = false; // Reset failure flag
+      };
+      
+      socket.onclose = (event) => {
+        console.log(`[WebSocket] Closed stream channel. Code: ${event.code}, Reason: ${event.reason || "None"}`);
+        socketRef.current = null;
+        
+        // Mark as failed if connection was rejected or closed with clean code but we're in voice mode
+        if (event.code !== 1000) {
+          webSocketFailedRef.current = true;
+        }
+        
+        // Attempt clean automatic reconnection if not manually closed and we are in voice mode
+        if (!isManuallyClosedRef.current && showVoiceMode) {
+          const backoffDelay = Math.min(1000 * Math.pow(2, reconnectAttemptRef.current), 30000);
+          console.log(`[WebSocket] Scheduling automatic reconnect in ${backoffDelay}ms (Attempt #${reconnectAttemptRef.current + 1})`);
+          
+          reconnectTimeoutRef.current = setTimeout(() => {
+            reconnectAttemptRef.current += 1;
+            connectWebSocket();
+          }, backoffDelay);
+        }
+      };
+      
+      socket.onerror = (err) => {
+        console.error("[WebSocket] Connection error observed:", err);
+        webSocketFailedRef.current = true;
+      };
+      
+      return socket;
+    } catch (e) {
+      console.error("[WebSocket] Synchronous exception during instantiation:", e);
+      if (!isManuallyClosedRef.current && showVoiceMode) {
+        const backoffDelay = Math.min(1000 * Math.pow(2, reconnectAttemptRef.current), 30000);
+        reconnectTimeoutRef.current = setTimeout(() => {
+          reconnectAttemptRef.current += 1;
+          connectWebSocket();
+        }, backoffDelay);
+      }
+      return null;
+    }
   };
 
   const stopPlayingVoiceQueue = () => {
@@ -1636,79 +1681,244 @@ export default function App() {
       console.warn("Lazily syncing conversation in WS stream failed:", e);
     }
 
-    const socket = connectWebSocket();
-    
-    socket.onmessage = async (event) => {
-      try {
-        const data = JSON.parse(event.data);
-        if (data.type === "text") {
-          setCurrentResponse(prev => prev + data.chunk);
-          setStreamingMessage(prev => prev + data.chunk);
-        } else if (data.type === "audio") {
-          if (isSpeakerOn) {
-            const binaryStr = atob(data.audio);
-            const len = binaryStr.length;
-            const bytes = new Uint8Array(len);
-            for (let i = 0; i < len; i++) {
-              bytes[i] = binaryStr.charCodeAt(i);
-            }
-            const blob = new Blob([bytes], { type: 'audio/mp3' });
-            const audioUrl = URL.createObjectURL(blob);
-            
-            playVoiceQueueRef.current.push(audioUrl);
-            startPlayingVoiceQueue();
-          }
-        } else if (data.type === "done") {
-          setIsLoading(false);
-          setStreamingMessage('');
-          
-          const assistantMessage: Message = {
-            id: safeUUID(),
-            role: 'assistant',
-            content: data.fullText,
-            model: 'trelvix-mini',
-            created_at: new Date().toISOString()
-          };
-          
-          const finalMessages = [...updatedMessages, assistantMessage];
-          setMessages(finalMessages);
-          
-          if (conv) {
-            await updateConversationMessages(conv.id, finalMessages);
-          }
-        } else if (data.type === "error") {
-          toast.error(data.message);
-          setIsLoading(false);
-        }
-      } catch (err) {
-        console.error("WebSocket message parse error:", err);
+    try {
+      if (webSocketFailedRef.current) {
+        throw new Error("Bypassing WebSocket attempt due to previous connection drops");
       }
-    };
+      const socket = connectWebSocket();
+      if (!socket) {
+        throw new Error("Unable to establish WebSocket connection interface");
+      }
 
-    if (socket.readyState !== WebSocket.OPEN) {
-      await new Promise<void>((resolve, reject) => {
-        const checkState = () => {
-          if (socket.readyState === WebSocket.OPEN) {
-            resolve();
-          } else if (socket.readyState === WebSocket.CLOSED) {
-            reject(new Error("Socket connection closed"));
-          } else {
-            setTimeout(checkState, 50);
+      socket.onmessage = async (event) => {
+        try {
+          const data = JSON.parse(event.data);
+          if (data.type === "text") {
+            setCurrentResponse(prev => prev + data.chunk);
+            setStreamingMessage(prev => prev + data.chunk);
+          } else if (data.type === "audio") {
+            if (isSpeakerOn) {
+              const binaryStr = atob(data.audio);
+              const len = binaryStr.length;
+              const bytes = new Uint8Array(len);
+              for (let i = 0; i < len; i++) {
+                bytes[i] = binaryStr.charCodeAt(i);
+              }
+              const blob = new Blob([bytes], { type: 'audio/mp3' });
+              const audioUrl = URL.createObjectURL(blob);
+              
+              playVoiceQueueRef.current.push(audioUrl);
+              startPlayingVoiceQueue();
+            }
+          } else if (data.type === "done") {
+            setIsLoading(false);
+            setStreamingMessage('');
+            
+            const assistantMessage: Message = {
+              id: safeUUID(),
+              role: 'assistant',
+              content: data.fullText,
+              model: 'trelvix-mini',
+              created_at: new Date().toISOString()
+            };
+            
+            const finalMessages = [...updatedMessages, assistantMessage];
+            setMessages(finalMessages);
+            
+            if (conv) {
+              await updateConversationMessages(conv.id, finalMessages);
+            }
+          } else if (data.type === "error") {
+            toast.error(data.message);
+            setIsLoading(false);
+          }
+        } catch (err) {
+          console.error("WebSocket message parse error:", err);
+        }
+      };
+
+      if (socket.readyState !== WebSocket.OPEN) {
+        await new Promise<void>((resolve, reject) => {
+          const socketTimeout = setTimeout(() => {
+            webSocketFailedRef.current = true;
+            reject(new Error("WebSocket handshake connection timeout reached (1500ms limit)"));
+          }, 1500);
+
+          const checkState = () => {
+            if (socket.readyState === WebSocket.OPEN) {
+              clearTimeout(socketTimeout);
+              resolve();
+            } else if (socket.readyState === WebSocket.CLOSED) {
+              clearTimeout(socketTimeout);
+              webSocketFailedRef.current = true;
+              reject(new Error("Socket connection closed prematurely"));
+            } else {
+              setTimeout(checkState, 50);
+            }
+          };
+          checkState();
+        });
+      }
+
+      socket.send(JSON.stringify({
+        type: "chat",
+        messages: updatedMessages.map(m => ({ role: m.role, content: m.content })),
+        voice_option: voiceOption,
+        personality: profile?.personality || 'creative',
+        model: 'trelvix-mini',
+        conversationId: conv?.id,
+        userId: user?.id
+      }));
+
+    } catch (wsError: any) {
+      console.warn(`[WebSocket] Pipeline failure (${wsError.message || wsError}). Activating HTTPS streaming fallback seamlessly...`);
+      
+      try {
+        const activeModel = 'trelvix-mini';
+        const response = await fetch('/api/generate', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            type: 'chat',
+            model: activeModel,
+            prompt: content,
+            messages: updatedMessages.map(m => ({
+              role: m.role,
+              content: m.content
+            })),
+            voice_option: voiceOption,
+            personality: profile?.personality || 'creative',
+            conversationId: conv?.id,
+            userId: user?.id
+          })
+        });
+
+        if (!response.ok) {
+          throw new Error(`HTTP fallback server error with status: ${response.status}`);
+        }
+
+        const reader = response.body?.getReader();
+        const decoder = new TextDecoder();
+        let fullContent = '';
+
+        if (!reader) {
+          throw new Error('Streaming response body reader not available');
+        }
+
+        let sentenceAccumulator = '';
+        if (isSpeakerOn) {
+          window.speechSynthesis.cancel();
+        }
+
+        const playVoiceFallbackSegment = (text: string) => {
+          if (!text) return;
+          try {
+            const cleanText = text
+              .replace(/```[\s\S]*?```/g, '') // remove code blocks entirely
+              .replace(/[*_`#\-]/g, ' ')      // strip markdown markers
+              .replace(/\s+/g, ' ')           // collapse whitespace
+              .trim();
+            if (!cleanText) return;
+
+            const utterance = new SpeechSynthesisUtterance(cleanText);
+            utterance.volume = isSpeakerOn ? 1.0 : 0.0;
+            const voices = window.speechSynthesis.getVoices();
+            const voiceData = VOICES.find(v => v.id === voiceOption);
+            let selectedVoice = voices.find(v => v.name.toLowerCase().includes(voiceOption.toLowerCase()));
+            if (!selectedVoice && voiceData) {
+              const targetGender = voiceData.gender || 'male';
+              const maleKeywords = ['male', 'david', 'mark', 'guy', 'daniel', 'alex', 'james', 'thomas', 'george', 'paul'];
+              const femaleKeywords = ['female', 'zira', 'samantha', 'victoria', 'susan', 'amy', 'linda', 'mary', 'emma', 'hazel', 'ira'];
+              const keywords = targetGender === 'male' ? maleKeywords : femaleKeywords;
+              selectedVoice = voices.find(v => {
+                const name = v.name.toLowerCase();
+                return keywords.some(k => name.includes(k));
+              });
+            }
+            if (selectedVoice) {
+              utterance.voice = selectedVoice;
+            }
+            if (voiceOption === 'onyx' || voiceOption === 'echo' || voiceOption === 'atlas') {
+              utterance.pitch = voiceOption === 'onyx' ? 0.8 : voiceOption === 'echo' ? 0.85 : 0.95;
+              utterance.rate = 0.95;
+            } else if (voiceOption === 'fable') {
+              utterance.pitch = 1.05;
+              utterance.rate = 1.0;
+            } else if (voiceOption === 'shimmer') {
+              utterance.pitch = 1.22;
+              utterance.rate = 1.08;
+            } else if (voiceOption === 'nova') {
+              utterance.pitch = 1.15;
+              utterance.rate = 1.05;
+            }
+            
+            utterance.onstart = () => {
+              setIsPlaying(true);
+            };
+            
+            utterance.onend = () => {
+              if (!window.speechSynthesis.speaking && !window.speechSynthesis.pending) {
+                setIsPlaying(false);
+              }
+            };
+            
+            window.speechSynthesis.speak(utterance);
+          } catch (e) {
+            console.error("SpeechSynthesis segment error:", e);
           }
         };
-        checkState();
-      });
-    }
 
-    socket.send(JSON.stringify({
-      type: "chat",
-      messages: updatedMessages.map(m => ({ role: m.role, content: m.content })),
-      voice_option: voiceOption,
-      personality: profile?.personality || 'creative',
-      model: 'trelvix-mini',
-      conversationId: conv?.id,
-      userId: user?.id
-    }));
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          const chunk = decoder.decode(value);
+          fullContent += chunk;
+          setStreamingMessage(prev => prev + chunk);
+          setCurrentResponse(prev => prev + chunk);
+
+          if (isSpeakerOn) {
+            sentenceAccumulator += chunk;
+            const terminators = /[.!?\n]/;
+            let match = sentenceAccumulator.match(terminators);
+            while (match && match.index !== undefined) {
+              const splitIndex = match.index;
+              const completedSentence = sentenceAccumulator.substring(0, splitIndex + 1).trim();
+              sentenceAccumulator = sentenceAccumulator.substring(splitIndex + 1);
+              if (completedSentence.length > 1) {
+                playVoiceFallbackSegment(completedSentence);
+              }
+              match = sentenceAccumulator.match(terminators);
+            }
+          }
+        }
+
+        if (isSpeakerOn && sentenceAccumulator.trim().length > 1) {
+          playVoiceFallbackSegment(sentenceAccumulator.trim());
+        }
+
+        const assistantMessage: Message = {
+          id: safeUUID(),
+          role: 'assistant',
+          content: fullContent,
+          model: activeModel,
+          created_at: new Date().toISOString()
+        };
+
+        const finalMessages = [...updatedMessages, assistantMessage];
+        setMessages(finalMessages);
+        setStreamingMessage('');
+        setIsLoading(false);
+
+        if (conv) {
+          await updateConversationMessages(conv.id, finalMessages);
+        }
+
+      } catch (fallbackError: any) {
+        console.error("[WebSocket Robust Fallback] Critical error during fallback:", fallbackError);
+        toast.error("Transmission interruption. Please check your internet connection and try again.");
+        setIsLoading(false);
+      }
+    }
   };
 
   const sendMessage = async (content: string, convOverride?: any) => {
@@ -1943,7 +2153,6 @@ export default function App() {
       const reader = response.body?.getReader();
       const decoder = new TextDecoder();
       let fullContent = '';
-      let sentenceAccumulator = '';
 
       if (!reader) {
         throw new Error('Streaming response not available');
@@ -1960,26 +2169,6 @@ export default function App() {
         if (showVoiceMode) {
           setCurrentResponse(prev => prev + chunk);
         }
-
-        if (isVoicePlaybackEnabled) {
-          sentenceAccumulator += chunk;
-          // Match sentence boundary (., !, ?, \n)
-          const terminators = /[.!?\n]/;
-          const match = sentenceAccumulator.match(terminators);
-          if (match && match.index !== undefined) {
-            const splitIndex = match.index;
-            const completedSentence = sentenceAccumulator.substring(0, splitIndex + 1).trim();
-            sentenceAccumulator = sentenceAccumulator.substring(splitIndex + 1);
-
-            if (completedSentence.length > 1) {
-              speakSegment(completedSentence);
-            }
-          }
-        }
-      }
-
-      if (isVoicePlaybackEnabled && sentenceAccumulator.trim().length > 1) {
-        speakSegment(sentenceAccumulator.trim());
       }
 
       const assistantMessage: Message = {
@@ -1995,6 +2184,7 @@ export default function App() {
       setStreamingMessage('');
 
       if (isVoicePlaybackEnabled) {
+        playVoice(fullContent);
         setShouldPlayVoice(false);
       }
 
