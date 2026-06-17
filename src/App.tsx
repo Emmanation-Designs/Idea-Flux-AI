@@ -206,7 +206,6 @@ const ImageWithLoader = ({ src, alt, className, onClick, skipWatermark = false }
 import { WelcomeScreen } from './components/WelcomeScreen';
 import { ContextForm } from './components/ContextForm';
 import { Settings } from './components/Settings';
-import { VoiceMode } from './components/VoiceMode';
 import { Auth } from './components/Auth';
 import { LegalModal } from './components/Legal';
 import { CodeBlock } from './components/CodeBlock';
@@ -443,7 +442,6 @@ export default function App() {
       window.removeEventListener('focus', handleVisibilitySync);
     };
   }, [user, currentConversation?.id, messages, isGeneratingImage]);
-  const [showVoiceMode, setShowVoiceMode] = useState(false);
   const [isMuted, setIsMuted] = useState(false);
   const [isSpeakerOn, setIsSpeakerOn] = useState(true);
   const [currentTranscript, setCurrentTranscript] = useState('');
@@ -460,7 +458,7 @@ export default function App() {
 
   // Screen Wake Lock controller to prevent mobile screen sleep during model generation or voice sessions
   const wakeLockRef = useRef<any>(null);
-  const shouldKeepAwake = isLoading || isGeneratingImage || showVoiceMode || isPlaying || isListening;
+  const shouldKeepAwake = isLoading || isGeneratingImage || isPlaying || isListening;
 
   useEffect(() => {
     const acquireLock = async () => {
@@ -743,13 +741,11 @@ export default function App() {
           transcriptRef.current += finalResult;
           setCurrentTranscript(transcriptRef.current);
           
-          // If not in voice mode, we are in "dictation" mode - populate input
-          if (!showVoiceMode) {
-            setInput(prev => {
-              const base = prev.trim();
-              return base + (base ? ' ' : '') + finalResult.trim();
-            });
-          }
+          // Dictation mode - populate input
+          setInput(prev => {
+            const base = prev.trim();
+            return base + (base ? ' ' : '') + finalResult.trim();
+          });
           
           // Reset silence timer on every final result too
           if (silenceTimer) clearTimeout(silenceTimer);
@@ -789,24 +785,16 @@ export default function App() {
           const finalSpeech = (transcriptRef.current + interimTranscript).trim();
           if (finalSpeech.length < 1) return;
 
-          if (showVoiceMode) {
-            transcriptRef.current = '';
-            setCurrentTranscript('');
-            setStreamingMessage('');
-            sendVoiceMessageWS(finalSpeech);
-            try { recognitionRef.current?.stop(); } catch(e) {}
-          } else {
-            // For regular input "handsfree", we might want to auto-send if it's a significant pause
-            // but let's keep it just as dictation for now unless it's a very long pause
-            // Actually, "handfree" usually means auto-send.
-            if (finalSpeech.length > 5) {
-               // Auto-send in handsfree mode if the user stops for a long time
-               // For now, let's just leave it in the input box so they can see it "typed"
-               // and if they want absolute handsfree they can go to Voice Mode.
-               // Update: The user said "types handfree", so let's just make it fill the box.
-               transcriptRef.current = '';
-               setStreamingMessage('');
-            }
+          // For regular input "handsfree", we might want to auto-send if it's a significant pause
+          // but let's keep it just as dictation for now unless it's a very long pause
+          // Actually, "handfree" usually means auto-send.
+          if (finalSpeech.length > 5) {
+             // Auto-send in handsfree mode if the user stops for a long time
+             // For now, let's just leave it in the input box so they can see it "typed"
+             // and if they want absolute handsfree they can go to Voice Mode.
+             // Update: The user said "types handfree", so let's just make it fill the box.
+             transcriptRef.current = '';
+             setStreamingMessage('');
           }
         }
       };
@@ -820,22 +808,12 @@ export default function App() {
 
       recognitionRef.current.onend = () => {
         setIsListening(false);
-        // Aggressively restart if voice mode is active and we are not muted or in playback
-        if (showVoiceMode && !isMuted && !isVoiceQueuePlayingRef.current && !isLoading && !isPlaying) {
-          setTimeout(() => {
-            try { 
-              if (showVoiceMode && !isListening) {
-                recognitionRef.current?.start(); 
-              }
-            } catch(e) {}
-          }, 150);
-        }
       };
     }
     return () => {
       recognitionRef.current?.stop();
     };
-  }, [showVoiceMode, isPlaying, isLoading, isMuted, currentAudio]);
+  }, [isPlaying, isLoading, isMuted, currentAudio]);
 
   useEffect(() => {
     if (currentResponse && currentTranscript) {
@@ -845,26 +823,7 @@ export default function App() {
     }
   }, [currentResponse]);
 
-  useEffect(() => {
-    if (showVoiceMode) {
-      // Eagerly pre-warm and connect WebSocket when Voice Mode enters
-      connectWebSocket();
-    } else {
-      // Graceful and complete socket/reconnection timeout teardown when Voice Mode exits
-      isManuallyClosedRef.current = true;
-      if (reconnectTimeoutRef.current) {
-        clearTimeout(reconnectTimeoutRef.current);
-        reconnectTimeoutRef.current = null;
-      }
-      if (socketRef.current) {
-        try {
-          socketRef.current.close();
-        } catch (e) {}
-        socketRef.current = null;
-      }
-      reconnectAttemptRef.current = 0;
-    }
-  }, [showVoiceMode]);
+
 
   useEffect(() => {
     (window as any).__addVoiceMessagePair = async (userText: string, assistantText: string) => {
@@ -916,17 +875,7 @@ export default function App() {
     };
   }, [currentConversation, conversations]);
 
-  useEffect(() => {
-    if (showVoiceMode && !isListening && !isPlaying && !isLoading && !isMuted && !isVoiceQueuePlayingRef.current) {
-      setTimeout(() => {
-        try { 
-          if (showVoiceMode && !isListening) {
-            recognitionRef.current?.start(); 
-          }
-        } catch(e) {}
-      }, 500);
-    }
-  }, [showVoiceMode, isListening, isPlaying, isLoading, isMuted]);
+
 
   const toggleListening = () => {
     if (isListening) {
@@ -1043,22 +992,12 @@ export default function App() {
       utterance.onend = () => {
         setIsPlaying(false);
         setCurrentlyPlayingMessageId(null);
-        if (showVoiceMode && !isMuted) {
-          setTimeout(() => {
-            try { recognitionRef.current?.start(); } catch (e) {}
-          }, 300);
-        }
       };
 
       utterance.onerror = (e) => {
         console.error("SpeechSynthesis error:", e);
         setIsPlaying(false);
         setCurrentlyPlayingMessageId(null);
-        if (showVoiceMode && !isMuted) {
-          setTimeout(() => {
-            try { recognitionRef.current?.start(); } catch (e) {}
-          }, 300);
-        }
       };
 
       window.speechSynthesis.speak(utterance);
@@ -1546,17 +1485,6 @@ export default function App() {
         if (event.code !== 1000) {
           webSocketFailedRef.current = true;
         }
-        
-        // Attempt clean automatic reconnection if not manually closed and we are in voice mode
-        if (!isManuallyClosedRef.current && showVoiceMode) {
-          const backoffDelay = Math.min(1000 * Math.pow(2, reconnectAttemptRef.current), 30000);
-          console.log(`[WebSocket] Scheduling automatic reconnect in ${backoffDelay}ms (Attempt #${reconnectAttemptRef.current + 1})`);
-          
-          reconnectTimeoutRef.current = setTimeout(() => {
-            reconnectAttemptRef.current += 1;
-            connectWebSocket();
-          }, backoffDelay);
-        }
       };
       
       socket.onerror = (err) => {
@@ -1567,13 +1495,6 @@ export default function App() {
       return socket;
     } catch (e) {
       console.error("[WebSocket] Synchronous exception during instantiation:", e);
-      if (!isManuallyClosedRef.current && showVoiceMode) {
-        const backoffDelay = Math.min(1000 * Math.pow(2, reconnectAttemptRef.current), 30000);
-        reconnectTimeoutRef.current = setTimeout(() => {
-          reconnectAttemptRef.current += 1;
-          connectWebSocket();
-        }, backoffDelay);
-      }
       return null;
     }
   };
@@ -1600,19 +1521,9 @@ export default function App() {
   };
 
   const playNextInVoiceQueue = () => {
-    if (!showVoiceMode || playVoiceQueueRef.current.length === 0) {
+    if (playVoiceQueueRef.current.length === 0) {
       isVoiceQueuePlayingRef.current = false;
       setIsPlaying(false);
-      // Continuous micro resume
-      if (showVoiceMode && !isMuted && !isLoading) {
-        setTimeout(() => {
-          try { 
-            if (showVoiceMode && !isListening) {
-              recognitionRef.current?.start(); 
-            }
-          } catch(e) {}
-        }, 300);
-      }
       return;
     }
 
@@ -1928,15 +1839,8 @@ export default function App() {
     if (!trimmed && !selectedAttachment) return;
     
     if (isLoading && !convOverride) {
-      if (showVoiceMode) {
-        // In voice mode, we allow new messages to abort active ones (barge-in)
-        if (generationAbortControllerRef.current) {
-          generationAbortControllerRef.current.abort("New user query");
-        }
-      } else {
-        console.warn("[Chat] Busy generating previous response");
-        return;
-      }
+      console.warn("[Chat] Busy generating previous response");
+      return;
     }
 
     const userMessage: Message = {
@@ -2017,9 +1921,6 @@ export default function App() {
     setStreamingMessage('');
     setHasError(false);
     setLastFailedRequest(null);
-    if (showVoiceMode) {
-      setCurrentResponse('');
-    }
 
     if (generationAbortControllerRef.current) {
       generationAbortControllerRef.current.abort();
@@ -2036,7 +1937,7 @@ export default function App() {
       // Lazy-create conversation history context if not already established (avoids blocking input on cold/slow database inserts)
       if (!conv) {
         console.log("[Chat] Lazily creating new conversation in background...");
-        const type = currentAttachment ? 'general' : (showVoiceMode ? 'voice' : (isImageIntent ? 'image' : 'script'));
+        const type = currentAttachment ? 'general' : (isImageIntent ? 'image' : 'script');
         const rawTitle = content.trim() || (isImageIntent ? 'Image Generation' : (currentAttachment ? 'File Analysis' : 'New Chat'));
         const title = rawTitle.length > 50 ? rawTitle.slice(0, 47) + '...' : rawTitle;
         
@@ -2158,7 +2059,7 @@ export default function App() {
         throw new Error('Streaming response not available');
       }
 
-      const isVoicePlaybackEnabled = (conv.type === 'voice' || showVoiceMode) && (shouldPlayVoice || autoPlayVoice);
+      const isVoicePlaybackEnabled = conv.type === 'voice' && (shouldPlayVoice || autoPlayVoice);
 
       while (true) {
         const { done, value } = await reader.read();
@@ -2166,9 +2067,6 @@ export default function App() {
         const chunk = decoder.decode(value);
         fullContent += chunk;
         setStreamingMessage(prev => prev + chunk);
-        if (showVoiceMode) {
-          setCurrentResponse(prev => prev + chunk);
-        }
       }
 
       const assistantMessage: Message = {
@@ -2668,12 +2566,7 @@ export default function App() {
               <AppsView 
                 onBack={() => setActiveView('chat')}
                 onSelectApp={(type) => {
-                  if (type === 'voice') {
-                    setShowVoiceMode(true);
-                    toggleListening();
-                  } else {
-                    setShowContextForm(type);
-                  }
+                  setShowContextForm(type);
                 }} 
               />
             </div>
@@ -3139,10 +3032,7 @@ export default function App() {
                             animate={{ opacity: 1, scale: 1, width: 'auto' }}
                             exit={{ opacity: 0, scale: 0.8, width: 0 }}
                             onClick={() => {
-                              setShowVoiceMode(true);
-                              if (!isListening) {
-                                toggleListening();
-                              }
+                              toggleListening();
                             }}
                             className={cn(
                               "p-3 md:p-3.5 transition-all rounded-full overflow-hidden flex-shrink-0",
@@ -3150,7 +3040,7 @@ export default function App() {
                                 ? "bg-emerald-500/10 text-emerald-500 animate-pulse ring-2 ring-emerald-500/20" 
                                 : "text-zinc-400 dark:text-zinc-300 hover:text-zinc-900 dark:hover:text-white hover:bg-white dark:hover:bg-zinc-800"
                             )}
-                            title="Open Voice Mode"
+                            title="Voice Typing"
                           >
                             <Mic className={cn("w-4 h-4 md:w-5 md:h-5", isListening && "fill-emerald-500/20")} />
                           </motion.button>
@@ -3222,38 +3112,6 @@ export default function App() {
           onClose={() => setShowUpgradeModal(false)} 
           reason={upgradeReason}
           profile={profile}
-        />
-        <VoiceMode 
-          isOpen={showVoiceMode}
-          onClose={() => {
-            setShowVoiceMode(false);
-            window.speechSynthesis.cancel();
-            stopPlayingVoiceQueue();
-            if (socketRef.current) {
-              socketRef.current.close();
-              socketRef.current = null;
-            }
-            try {
-              recognitionRef.current?.stop();
-            } catch(e) {}
-            setIsPlaying(false);
-            setIsListening(false);
-            setCurrentTranscript('');
-            setCurrentResponse('');
-            transcriptRef.current = '';
-          }}
-          isListening={isListening}
-          isPlaying={isPlaying}
-          isLoading={isLoading}
-          onToggleListening={toggleListening}
-          isSpeakerOn={isSpeakerOn}
-          onToggleSpeaker={() => setIsSpeakerOn(!isSpeakerOn)}
-          voiceOption={voiceOption}
-          onVoiceOptionChange={(voice) => setVoiceOption(voice as any)}
-          profile={profile}
-          currentTranscript={currentTranscript}
-          currentResponse={currentResponse}
-          isDarkMode={isDarkMode}
         />
       </AnimatePresence>
 
