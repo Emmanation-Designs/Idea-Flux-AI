@@ -297,19 +297,26 @@ app.post("/api/realtime/session", async (req, res) => {
 
     console.log(`[Realtime Session] Requesting ephemeral session for voice: ${finalVoice}...`);
 
+    const body = {
+      model: "gpt-4o-mini-realtime-preview-2024-12-17", // gpt-4o-mini is ultra fast, low cost, superb with voice
+      voice: finalVoice,
+      modalities: ["audio", "text"],
+      instructions: instructions || "You are Trelvix AI, a helpful, brilliant conversational assistant. Keep all responses brief, direct and conversational for standard spoken dialogue.",
+    };
+
+    console.log("[DEBUG REALTIME URL]", "https://api.openai.com/v1/realtime/sessions");
+    console.log("[DEBUG REALTIME BODY]", JSON.stringify(body));
+
     const response = await fetch("https://api.openai.com/v1/realtime/sessions", {
       method: "POST",
       headers: {
         "Authorization": `Bearer ${apiKey}`,
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({
-        model: "gpt-4o-mini-realtime-preview-2024-12-17", // gpt-4o-mini is ultra fast, low cost, superb with voice
-        voice: finalVoice,
-        modalities: ["audio", "text"],
-        instructions: instructions || "You are Trelvix AI, a helpful, brilliant conversational assistant. Keep all responses brief, direct and conversational for standard spoken dialogue.",
-      }),
+      body: JSON.stringify(body),
     });
+
+    console.log("[DEBUG REALTIME STATUS]", response.status);
 
     if (!response.ok) {
       const errBody = await response.text();
