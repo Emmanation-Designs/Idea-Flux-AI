@@ -8,6 +8,7 @@ import fs from "fs";
 import crypto from "crypto";
 import http from "http";
 import { WebSocketServer, WebSocket } from "ws";
+import { handleRealtimeSession } from "./server/realtimeVoice";
 
 // Import Vite types only for type checking
 import type { ViteDevServer } from "vite";
@@ -263,6 +264,9 @@ app.get("/api/health", (req, res) => {
     environment: process.env.VERCEL ? 'vercel' : 'local'
   });
 });
+
+// Ephemeral real-time WebRTC voice session creation endpoint
+app.post("/api/realtime/session", handleRealtimeSession);
 
 
 

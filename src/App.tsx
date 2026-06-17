@@ -19,6 +19,7 @@ import {
   FileDown,
   MessageSquare,
   Mic,
+  Headphones,
   MicOff,
   Volume2,
   VolumeX,
@@ -212,6 +213,7 @@ import { CodeBlock } from './components/CodeBlock';
 import { DocumentExportCard } from './components/DocumentExportCard';
 import { UpgradeModal } from './components/UpgradeModal';
 import { AppsView } from './components/AppsView';
+import { VoiceMode } from './components/VoiceMode';
 
 const PLAN_LIMITS = {
   free: { messages: 15, analysis: 5, images: 5 },
@@ -282,6 +284,7 @@ export default function App() {
   const [streamingMessage, setStreamingMessage] = useState('');
   const [activeView, setActiveView] = useState<'chat' | 'history' | 'apps' | 'images' | 'settings'>('chat');
   const [isListening, setIsListening] = useState(false);
+  const [isVoiceModeOpen, setIsVoiceModeOpen] = useState(false);
   const [voiceOption, setVoiceOption] = useState<string>(() => {
     return localStorage.getItem('trelvix_voice_option') || 'echo';
   });
@@ -1558,6 +1561,41 @@ export default function App() {
       try { URL.revokeObjectURL(nextAudioUrl); } catch(e) {}
       playNextInVoiceQueue();
     });
+  };
+
+  const handleSaveVoiceModePair = async (userText: string, assistantText: string) => {
+    if (!userText.trim() || !assistantText.trim()) return;
+
+    const userMessage: Message = {
+      id: safeUUID(),
+      role: 'user',
+      content: userText,
+      created_at: new Date().toISOString()
+    };
+
+    const assistantMessage: Message = {
+      id: safeUUID(),
+      role: 'assistant',
+      content: assistantText,
+      created_at: new Date().toISOString()
+    };
+
+    const nextMessages = [...messages, userMessage, assistantMessage];
+    setMessages(nextMessages);
+
+    let conv = currentConversation;
+    try {
+      if (!conv) {
+        // Start conversation first
+        conv = await startConversation('voice', userText.slice(0, 30) || 'Voice Session', userText, {}, false);
+      }
+      if (conv) {
+        await updateConversationMessages(conv.id, nextMessages);
+        setConversations(prev => prev.map(c => c.id === conv.id ? { ...c, messages: nextMessages, updated_at: new Date().toISOString() } : c));
+      }
+    } catch(e) {
+      console.warn("[VoiceMode] Saving voice transaction failed:", e);
+    }
   };
 
   const sendVoiceMessageWS = async (content: string) => {
@@ -3027,23 +3065,40 @@ export default function App() {
                     <div className="absolute right-0 flex items-center gap-1 md:gap-2 mr-2">
                       <AnimatePresence>
                         {!input.trim() && (
-                          <motion.button 
-                            initial={{ opacity: 0, scale: 0.8, width: 0 }}
-                            animate={{ opacity: 1, scale: 1, width: 'auto' }}
-                            exit={{ opacity: 0, scale: 0.8, width: 0 }}
-                            onClick={() => {
-                              toggleListening();
-                            }}
-                            className={cn(
-                              "p-3 md:p-3.5 transition-all rounded-full overflow-hidden flex-shrink-0",
-                              isListening 
-                                ? "bg-emerald-500/10 text-emerald-500 animate-pulse ring-2 ring-emerald-500/20" 
-                                : "text-zinc-400 dark:text-zinc-300 hover:text-zinc-900 dark:hover:text-white hover:bg-white dark:hover:bg-zinc-800"
-                            )}
-                            title="Voice Typing"
-                          >
-                            <Mic className={cn("w-4 h-4 md:w-5 md:h-5", isListening && "fill-emerald-500/20")} />
-                          </motion.button>
+                          <>
+                            {/* Speech-to-text Dictation Only */}
+                            <motion.button 
+                              initial={{ opacity: 0, scale: 0.8, width: 0 }}
+                              animate={{ opacity: 1, scale: 1, width: 'auto' }}
+                              exit={{ opacity: 0, scale: 0.8, width: 0 }}
+                              onClick={() => {
+                                toggleListening();
+                              }}
+                              className={cn(
+                                "p-3 md:p-3.5 transition-all rounded-full overflow-hidden flex-shrink-0",
+                                isListening 
+                                  ? "bg-emerald-500/10 text-emerald-500 animate-pulse ring-2 ring-emerald-500/20" 
+                                  : "text-zinc-400 dark:text-zinc-300 hover:text-zinc-900 dark:hover:text-white hover:bg-white dark:hover:bg-zinc-800"
+                              )}
+                              title="Voice Typing"
+                            >
+                              <Mic className={cn("w-4 h-4 md:w-5 md:h-5", isListening && "fill-emerald-500/20")} />
+                            </motion.button>
+
+                            {/* Immersive Real-Time Voice Mode */}
+                            <motion.button 
+                              initial={{ opacity: 0, scale: 0.8, width: 0 }}
+                              animate={{ opacity: 1, scale: 1, width: 'auto' }}
+                              exit={{ opacity: 0, scale: 0.8, width: 0 }}
+                              onClick={() => {
+                                setIsVoiceModeOpen(true);
+                              }}
+                              className="p-3 md:p-3.5 transition-all text-zinc-400 dark:text-zinc-300 hover:text-zinc-900 dark:hover:text-white hover:bg-white dark:hover:bg-zinc-800 rounded-full overflow-hidden flex-shrink-0"
+                              title="Start Voice Conversation"
+                            >
+                              <Headphones className="w-4 h-4 md:w-5 md:h-5" />
+                            </motion.button>
+                          </>
                         )}
                       </AnimatePresence>
 
@@ -3111,6 +3166,13 @@ export default function App() {
           isOpen={showUpgradeModal} 
           onClose={() => setShowUpgradeModal(false)} 
           reason={upgradeReason}
+          profile={profile}
+        />
+        <VoiceMode 
+          isOpen={isVoiceModeOpen}
+          onClose={() => setIsVoiceModeOpen(false)}
+          voiceOption={voiceOption}
+          onSaveMessagePair={handleSaveVoiceModePair}
           profile={profile}
         />
       </AnimatePresence>
