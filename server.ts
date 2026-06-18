@@ -8,7 +8,7 @@ import fs from "fs";
 import crypto from "crypto";
 import http from "http";
 import { WebSocketServer, WebSocket } from "ws";
-import { handleRealtimeSession } from "./server/realtimeVoice";
+import { handleRealtimeSession } from "./server/realtimeVoice.js";
 
 // Import Vite types only for type checking
 import type { ViteDevServer } from "vite";
