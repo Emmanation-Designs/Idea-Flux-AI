@@ -30,8 +30,8 @@ CORE PROTOCOLS for Voice Mode:
 4. If the user interrupts you (barge-in), stay responsive and adjust your state.`;
 
     const requestBody = {
-      model: "gpt-4o-realtime-preview-2024-12-17",
       session: {
+        model: "gpt-4o-realtime-preview-2024-12-17",
         voice: voice,
         instructions: systemInstruction,
         modalities: ["audio", "text"],
