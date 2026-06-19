@@ -31,6 +31,7 @@ CORE PROTOCOLS for Voice Mode:
 
     const requestBody = {
       session: {
+        type: "realtime",
         model: "gpt-4o-realtime-preview-2024-12-17",
         voice: voice,
         instructions: systemInstruction,
