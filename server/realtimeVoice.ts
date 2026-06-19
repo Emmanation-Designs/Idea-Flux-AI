@@ -34,7 +34,6 @@ CORE PROTOCOLS for Voice Mode:
         type: "realtime",
         model: "gpt-4o-realtime-preview-2024-12-17",
         instructions: systemInstruction,
-        modalities: ["audio", "text"],
         audio: {
           input: {
             format: {

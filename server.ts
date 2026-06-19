@@ -268,6 +268,83 @@ app.get("/api/health", (req, res) => {
 // Ephemeral real-time WebRTC voice session creation endpoint
 app.post("/api/realtime/session", handleRealtimeSession);
 
+// Temporary diagnostic endpoint for testing smallest possible payload with POST /v1/realtime/sessions
+app.get("/api/realtime/test", async (req, res) => {
+  const apiKey = process.env.OPENAI_API_KEY;
+  if (!apiKey) {
+    return res.status(500).json({ error: "OPENAI_API_KEY is not defined in environment variables." });
+  }
+
+  const loggedRequest = {
+    url: "",
+    method: "",
+    headers: {} as Record<string, string>,
+    body: ""
+  };
+
+  try {
+    const openai = new OpenAI({
+      apiKey,
+      fetch: async (url, init) => {
+        loggedRequest.url = url.toString();
+        loggedRequest.method = init?.method || "POST";
+        const headersObj: Record<string, string> = {};
+        if (init?.headers) {
+          const headersInstance = new Headers(init.headers as any);
+          headersInstance.forEach((value, key) => {
+            if (key.toLowerCase() !== "authorization") {
+              headersObj[key] = value;
+            }
+          });
+        }
+        loggedRequest.headers = headersObj;
+        loggedRequest.body = init?.body ? init.body.toString() : "";
+        return fetch(url, init);
+      }
+    });
+
+    console.log("[Diagnostic Endpoint] Making smallest possible request to /v1/realtime/sessions using SDK...");
+    const apiPromise = openai.beta.realtime.sessions.create({
+      model: "gpt-4o-mini-realtime-preview"
+    });
+
+    const response = await apiPromise.asResponse();
+    const responseBodyText = await response.text();
+
+    const responseHeaders: Record<string, string> = {};
+    response.headers.forEach((value, key) => {
+      responseHeaders[key] = value;
+    });
+
+    const logOutput = {
+      request: {
+        url: loggedRequest.url,
+        method: loggedRequest.method,
+        headers: loggedRequest.headers,
+        body: loggedRequest.body ? JSON.parse(loggedRequest.body) : null
+      },
+      response: {
+        status: response.status,
+        headers: responseHeaders,
+        xRequestId: response.headers.get("x-request-id") || "N/A",
+        openaiVersion: response.headers.get("openai-version") || "N/A",
+        body: responseBodyText ? (responseBodyText.trim().startsWith("{") ? JSON.parse(responseBodyText) : responseBodyText) : null
+      }
+    };
+
+    console.log("[Diagnostic Endpoint] Log Output:\n", JSON.stringify(logOutput, null, 2));
+    return res.json(logOutput);
+
+  } catch (err: any) {
+    console.error("[Diagnostic Endpoint] Error:", err);
+    return res.status(500).json({
+      error: err.message || err,
+      stack: err.stack,
+      request: loggedRequest
+    });
+  }
+});
+
 
 
 // API routes
