@@ -33,19 +33,29 @@ CORE PROTOCOLS for Voice Mode:
       session: {
         type: "realtime",
         model: "gpt-4o-realtime-preview-2024-12-17",
-        voice: voice,
         instructions: systemInstruction,
         modalities: ["audio", "text"],
-        input_audio_format: "g711_ulaw",
-        output_audio_format: "g711_ulaw",
-        input_audio_transcription: {
-          model: "whisper-1"
-        },
-        turn_detection: {
-          type: "server_vad",
-          threshold: 0.5,
-          prefix_padding_ms: 300,
-          silence_duration_ms: 500
+        audio: {
+          input: {
+            format: {
+              type: "audio/pcmu"
+            },
+            transcription: {
+              model: "whisper-1"
+            },
+            turn_detection: {
+              type: "server_vad",
+              threshold: 0.5,
+              prefix_padding_ms: 300,
+              silence_duration_ms: 500
+            }
+          },
+          output: {
+            format: {
+              type: "audio/pcmu"
+            },
+            voice: voice
+          }
         }
       }
     };
