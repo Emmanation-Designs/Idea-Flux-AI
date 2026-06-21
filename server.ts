@@ -285,7 +285,7 @@ app.get("/api/realtime/test", async (req, res) => {
   try {
     const openai = new OpenAI({
       apiKey,
-      fetch: async (url, init) => {
+      fetch: async (url: any, init: any): Promise<any> => {
         loggedRequest.url = url.toString();
         loggedRequest.method = init?.method || "POST";
         const headersObj: Record<string, string> = {};
