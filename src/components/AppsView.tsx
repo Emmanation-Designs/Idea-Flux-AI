@@ -4,7 +4,8 @@ import {
   FileText, 
   Hash,
   Zap,
-  ChevronRight
+  ChevronRight,
+  Volume2
 } from 'lucide-react';
 import { motion } from 'motion/react';
 import { clsx, type ClassValue } from 'clsx';
@@ -48,6 +49,14 @@ export const AppsView = ({ onSelectApp, onBack }: { onSelectApp: (type: Conversa
       icon: Zap,
       color: 'text-orange-500',
       bg: 'bg-orange-50 dark:bg-orange-950/30'
+    },
+    { 
+      id: 'tts', 
+      title: 'Text to Speech', 
+      desc: 'Convert text into realistic AI voices.', 
+      icon: Volume2,
+      color: 'text-rose-500',
+      bg: 'bg-rose-50 dark:bg-rose-950/30'
     }
   ];
 

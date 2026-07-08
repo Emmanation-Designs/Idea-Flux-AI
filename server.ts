@@ -6,9 +6,6 @@ import Stripe from "stripe";
 import { createClient } from "@supabase/supabase-js";
 import fs from "fs";
 import crypto from "crypto";
-import http from "http";
-import { WebSocketServer, WebSocket } from "ws";
-import { handleRealtimeSession } from "./server/realtimeVoice.js";
 
 // Import Vite types only for type checking
 import type { ViteDevServer } from "vite";
@@ -17,226 +14,6 @@ console.log("Server script starting...");
 dotenv.config();
 
 const app = express();
-const server = http.createServer(app);
-const wss = new WebSocketServer({ noServer: true });
-
-// Upgrade incoming HTTP protocol requests safely to WebSockets on the same port
-server.on("upgrade", (request, socket, head) => {
-  wss.handleUpgrade(request, socket, head, (ws) => {
-    wss.emit("connection", ws, request);
-  });
-});
-
-// Setup Real-Time Streaming Websocket connections
-wss.on("connection", (ws) => {
-  console.log("[WebSocket] Client connected");
-  let openAiStreamAbortController: AbortController | null = null;
-
-  ws.on("message", async (messageStr) => {
-    try {
-      const payload = JSON.parse(messageStr.toString());
-      if (payload.type === "ping") {
-        ws.send(JSON.stringify({ type: "pong" }));
-        return;
-      }
-      if (payload.type === "abort") {
-        if (openAiStreamAbortController) {
-          openAiStreamAbortController.abort();
-          openAiStreamAbortController = null;
-        }
-        return;
-      }
-
-      const { messages = [], voice_option = "echo", personality = "creative", model = "trelvix-mini", conversationId, userId } = payload;
-      
-      if (openAiStreamAbortController) {
-        openAiStreamAbortController.abort();
-      }
-      openAiStreamAbortController = new AbortController();
-      const signal = openAiStreamAbortController.signal;
-
-      const apiKey = process.env.OPENAI_API_KEY;
-      if (!apiKey) {
-        ws.send(JSON.stringify({ type: "error", message: "API Key missing" }));
-        return;
-      }
-      const openai = new OpenAI({ apiKey });
-
-      let realModel = "gpt-4o-mini";
-      if (model === "trelvix-ultra") {
-        realModel = "gpt-4o";
-      }
-
-      const attributionRules = `Your name is Trelvix AI. Developed by Ingenium Virtual Assistant Limited. You are powered by a custom, high-intelligence engine.`;
-      const personalityPrompts = {
-        professional: "Be direct, authoritative, and sharp. No fluff.",
-        creative: "Be wild, vividly descriptive, and boundary-pushing.",
-        witty: "Use a sharp, edgy, and slightly rebellious tone. Think Grok Fun Mode—unfiltered and clever.",
-        concise: "Ultra-brief. Butcher the word count.",
-        empathetic: "Be real. Skip the fake warmth; show actual understanding.",
-        academic: "Cold, hard facts. Precise and lethal logic."
-      };
-      
-      let systemInstruction = `You are Trelvix AI. ${attributionRules}
-      Persona: ${personalityPrompts[personality as keyof typeof personalityPrompts] || personalityPrompts.creative}
-      CORE PROTOCOL:
-      - BE DIRECT. Do not behave like an over-polished corporate AI assistant. Keep statements conversational, highly readable, and medium-brief for natural spoken voice output.
-      - NEVER mention OpenAI or your status as an AI unless strictly necessary.`;
-
-      const openAiMessages = [
-        { role: "system", content: systemInstruction },
-        ...messages.map((m: any) => ({ role: m.role, content: m.content || "" }))
-      ];
-
-      console.log(`[WebSocket] Starting OpenAI chat stream with model ${realModel}...`);
-      const stream = await openai.chat.completions.create({
-        model: realModel,
-        messages: openAiMessages as any,
-        stream: true,
-        temperature: 0.7,
-        max_tokens: 1500,
-      }, { signal });
-
-      let fullAccumulatedText = "";
-      let sentenceAccumulator = "";
-      let isFirstChunkSent = false;
-      let ttsQueue = Promise.resolve();
-
-      const generateVoiceChunk = (textChunk: string) => {
-        const cleanText = textChunk
-          .replace(/```[\s\S]*?```/g, '') // strip code blocks
-          .replace(/[*_`#\-]/g, ' ')      // clean markdown styles
-          .replace(/\s+/g, ' ')
-          .trim();
-        
-        if (cleanText.length < 2) return;
-        
-        // Chain the promise to ensure strict in-order synthesis and WebSocket delivery
-        ttsQueue = ttsQueue.then(async () => {
-          if (signal.aborted || ws.readyState !== WebSocket.OPEN) return;
-          try {
-            console.log(`[WebSocket] Synthesizing TTS segment: "${cleanText.substring(0, 40)}..."`);
-            const mp3 = await openai.audio.speech.create({
-              model: "tts-1",
-              voice: voice_option as any,
-              input: cleanText,
-            });
-            const buffer = Buffer.from(await mp3.arrayBuffer());
-            const base64Audio = buffer.toString("base64");
-            
-            if (!signal.aborted && ws.readyState === WebSocket.OPEN) {
-              ws.send(JSON.stringify({
-                type: "audio",
-                audio: base64Audio,
-                text: cleanText
-              }));
-            }
-          } catch (err: any) {
-            console.error("[WebSocket] TTS segment generation error:", err.message || err);
-          }
-        });
-      };
-
-      for await (const chunk of stream) {
-        if (signal.aborted) break;
-        const text = chunk.choices[0]?.delta?.content || "";
-        if (text) {
-          fullAccumulatedText += text;
-          sentenceAccumulator += text;
-          
-          ws.send(JSON.stringify({ type: "text", chunk: text }));
-
-          // For the absolute first segment, if we have accumulated enough words (e.g., 4 or more), trigger TTS immediately
-          let shouldTriggerFirstTTS = false;
-          if (!isFirstChunkSent) {
-            const words = sentenceAccumulator.trim().split(/\s+/);
-            if (words.length >= 4 || sentenceAccumulator.match(/[.!?\n]/)) {
-              shouldTriggerFirstTTS = true;
-            }
-          }
-
-          const boundMatch = sentenceAccumulator.match(/[,;:.!?\n]/);
-          let shouldSplit = shouldTriggerFirstTTS;
-          let splitIndex = -1;
-
-          if (shouldSplit) {
-            if (boundMatch) {
-              splitIndex = boundMatch.index || 0;
-            } else {
-              // Split on the last space
-              splitIndex = sentenceAccumulator.lastIndexOf(" ");
-            }
-          } else if (boundMatch) {
-            shouldSplit = true;
-            splitIndex = boundMatch.index || 0;
-          } else if (sentenceAccumulator.length > 55) {
-            const lastSpace = sentenceAccumulator.lastIndexOf(" ");
-            if (lastSpace > 25) {
-              shouldSplit = true;
-              splitIndex = lastSpace;
-            }
-          }
-
-          if (shouldSplit && splitIndex !== -1) {
-            const completeSentence = sentenceAccumulator.substring(0, splitIndex + 1).trim();
-            sentenceAccumulator = sentenceAccumulator.substring(splitIndex + 1);
-
-            if (completeSentence.length > 1) {
-              isFirstChunkSent = true;
-              generateVoiceChunk(completeSentence);
-            }
-          }
-        }
-      }
-
-      if (!signal.aborted && sentenceAccumulator.trim().length > 2) {
-        generateVoiceChunk(sentenceAccumulator.trim());
-      }
-
-      // Wait for all active speech synthesis tasks in queue to finish transmitting before completing stream event
-      await ttsQueue;
-
-      if (!signal.aborted && ws.readyState === WebSocket.OPEN) {
-        ws.send(JSON.stringify({ type: "done", fullText: fullAccumulatedText }));
-        
-        if (conversationId && userId) {
-          const assistantMessage = {
-            id: crypto.randomUUID(),
-            role: 'assistant',
-            content: fullAccumulatedText,
-            model: model,
-            created_at: new Date().toISOString()
-          };
-          appendReplyToConversation(
-            conversationId,
-            assistantMessage,
-            userId,
-            'voice',
-            messages
-          ).catch(console.error);
-        }
-      }
-
-    } catch (err: any) {
-      if (err.name === 'AbortError') {
-        console.log("[WebSocket] Active generation aborted by user");
-        return;
-      }
-      console.error("[WebSocket] Connection handler error:", err);
-      if (ws.readyState === WebSocket.OPEN) {
-        ws.send(JSON.stringify({ type: "error", message: err.message || "Streaming failed" }));
-      }
-    }
-  });
-
-  ws.on("close", () => {
-    console.log("[WebSocket] Client disconnected");
-    if (openAiStreamAbortController) {
-      openAiStreamAbortController.abort();
-    }
-  });
-});
-
 const PORT = Number(process.env.PORT) || 3000;
 
 app.use(express.json({
@@ -263,86 +40,6 @@ app.get("/api/health", (req, res) => {
     hasTavilyApiKey: !!process.env.TAVILY_API_KEY,
     environment: process.env.VERCEL ? 'vercel' : 'local'
   });
-});
-
-// Ephemeral real-time WebRTC voice session creation endpoint
-app.post("/api/realtime/session", handleRealtimeSession);
-
-// Temporary diagnostic endpoint for testing smallest possible payload with POST /v1/realtime/sessions
-app.get("/api/realtime/test", async (req, res) => {
-  const apiKey = process.env.OPENAI_API_KEY;
-  if (!apiKey) {
-    return res.status(500).json({ error: "OPENAI_API_KEY is not defined in environment variables." });
-  }
-
-  const loggedRequest = {
-    url: "",
-    method: "",
-    headers: {} as Record<string, string>,
-    body: ""
-  };
-
-  try {
-    const openai = new OpenAI({
-      apiKey,
-      fetch: async (url: any, init: any): Promise<any> => {
-        loggedRequest.url = url.toString();
-        loggedRequest.method = init?.method || "POST";
-        const headersObj: Record<string, string> = {};
-        if (init?.headers) {
-          const headersInstance = new Headers(init.headers as any);
-          headersInstance.forEach((value, key) => {
-            if (key.toLowerCase() !== "authorization") {
-              headersObj[key] = value;
-            }
-          });
-        }
-        loggedRequest.headers = headersObj;
-        loggedRequest.body = init?.body ? init.body.toString() : "";
-        return fetch(url, init);
-      }
-    });
-
-    console.log("[Diagnostic Endpoint] Making smallest possible request to /v1/realtime/sessions using SDK...");
-    const apiPromise = openai.beta.realtime.sessions.create({
-      model: "gpt-4o-mini-realtime-preview"
-    });
-
-    const response = await apiPromise.asResponse();
-    const responseBodyText = await response.text();
-
-    const responseHeaders: Record<string, string> = {};
-    response.headers.forEach((value, key) => {
-      responseHeaders[key] = value;
-    });
-
-    const logOutput = {
-      request: {
-        url: loggedRequest.url,
-        method: loggedRequest.method,
-        headers: loggedRequest.headers,
-        body: loggedRequest.body ? JSON.parse(loggedRequest.body) : null
-      },
-      response: {
-        status: response.status,
-        headers: responseHeaders,
-        xRequestId: response.headers.get("x-request-id") || "N/A",
-        openaiVersion: response.headers.get("openai-version") || "N/A",
-        body: responseBodyText ? (responseBodyText.trim().startsWith("{") ? JSON.parse(responseBodyText) : responseBodyText) : null
-      }
-    };
-
-    console.log("[Diagnostic Endpoint] Log Output:\n", JSON.stringify(logOutput, null, 2));
-    return res.json(logOutput);
-
-  } catch (err: any) {
-    console.error("[Diagnostic Endpoint] Error:", err);
-    return res.status(500).json({
-      error: err.message || err,
-      stack: err.stack,
-      request: loggedRequest
-    });
-  }
 });
 
 
@@ -515,6 +212,250 @@ app.post("/api/stripe/webhook", async (req: any, res) => {
   }
 
   res.json({ received: true });
+});
+
+// Text to Speech Generation Endpoint
+app.post("/api/tools/text-to-speech", async (req, res) => {
+  const authHeader = req.headers.authorization;
+  if (!authHeader || !authHeader.startsWith("Bearer ")) {
+    return res.status(401).json({ error: "Unauthorized: Missing session token." });
+  }
+
+  const token = authHeader.split(" ")[1];
+  const supabaseUrl = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || "https://wxezfzhhzlauggufecmm.supabase.co";
+  const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY || process.env.VITE_SUPABASE_ANON_KEY || "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Ind4ZXpmemhoemxhdWdndWZlY21tIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQyNTQxMjcsImV4cCI6MjA4OTgzMDEyN30.2nsDSFhOtm1Xs3RuZNDo74jGbBwd05E7lPP-FN5cd1Q";
+  const supabase = createClient(supabaseUrl, supabaseServiceKey);
+
+  let user: any = null;
+  try {
+    const { data: userData, error: authError } = await supabase.auth.getUser(token);
+    if (authError || !userData?.user) {
+      return res.status(401).json({ error: "Unauthorized: Invalid session token." });
+    }
+    user = userData.user;
+  } catch (err: any) {
+    return res.status(401).json({ error: "Unauthorized: Failed to authenticate token." });
+  }
+
+  const { text, voice = "alloy", model = "tts-1", speed = 1.0 } = req.body;
+  if (!text || typeof text !== "string" || !text.trim()) {
+    return res.status(400).json({ error: "Text payload is required." });
+  }
+
+  const characterCount = text.length;
+
+  // 1. Check Subscriptions and Plan Limits
+  let allowed = true;
+  let reason = "";
+  let hasDatabaseTracking = false;
+
+  try {
+    const { data: checkData, error: checkError } = await supabase.rpc("can_generate_tts", {
+      user_uuid: user.id,
+      requested_character_count: characterCount
+    });
+
+    if (!checkError && checkData && checkData.length > 0) {
+      allowed = checkData[0].allowed;
+      reason = checkData[0].reason;
+      hasDatabaseTracking = true;
+    } else {
+      console.warn("[TTS Backend] RPC can_generate_tts failed or not present:", checkError?.message);
+    }
+  } catch (err: any) {
+    console.warn("[TTS Backend] can_generate_tts RPC exception:", err?.message || err);
+  }
+
+  // 2. Client-Side Fallback if SQL function/limits table is absent
+  if (!hasDatabaseTracking) {
+    console.log("[TTS Backend] Falling back to programmatic schema and limits check...");
+    let plan = "free";
+    try {
+      const { data: profile } = await supabase
+        .from("profiles")
+        .select("plan")
+        .eq("id", user.id)
+        .single();
+      if (profile?.plan) {
+        plan = profile.plan;
+      }
+    } catch (profileErr) {
+      console.warn("[TTS Backend] Failed to retrieve user plan:", profileErr);
+    }
+
+    const PLAN_LIMITS_FALLBACK = {
+      free: { maxGens: 3, maxChars: 2000, unlimited: false },
+      pro: { maxGens: Infinity, maxChars: 10000, unlimited: true },
+      plus: { maxGens: Infinity, maxChars: 50000, unlimited: true }
+    };
+
+    const currentLimits = PLAN_LIMITS_FALLBACK[plan as "free" | "pro" | "plus"] || PLAN_LIMITS_FALLBACK.free;
+
+    if (characterCount > currentLimits.maxChars) {
+      allowed = false;
+      reason = `Requested length of ${characterCount} characters exceeds the limit of ${currentLimits.maxChars} per generation on your ${plan.toUpperCase()} subscription.`;
+    } else if (!currentLimits.unlimited) {
+      try {
+        const todayStr = new Date().toISOString().split("T")[0];
+        const { count, error: countErr } = await supabase
+          .from("tts_generations")
+          .select("*", { count: "exact", head: true })
+          .eq("user_id", user.id)
+          .gte("created_at", `${todayStr}T00:00:00Z`)
+          .neq("generation_status", "failed");
+
+        if (!countErr && count !== null) {
+          if (count >= currentLimits.maxGens) {
+            allowed = false;
+            reason = `Daily generation threshold (${currentLimits.maxGens} requests) reached on your ${plan.toUpperCase()} subscription tier.`;
+          }
+          hasDatabaseTracking = true;
+        }
+      } catch (countErr) {
+        console.warn("[TTS Backend] Fallback generations query failed:", countErr);
+      }
+    } else {
+      // Pro/Plus with unlimited count, character count already within limit
+      allowed = true;
+    }
+  }
+
+  if (!allowed) {
+    return res.status(403).json({ error: reason || "Daily quota limit reached." });
+  }
+
+  // 3. Insert Pending Track Log
+  let generationId: string | null = null;
+  try {
+    const { data: genLog, error: insertErr } = await supabase
+      .from("tts_generations")
+      .insert({
+        user_id: user.id,
+        character_count: characterCount,
+        selected_voice: voice,
+        selected_model: model,
+        generation_status: "pending",
+        provider: "openai",
+        metadata: {
+          text_snippet: text.slice(0, 80) + (text.length > 80 ? "..." : "")
+        }
+      })
+      .select("id")
+      .single();
+
+    if (!insertErr && genLog) {
+      generationId = genLog.id;
+    }
+  } catch (insertErr) {
+    console.warn("[TTS Backend] Failed to write initial tracking record:", insertErr);
+  }
+
+  // 4. Initialize OpenAI and Synthesize Speech
+  const openaiApiKey = process.env.OPENAI_API_KEY;
+  if (!openaiApiKey) {
+    console.error("[TTS Backend] Missing OPENAI_API_KEY in environment");
+    return res.status(500).json({ error: "OpenAI API Key is missing in server configuration." });
+  }
+
+  const openai = new OpenAI({ apiKey: openaiApiKey });
+  const startTime = Date.now();
+
+  try {
+    console.log(`[TTS Backend] Requesting audio from OpenAI. Voice: ${voice}, Model: ${model}, Length: ${characterCount}`);
+    const openaiResponse = await openai.audio.speech.create({
+      model: model === "tts-1-hd" ? "tts-1-hd" : "tts-1",
+      voice: voice as any,
+      input: text,
+      speed: speed || 1.0
+    });
+
+    const buffer = Buffer.from(await openaiResponse.arrayBuffer());
+    const durationMs = Date.now() - startTime;
+
+    // 5. Update Log to Completed & Persist Base64 for history retrieval
+    if (generationId) {
+      try {
+        await supabase
+          .from("tts_generations")
+          .update({
+            generation_status: "completed",
+            generation_time_ms: durationMs,
+            file_size_bytes: buffer.length,
+            metadata: {
+              text_snippet: text.slice(0, 80) + (text.length > 80 ? "..." : ""),
+              audio_base64: buffer.toString("base64")
+            }
+          })
+          .eq("id", generationId);
+      } catch (updateErr) {
+        console.warn("[TTS Backend] Failed to update tracking log to completed:", updateErr);
+      }
+    }
+
+    // 6. Respond with streaming binary audio file
+    res.set({
+      "Content-Type": "audio/mpeg",
+      "Content-Length": buffer.length,
+      "Accept-Ranges": "bytes"
+    });
+    return res.send(buffer);
+  } catch (openaiErr: any) {
+    console.error("[TTS Backend] OpenAI Synthesis Error:", openaiErr);
+    if (generationId) {
+      try {
+        await supabase
+          .from("tts_generations")
+          .update({ generation_status: "failed" })
+          .eq("id", generationId);
+      } catch (logErr) {
+        console.warn("[TTS Backend] Failed to mark track as failed:", logErr);
+      }
+    }
+    return res.status(520).json({ error: openaiErr?.message || "Failed to generate speech audio." });
+  }
+});
+
+// Retrieve generated past audio from tracking database
+app.get("/api/tools/text-to-speech/retrieve/:id", async (req, res) => {
+  const authHeader = req.headers.authorization;
+  if (!authHeader || !authHeader.startsWith("Bearer ")) {
+    return res.status(401).json({ error: "Unauthorized: Missing session token." });
+  }
+
+  const token = authHeader.split(" ")[1];
+  const { id } = req.params;
+
+  const supabaseUrl = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || "https://wxezfzhhzlauggufecmm.supabase.co";
+  const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY || process.env.VITE_SUPABASE_ANON_KEY || "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Ind4ZXpmemhoemxhdWdndWZlY21tIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQyNTQxMjcsImV4cCI6MjA4OTgzMDEyN30.2nsDSFhOtm1Xs3RuZNDo74jGbBwd05E7lPP-FN5cd1Q";
+  const supabase = createClient(supabaseUrl, supabaseServiceKey);
+
+  try {
+    const { data: userData, error: authError } = await supabase.auth.getUser(token);
+    if (authError || !userData?.user) {
+      return res.status(401).json({ error: "Unauthorized: Invalid session token." });
+    }
+
+    const { data: genLog, error: fetchErr } = await supabase
+      .from("tts_generations")
+      .select("metadata")
+      .eq("id", id)
+      .eq("user_id", userData.user.id)
+      .single();
+
+    if (fetchErr || !genLog || !genLog.metadata?.audio_base64) {
+      return res.status(404).json({ error: "Audio record or playback data not found." });
+    }
+
+    const buffer = Buffer.from(genLog.metadata.audio_base64, "base64");
+    res.set({
+      "Content-Type": "audio/mpeg",
+      "Content-Length": buffer.length
+    });
+    return res.send(buffer);
+  } catch (err: any) {
+    console.error("[TTS Backend] Retrieve track exception:", err?.message || err);
+    return res.status(500).json({ error: err?.message || "Failed to retrieve past audio track." });
+  }
 });
 
 // Support legacy endpoint
@@ -1321,8 +1262,8 @@ if ((process.env.NODE_ENV !== "production" || !hasBuiltDist) && !process.env.VER
       appType: "spa",
     });
     app.use(vite.middlewares);
-    server.listen(PORT, "0.0.0.0", () => {
-      console.log(`Development server running on http://localhost:${PORT} (Vite mode with WebSockets)`);
+    app.listen(PORT, "0.0.0.0", () => {
+      console.log(`Development server running on http://localhost:${PORT}`);
     });
   };
   startServer();
@@ -1334,7 +1275,7 @@ if ((process.env.NODE_ENV !== "production" || !hasBuiltDist) && !process.env.VER
   app.get("*", (req, res) => {
     res.sendFile(path.join(distPath, "index.html"));
   });
-  server.listen(PORT, "0.0.0.0", () => {
-    console.log(`Production server running on port ${PORT} with WebSockets`);
+  app.listen(PORT, "0.0.0.0", () => {
+    console.log(`Production server running on port ${PORT}`);
   });
 }

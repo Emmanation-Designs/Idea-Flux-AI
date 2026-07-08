@@ -94,8 +94,6 @@ export const Settings = (props: {
   onUpgrade: () => void;
   isDarkMode: boolean;
   onToggleTheme: () => void;
-  autoPlayVoice: boolean;
-  onToggleAutoPlay: () => void;
   imageSpeed?: 'fast' | 'quality';
   onToggleImageSpeed?: () => void;
 }) => {
@@ -106,8 +104,6 @@ export const Settings = (props: {
     onShowLegal,
     isDarkMode,
     onToggleTheme,
-    autoPlayVoice,
-    onToggleAutoPlay,
     imageSpeed = 'quality',
     onToggleImageSpeed
   } = props;
@@ -415,7 +411,7 @@ export const Settings = (props: {
                     <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 p-4 rounded-xl border border-red-500/10 dark:border-red-500/5 bg-red-50/5 dark:bg-red-950/5">
                       <div className="text-left space-y-0.5">
                         <div className="text-xs font-bold text-zinc-800 dark:text-zinc-200">Deactivate Personal Workspace</div>
-                        <p className="text-[10px] text-zinc-400 dark:text-zinc-500 max-w-sm leading-normal">Purges all conversation histories, active voice caches, generated visuals, and workspace custom parameters.</p>
+                        <p className="text-[10px] text-zinc-400 dark:text-zinc-500 max-w-sm leading-normal">Purges all conversation histories, generated visuals, and workspace custom parameters.</p>
                       </div>
                       <button 
                         onClick={() => {
@@ -632,26 +628,7 @@ export const Settings = (props: {
                       </div>
                     </button>
 
-                    <button 
-                      onClick={onToggleAutoPlay}
-                      className="w-full p-5 rounded-2xl border border-zinc-100 dark:border-zinc-800 bg-white dark:bg-zinc-900 flex items-center justify-between hover:border-zinc-300 dark:hover:border-zinc-700 transition-all text-left"
-                    >
-                      <div className="flex items-center gap-4">
-                        <div className="w-10 h-10 rounded-xl bg-zinc-100 dark:bg-zinc-800 flex items-center justify-center">
-                          <Zap className={cn("w-5 h-5", autoPlayVoice ? "text-emerald-500" : "text-zinc-400")} />
-                        </div>
-                        <div>
-                          <div className="text-sm font-bold">Auto-Response Voice</div>
-                          <div className="text-xs text-zinc-500">Automatically speak AI replies</div>
-                        </div>
-                      </div>
-                      <div className={cn(
-                        "px-3 py-1 rounded-lg text-[10px] font-bold uppercase tracking-wider transition-colors",
-                        autoPlayVoice ? "bg-emerald-500 text-white" : "bg-zinc-100 dark:bg-zinc-800 text-zinc-400"
-                      )}>
-                        {autoPlayVoice ? 'On' : 'Off'}
-                      </div>
-                    </button>
+
 
                     <button 
                       onClick={onToggleImageSpeed}

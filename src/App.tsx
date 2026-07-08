@@ -18,17 +18,9 @@ import {
   ThumbsDown,
   FileDown,
   MessageSquare,
-  Mic,
-  Headphones,
-  MicOff,
-  Volume2,
-  VolumeX,
-  Play,
-  Pause,
   Image as ImageIcon,
   Edit2,
   Trash2,
-  Waves,
   Globe,
   Maximize2,
   X,
@@ -61,15 +53,6 @@ import { supabase } from './lib/supabase';
 import { applyWatermark } from './utils/watermark';
 
 import type { Message, ConversationType, Profile } from './types';
-
-const VOICES = [
-  { id: 'onyx', name: 'Onyx', desc: 'Deep & Resonant', gender: 'male' },
-  { id: 'echo', name: 'Echo', desc: 'Warm & Authoritative', gender: 'male' },
-  { id: 'atlas', name: 'Atlas', desc: 'Confident & Crisp', gender: 'male' },
-  { id: 'fable', name: 'Fable', desc: 'British & Eloquent', gender: 'female' },
-  { id: 'nova', name: 'Nova', desc: 'Energetic & Bright', gender: 'female' },
-  { id: 'shimmer', name: 'Shimmer', desc: 'Soft & Ethereal', gender: 'female' },
-];
 
 const safeUUID = (): string => {
   if (typeof window !== 'undefined' && window.crypto && window.crypto.randomUUID) {
@@ -213,7 +196,7 @@ import { CodeBlock } from './components/CodeBlock';
 import { DocumentExportCard } from './components/DocumentExportCard';
 import { UpgradeModal } from './components/UpgradeModal';
 import { AppsView } from './components/AppsView';
-import { VoiceMode } from './components/VoiceMode';
+import { TextToSpeechView } from './components/TextToSpeechView';
 
 const PLAN_LIMITS = {
   free: { messages: 15, analysis: 5, images: 5 },
@@ -282,20 +265,7 @@ export default function App() {
   const [isDownloading, setIsDownloading] = useState(false);
   const [isZoomed, setIsZoomed] = useState(false);
   const [streamingMessage, setStreamingMessage] = useState('');
-  const [activeView, setActiveView] = useState<'chat' | 'history' | 'apps' | 'images' | 'settings'>('chat');
-  const [isListening, setIsListening] = useState(false);
-  const [isVoiceModeOpen, setIsVoiceModeOpen] = useState(false);
-  const [voiceOption, setVoiceOption] = useState<string>(() => {
-    return localStorage.getItem('trelvix_voice_option') || 'echo';
-  });
-  const [voiceSpeed, setVoiceSpeed] = useState<number>(() => {
-    return Number(localStorage.getItem('trelvix_voice_speed') || '1.0');
-  });
-  const [isPlaying, setIsPlaying] = useState(false);
-  const [currentAudio, setCurrentAudio] = useState<HTMLAudioElement | null>(null);
-  const [currentlyPlayingMessageId, setCurrentlyPlayingMessageId] = useState<string | null>(null);
-  const [shouldPlayVoice, setShouldPlayVoice] = useState(false);
-  const [autoPlayVoice, setAutoPlayVoice] = useState(false);
+  const [activeView, setActiveView] = useState<'chat' | 'history' | 'apps' | 'images' | 'settings' | 'tts'>('chat');
   const [imageSpeed, setImageSpeed] = useState<'fast' | 'quality'>(() => {
     return (localStorage.getItem('image_speed') as 'fast' | 'quality') || 'quality';
   });
@@ -312,14 +282,6 @@ export default function App() {
   const [currentImagePrompt, setCurrentImagePrompt] = useState('');
   const [timerCount, setTimerCount] = useState(0);
   const [currentStageText, setCurrentStageText] = useState('Initializing Trelvix Visual Engine...');
-
-  useEffect(() => {
-    localStorage.setItem('trelvix_voice_option', voiceOption);
-  }, [voiceOption]);
-
-  useEffect(() => {
-    localStorage.setItem('trelvix_voice_speed', voiceSpeed.toString());
-  }, [voiceSpeed]);
 
   // Dynamically resolve absolute URL paths for OpenGraph & Twitter crawler compatibility
   useEffect(() => {
@@ -445,11 +407,6 @@ export default function App() {
       window.removeEventListener('focus', handleVisibilitySync);
     };
   }, [user, currentConversation?.id, messages, isGeneratingImage]);
-  const [isMuted, setIsMuted] = useState(false);
-  const [isSpeakerOn, setIsSpeakerOn] = useState(true);
-  const [currentTranscript, setCurrentTranscript] = useState('');
-  const [currentResponse, setCurrentResponse] = useState('');
-  const transcriptRef = useRef('');
   const [activeMessageId, setActiveMessageId] = useState<string | null>(null);
   const [showUpgradeModal, setShowUpgradeModal] = useState(false);
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
@@ -459,9 +416,9 @@ export default function App() {
   const [viewportHeight, setViewportHeight] = useState<string>('100%');
   const [loadedRemarkGfm, setLoadedRemarkGfm] = useState<any>(null);
 
-  // Screen Wake Lock controller to prevent mobile screen sleep during model generation or voice sessions
+  // Screen Wake Lock controller to prevent mobile screen sleep during model generation
   const wakeLockRef = useRef<any>(null);
-  const shouldKeepAwake = isLoading || isGeneratingImage || isPlaying || isListening;
+  const shouldKeepAwake = isLoading || isGeneratingImage;
 
   useEffect(() => {
     const acquireLock = async () => {
@@ -608,9 +565,6 @@ export default function App() {
                 setConversations(prev => prev.map(c => c.id === currentConversation.id ? { ...c, messages: uniqueMessages, updated_at: new Date().toISOString() } : c));
                 setCurrentConversation(prev => prev ? { ...prev, messages: uniqueMessages } : null);
                 setHasError(false);
-                if (autoPlayVoice && lastMsg.content && currentConversation.type !== 'image') {
-                  playVoice(lastMsg.content);
-                }
               }
               return; 
             }
@@ -662,9 +616,7 @@ export default function App() {
       setIsGeneratingImage(false);
     }
   }, [currentConversation?.id, messages.length]);
-  const recognitionRef = useRef<any>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
-  const voiceAbortControllerRef = useRef<AbortController | null>(null);
   const generationAbortControllerRef = useRef<AbortController | null>(null);
 
   useEffect(() => {
@@ -714,320 +666,6 @@ export default function App() {
   useEffect(() => {
     scrollToBottom();
   }, [messages, streamingMessage]);
-
-  useEffect(() => {
-    // Initialize SpeechRecognition
-    const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
-    if (SpeechRecognition) {
-      recognitionRef.current = new SpeechRecognition();
-      recognitionRef.current.continuous = true; // Use continuous for better control
-      recognitionRef.current.interimResults = true;
-      recognitionRef.current.lang = 'en-US';
-
-      let silenceTimer: any = null;
-
-      recognitionRef.current.onstart = () => {
-        setIsListening(true);
-        if (currentAudio) {
-          currentAudio.pause();
-          setIsPlaying(false);
-          setCurrentlyPlayingMessageId(null);
-        }
-      };
-
-      recognitionRef.current.onresult = (event: any) => {
-        let interimTranscript = '';
-        const currentResult = event.results[event.results.length - 1];
-        
-        if (currentResult.isFinal) {
-          const finalResult = currentResult[0].transcript;
-          transcriptRef.current += finalResult;
-          setCurrentTranscript(transcriptRef.current);
-          
-          // Dictation mode - populate input
-          setInput(prev => {
-            const base = prev.trim();
-            return base + (base ? ' ' : '') + finalResult.trim();
-          });
-          
-          // Reset silence timer on every final result too
-          if (silenceTimer) clearTimeout(silenceTimer);
-          silenceTimer = setTimeout(() => {
-            handleSpeechEnd();
-          }, 350); // Cut down to 350ms for ultra-responsive voice control
-        } else {
-          interimTranscript = currentResult[0].transcript;
-          setStreamingMessage(interimTranscript);
-          
-          // Barge-in sensing: If user speaks meaningfully while AI is playing, stop AI
-          if (interimTranscript.trim().length > 2 && (isPlaying || isLoading)) {
-             if (window.speechSynthesis.speaking) {
-               window.speechSynthesis.cancel();
-             }
-             if (currentAudio) {
-               currentAudio.pause();
-             }
-             setIsPlaying(false);
-             setCurrentlyPlayingMessageId(null);
-             // If we were loading/thinking, abort the active LLM generation
-             if (isLoading && generationAbortControllerRef.current) {
-               generationAbortControllerRef.current.abort("User interrupted during thinking");
-               setIsLoading(false);
-             }
-             setCurrentTranscript('Listening...');
-          }
-
-          // Silence detection: Start/Reset timer on interim results
-          if (silenceTimer) clearTimeout(silenceTimer);
-          silenceTimer = setTimeout(() => {
-            handleSpeechEnd();
-          }, 650); // Lowered to 650ms for extremely snappy conversational responses
-        }
-
-        function handleSpeechEnd() {
-          const finalSpeech = (transcriptRef.current + interimTranscript).trim();
-          if (finalSpeech.length < 1) return;
-
-          // For regular input "handsfree", we might want to auto-send if it's a significant pause
-          // but let's keep it just as dictation for now unless it's a very long pause
-          // Actually, "handfree" usually means auto-send.
-          if (finalSpeech.length > 5) {
-             // Auto-send in handsfree mode if the user stops for a long time
-             // For now, let's just leave it in the input box so they can see it "typed"
-             // and if they want absolute handsfree they can go to Voice Mode.
-             // Update: The user said "types handfree", so let's just make it fill the box.
-             transcriptRef.current = '';
-             setStreamingMessage('');
-          }
-        }
-      };
-
-      recognitionRef.current.onerror = (event: any) => {
-        if (event.error !== 'no-speech' && event.error !== 'aborted') {
-          console.error("Speech error:", event.error);
-        }
-        setIsListening(false);
-      };
-
-      recognitionRef.current.onend = () => {
-        setIsListening(false);
-      };
-    }
-    return () => {
-      recognitionRef.current?.stop();
-    };
-  }, [isPlaying, isLoading, isMuted, currentAudio]);
-
-  useEffect(() => {
-    if (currentResponse && currentTranscript) {
-      // Keep transcript for a moment then clear
-      const timer = setTimeout(() => setCurrentTranscript(''), 3000);
-      return () => clearTimeout(timer);
-    }
-  }, [currentResponse]);
-
-
-
-  useEffect(() => {
-    (window as any).__addVoiceMessagePair = async (userText: string, assistantText: string) => {
-      console.log("[Window Voice sync] Received pair:", userText, "---", assistantText);
-      const userMessage: Message = {
-        id: safeUUID(),
-        role: 'user',
-        content: userText,
-        created_at: new Date().toISOString()
-      };
-      
-      const assistantMessage: Message = {
-        id: safeUUID(),
-        role: 'assistant',
-        content: assistantText,
-        model: 'trelvix-mini',
-        created_at: new Date().toISOString()
-      };
-
-      setMessages(prev => {
-        const nextMsgs = [...prev, userMessage, assistantMessage];
-        
-        const syncDb = async () => {
-          let conv = currentConversation;
-          if (!conv) {
-            try {
-              conv = await startConversation('voice', userText.slice(0, 30) || 'Voice Session', userText, {}, false);
-            } catch (err) {
-              console.error("[Window Voice Sync] startConversation failed:", err);
-            }
-          }
-          if (conv) {
-            try {
-              await updateConversationMessages(conv.id, nextMsgs);
-              setConversations(p => p.map(c => c.id === conv?.id ? { ...c, messages: nextMsgs, updated_at: new Date().toISOString() } : c));
-            } catch (err) {
-              console.error("[Window Voice Sync] updateConversationMessages failed:", err);
-            }
-          }
-        };
-        
-        syncDb();
-        return nextMsgs;
-      });
-    };
-
-    return () => {
-      delete (window as any).__addVoiceMessagePair;
-    };
-  }, [currentConversation, conversations]);
-
-
-
-  const toggleListening = () => {
-    if (isListening) {
-      try {
-        recognitionRef.current?.stop();
-      } catch (e) {
-        console.warn("Error stopping recognition:", e);
-      }
-      setIsListening(false);
-    } else {
-      if (isMuted) {
-        setIsMuted(false);
-      }
-      try {
-        transcriptRef.current = '';
-        setCurrentTranscript('');
-        setStreamingMessage('');
-        recognitionRef.current?.start();
-        setIsListening(true);
-      } catch (e) {
-        console.error("Error starting recognition:", e);
-        toast.error("Failed to start microphone. Please try again.");
-        setIsListening(false);
-      }
-    }
-  };
-
-  useEffect(() => {
-    if (isMuted && isListening) {
-      recognitionRef.current?.stop();
-      setIsListening(false);
-    }
-  }, [isMuted]);
-
-  useEffect(() => {
-    if (currentAudio) {
-      currentAudio.muted = !isSpeakerOn;
-    }
-    if (!isSpeakerOn && window.speechSynthesis.speaking) {
-      window.speechSynthesis.cancel();
-      setIsPlaying(false);
-      setCurrentlyPlayingMessageId(null);
-    }
-  }, [isSpeakerOn, currentAudio]);
-
-  const playVoice = async (text: string, messageId?: string) => {
-    if (!text) return;
-    
-    // Toggle play/pause if clicking the active speaker button
-    if (messageId && currentlyPlayingMessageId === messageId) {
-      togglePlayback();
-      return;
-    }
-
-    // Cancel any active SpeechSynthesis speaking or queued utterances immediately
-    window.speechSynthesis.cancel();
-
-    if (currentAudio) {
-      currentAudio.pause();
-      currentAudio.onended = null;
-      setCurrentAudio(null);
-    }
-
-    try {
-      setIsPlaying(true);
-      if (messageId) setCurrentlyPlayingMessageId(messageId);
-
-      // Clean Markdown of asterisks, hashes, backticks, and code blocks for smooth natural reading
-      const cleanText = text
-        .replace(/```[\s\S]*?```/g, '') // remove code blocks entirely
-        .replace(/[*_`#\-]/g, ' ')      // strip markdown markers
-        .replace(/\s+/g, ' ')           // collapse whitespace
-        .trim();
-
-      const utterance = new SpeechSynthesisUtterance(cleanText);
-      utterance.volume = isSpeakerOn ? 1.0 : 0.0;
-
-      // Select matching gender/personality local voice from device
-      const voices = window.speechSynthesis.getVoices();
-      const voiceData = VOICES.find(v => v.id === voiceOption);
-      let selectedVoice = voices.find(v => v.name.toLowerCase().includes(voiceOption.toLowerCase()));
-
-      if (!selectedVoice && voiceData) {
-        const targetGender = voiceData.gender || 'male';
-        const maleKeywords = ['male', 'david', 'mark', 'guy', 'daniel', 'alex', 'james', 'thomas', 'george', 'paul'];
-        const femaleKeywords = ['female', 'zira', 'samantha', 'victoria', 'susan', 'amy', 'linda', 'mary', 'emma', 'hazel', 'ira'];
-        const keywords = targetGender === 'male' ? maleKeywords : femaleKeywords;
-
-        selectedVoice = voices.find(v => {
-          const name = v.name.toLowerCase();
-          return keywords.some(k => name.includes(k));
-        });
-      }
-
-      if (selectedVoice) {
-        utterance.voice = selectedVoice;
-      }
-
-      // Configure beautiful native pitch/rate calibrations for the selected persona
-      if (voiceOption === 'onyx' || voiceOption === 'echo' || voiceOption === 'atlas') {
-        utterance.pitch = voiceOption === 'onyx' ? 0.8 : voiceOption === 'echo' ? 0.85 : 0.95;
-        utterance.rate = 0.95;
-      } else if (voiceOption === 'fable') {
-        utterance.pitch = 1.05;
-        utterance.rate = 1.0;
-      } else if (voiceOption === 'shimmer') {
-        utterance.pitch = 1.22;
-        utterance.rate = 1.08;
-      } else if (voiceOption === 'nova') {
-        utterance.pitch = 1.15;
-        utterance.rate = 1.05;
-      }
-
-      utterance.onend = () => {
-        setIsPlaying(false);
-        setCurrentlyPlayingMessageId(null);
-      };
-
-      utterance.onerror = (e) => {
-        console.error("SpeechSynthesis error:", e);
-        setIsPlaying(false);
-        setCurrentlyPlayingMessageId(null);
-      };
-
-      window.speechSynthesis.speak(utterance);
-    } catch (error) {
-      console.error("SpeechSynthesis initiation error:", error);
-      setIsPlaying(false);
-      setCurrentlyPlayingMessageId(null);
-    }
-  };
-
-  const togglePlayback = () => {
-    if (window.speechSynthesis.speaking) {
-      if (isPlaying) {
-        window.speechSynthesis.pause();
-      } else {
-        window.speechSynthesis.resume();
-      }
-      setIsPlaying(!isPlaying);
-    } else if (currentAudio) {
-      if (isPlaying) {
-        currentAudio.pause();
-      } else {
-        currentAudio.play();
-      }
-      setIsPlaying(!isPlaying);
-    }
-  };
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -1440,436 +1078,6 @@ export default function App() {
     }
   };
 
-  // Real-Time Streaming WebSocket and Audio Queue Refs and States
-  const socketRef = useRef<WebSocket | null>(null);
-  const reconnectAttemptRef = useRef<number>(0);
-  const reconnectTimeoutRef = useRef<any>(null);
-  const isManuallyClosedRef = useRef<boolean>(false);
-  const playVoiceQueueRef = useRef<string[]>([]);
-  const isVoiceQueuePlayingRef = useRef<boolean>(false);
-  const webSocketFailedRef = useRef<boolean>(false);
-
-  const connectWebSocket = () => {
-    if (socketRef.current) {
-      if (socketRef.current.readyState === WebSocket.OPEN) {
-        return socketRef.current;
-      }
-      if (socketRef.current.readyState === WebSocket.CONNECTING) {
-        return socketRef.current;
-      }
-    }
-    
-    // Clear any active reconnect timeouts
-    if (reconnectTimeoutRef.current) {
-      clearTimeout(reconnectTimeoutRef.current);
-      reconnectTimeoutRef.current = null;
-    }
-    
-    isManuallyClosedRef.current = false;
-    const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws';
-    const wsUrl = `${wsProtocol}//${window.location.host}`;
-    console.log(`[WebSocket] Connecting to ${wsUrl} (Attempt #${reconnectAttemptRef.current + 1})`);
-    
-    try {
-      const socket = new WebSocket(wsUrl);
-      socketRef.current = socket;
-      
-      socket.onopen = () => {
-        console.log("[WebSocket] Opened stream channel successfully");
-        reconnectAttemptRef.current = 0; // Reset connection attempts on success
-        webSocketFailedRef.current = false; // Reset failure flag
-      };
-      
-      socket.onclose = (event) => {
-        console.log(`[WebSocket] Closed stream channel. Code: ${event.code}, Reason: ${event.reason || "None"}`);
-        socketRef.current = null;
-        
-        // Mark as failed if connection was rejected or closed with clean code but we're in voice mode
-        if (event.code !== 1000) {
-          webSocketFailedRef.current = true;
-        }
-      };
-      
-      socket.onerror = (err) => {
-        console.error("[WebSocket] Connection error observed:", err);
-        webSocketFailedRef.current = true;
-      };
-      
-      return socket;
-    } catch (e) {
-      console.error("[WebSocket] Synchronous exception during instantiation:", e);
-      return null;
-    }
-  };
-
-  const stopPlayingVoiceQueue = () => {
-    if (currentAudio) {
-      currentAudio.pause();
-      currentAudio.onended = null;
-      setCurrentAudio(null);
-    }
-    // Clean all URLs in play queue
-    playVoiceQueueRef.current.forEach(url => {
-      try { URL.revokeObjectURL(url); } catch(e) {}
-    });
-    playVoiceQueueRef.current = [];
-    isVoiceQueuePlayingRef.current = false;
-    setIsPlaying(false);
-  };
-
-  const startPlayingVoiceQueue = () => {
-    if (isVoiceQueuePlayingRef.current) return;
-    isVoiceQueuePlayingRef.current = true;
-    playNextInVoiceQueue();
-  };
-
-  const playNextInVoiceQueue = () => {
-    if (playVoiceQueueRef.current.length === 0) {
-      isVoiceQueuePlayingRef.current = false;
-      setIsPlaying(false);
-      return;
-    }
-
-    const nextAudioUrl = playVoiceQueueRef.current.shift();
-    if (!nextAudioUrl) {
-      isVoiceQueuePlayingRef.current = false;
-      setIsPlaying(false);
-      return;
-    }
-
-    const audio = new Audio(nextAudioUrl);
-    // Sync speed preference
-    const savedSpeed = Number(localStorage.getItem('trelvix_voice_speed') || '1.0');
-    audio.playbackRate = savedSpeed;
-
-    setCurrentAudio(audio);
-    setIsPlaying(true);
-
-    audio.onended = () => {
-      try { URL.revokeObjectURL(nextAudioUrl); } catch(e) {}
-      playNextInVoiceQueue();
-    };
-
-    audio.onerror = (e) => {
-      console.error("Audio block playback error:", e);
-      try { URL.revokeObjectURL(nextAudioUrl); } catch(e) {}
-      playNextInVoiceQueue();
-    };
-
-    audio.play().catch(err => {
-      console.error("[Audio] Could not run audio chunk play:", err);
-      try { URL.revokeObjectURL(nextAudioUrl); } catch(e) {}
-      playNextInVoiceQueue();
-    });
-  };
-
-  const handleSaveVoiceModePair = async (userText: string, assistantText: string) => {
-    if (!userText.trim() || !assistantText.trim()) return;
-
-    const userMessage: Message = {
-      id: safeUUID(),
-      role: 'user',
-      content: userText,
-      created_at: new Date().toISOString()
-    };
-
-    const assistantMessage: Message = {
-      id: safeUUID(),
-      role: 'assistant',
-      content: assistantText,
-      created_at: new Date().toISOString()
-    };
-
-    const nextMessages = [...messages, userMessage, assistantMessage];
-    setMessages(nextMessages);
-
-    let conv = currentConversation;
-    try {
-      if (!conv) {
-        // Start conversation first
-        conv = await startConversation('voice', userText.slice(0, 30) || 'Voice Session', userText, {}, false);
-      }
-      if (conv) {
-        await updateConversationMessages(conv.id, nextMessages);
-        setConversations(prev => prev.map(c => c.id === conv.id ? { ...c, messages: nextMessages, updated_at: new Date().toISOString() } : c));
-      }
-    } catch(e) {
-      console.warn("[VoiceMode] Saving voice transaction failed:", e);
-    }
-  };
-
-  const sendVoiceMessageWS = async (content: string) => {
-    const userMessage: Message = {
-      id: safeUUID(),
-      role: 'user',
-      content,
-      created_at: new Date().toISOString()
-    };
-
-    const updatedMessages = [...messages, userMessage];
-    setMessages(updatedMessages);
-    setIsLoading(true);
-    setCurrentTranscript(content);
-    setCurrentResponse('');
-    setStreamingMessage('');
-
-    // Ensure we stop and clear standard audio
-    stopPlayingVoiceQueue();
-    window.speechSynthesis.cancel();
-
-    let conv = currentConversation;
-    try {
-      if (!conv) {
-        conv = await startConversation('voice', content.slice(0, 30) || 'Voice Session', content, {}, false);
-      }
-      if (conv) {
-        await updateConversationMessages(conv.id, updatedMessages);
-        setConversations(prev => prev.map(c => c.id === conv.id ? { ...c, messages: updatedMessages, updated_at: new Date().toISOString() } : c));
-      }
-    } catch(e) {
-      console.warn("Lazily syncing conversation in WS stream failed:", e);
-    }
-
-    try {
-      if (webSocketFailedRef.current) {
-        throw new Error("Bypassing WebSocket attempt due to previous connection drops");
-      }
-      const socket = connectWebSocket();
-      if (!socket) {
-        throw new Error("Unable to establish WebSocket connection interface");
-      }
-
-      socket.onmessage = async (event) => {
-        try {
-          const data = JSON.parse(event.data);
-          if (data.type === "text") {
-            setCurrentResponse(prev => prev + data.chunk);
-            setStreamingMessage(prev => prev + data.chunk);
-          } else if (data.type === "audio") {
-            if (isSpeakerOn) {
-              const binaryStr = atob(data.audio);
-              const len = binaryStr.length;
-              const bytes = new Uint8Array(len);
-              for (let i = 0; i < len; i++) {
-                bytes[i] = binaryStr.charCodeAt(i);
-              }
-              const blob = new Blob([bytes], { type: 'audio/mp3' });
-              const audioUrl = URL.createObjectURL(blob);
-              
-              playVoiceQueueRef.current.push(audioUrl);
-              startPlayingVoiceQueue();
-            }
-          } else if (data.type === "done") {
-            setIsLoading(false);
-            setStreamingMessage('');
-            
-            const assistantMessage: Message = {
-              id: safeUUID(),
-              role: 'assistant',
-              content: data.fullText,
-              model: 'trelvix-mini',
-              created_at: new Date().toISOString()
-            };
-            
-            const finalMessages = [...updatedMessages, assistantMessage];
-            setMessages(finalMessages);
-            
-            if (conv) {
-              await updateConversationMessages(conv.id, finalMessages);
-            }
-          } else if (data.type === "error") {
-            toast.error(data.message);
-            setIsLoading(false);
-          }
-        } catch (err) {
-          console.error("WebSocket message parse error:", err);
-        }
-      };
-
-      if (socket.readyState !== WebSocket.OPEN) {
-        await new Promise<void>((resolve, reject) => {
-          const socketTimeout = setTimeout(() => {
-            webSocketFailedRef.current = true;
-            reject(new Error("WebSocket handshake connection timeout reached (1500ms limit)"));
-          }, 1500);
-
-          const checkState = () => {
-            if (socket.readyState === WebSocket.OPEN) {
-              clearTimeout(socketTimeout);
-              resolve();
-            } else if (socket.readyState === WebSocket.CLOSED) {
-              clearTimeout(socketTimeout);
-              webSocketFailedRef.current = true;
-              reject(new Error("Socket connection closed prematurely"));
-            } else {
-              setTimeout(checkState, 50);
-            }
-          };
-          checkState();
-        });
-      }
-
-      socket.send(JSON.stringify({
-        type: "chat",
-        messages: updatedMessages.map(m => ({ role: m.role, content: m.content })),
-        voice_option: voiceOption,
-        personality: profile?.personality || 'creative',
-        model: 'trelvix-mini',
-        conversationId: conv?.id,
-        userId: user?.id
-      }));
-
-    } catch (wsError: any) {
-      console.warn(`[WebSocket] Pipeline failure (${wsError.message || wsError}). Activating HTTPS streaming fallback seamlessly...`);
-      
-      try {
-        const activeModel = 'trelvix-mini';
-        const response = await fetch('/api/generate', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            type: 'chat',
-            model: activeModel,
-            prompt: content,
-            messages: updatedMessages.map(m => ({
-              role: m.role,
-              content: m.content
-            })),
-            voice_option: voiceOption,
-            personality: profile?.personality || 'creative',
-            conversationId: conv?.id,
-            userId: user?.id
-          })
-        });
-
-        if (!response.ok) {
-          throw new Error(`HTTP fallback server error with status: ${response.status}`);
-        }
-
-        const reader = response.body?.getReader();
-        const decoder = new TextDecoder();
-        let fullContent = '';
-
-        if (!reader) {
-          throw new Error('Streaming response body reader not available');
-        }
-
-        let sentenceAccumulator = '';
-        if (isSpeakerOn) {
-          window.speechSynthesis.cancel();
-        }
-
-        const playVoiceFallbackSegment = (text: string) => {
-          if (!text) return;
-          try {
-            const cleanText = text
-              .replace(/```[\s\S]*?```/g, '') // remove code blocks entirely
-              .replace(/[*_`#\-]/g, ' ')      // strip markdown markers
-              .replace(/\s+/g, ' ')           // collapse whitespace
-              .trim();
-            if (!cleanText) return;
-
-            const utterance = new SpeechSynthesisUtterance(cleanText);
-            utterance.volume = isSpeakerOn ? 1.0 : 0.0;
-            const voices = window.speechSynthesis.getVoices();
-            const voiceData = VOICES.find(v => v.id === voiceOption);
-            let selectedVoice = voices.find(v => v.name.toLowerCase().includes(voiceOption.toLowerCase()));
-            if (!selectedVoice && voiceData) {
-              const targetGender = voiceData.gender || 'male';
-              const maleKeywords = ['male', 'david', 'mark', 'guy', 'daniel', 'alex', 'james', 'thomas', 'george', 'paul'];
-              const femaleKeywords = ['female', 'zira', 'samantha', 'victoria', 'susan', 'amy', 'linda', 'mary', 'emma', 'hazel', 'ira'];
-              const keywords = targetGender === 'male' ? maleKeywords : femaleKeywords;
-              selectedVoice = voices.find(v => {
-                const name = v.name.toLowerCase();
-                return keywords.some(k => name.includes(k));
-              });
-            }
-            if (selectedVoice) {
-              utterance.voice = selectedVoice;
-            }
-            if (voiceOption === 'onyx' || voiceOption === 'echo' || voiceOption === 'atlas') {
-              utterance.pitch = voiceOption === 'onyx' ? 0.8 : voiceOption === 'echo' ? 0.85 : 0.95;
-              utterance.rate = 0.95;
-            } else if (voiceOption === 'fable') {
-              utterance.pitch = 1.05;
-              utterance.rate = 1.0;
-            } else if (voiceOption === 'shimmer') {
-              utterance.pitch = 1.22;
-              utterance.rate = 1.08;
-            } else if (voiceOption === 'nova') {
-              utterance.pitch = 1.15;
-              utterance.rate = 1.05;
-            }
-            
-            utterance.onstart = () => {
-              setIsPlaying(true);
-            };
-            
-            utterance.onend = () => {
-              if (!window.speechSynthesis.speaking && !window.speechSynthesis.pending) {
-                setIsPlaying(false);
-              }
-            };
-            
-            window.speechSynthesis.speak(utterance);
-          } catch (e) {
-            console.error("SpeechSynthesis segment error:", e);
-          }
-        };
-
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          const chunk = decoder.decode(value);
-          fullContent += chunk;
-          setStreamingMessage(prev => prev + chunk);
-          setCurrentResponse(prev => prev + chunk);
-
-          if (isSpeakerOn) {
-            sentenceAccumulator += chunk;
-            const terminators = /[.!?\n]/;
-            let match = sentenceAccumulator.match(terminators);
-            while (match && match.index !== undefined) {
-              const splitIndex = match.index;
-              const completedSentence = sentenceAccumulator.substring(0, splitIndex + 1).trim();
-              sentenceAccumulator = sentenceAccumulator.substring(splitIndex + 1);
-              if (completedSentence.length > 1) {
-                playVoiceFallbackSegment(completedSentence);
-              }
-              match = sentenceAccumulator.match(terminators);
-            }
-          }
-        }
-
-        if (isSpeakerOn && sentenceAccumulator.trim().length > 1) {
-          playVoiceFallbackSegment(sentenceAccumulator.trim());
-        }
-
-        const assistantMessage: Message = {
-          id: safeUUID(),
-          role: 'assistant',
-          content: fullContent,
-          model: activeModel,
-          created_at: new Date().toISOString()
-        };
-
-        const finalMessages = [...updatedMessages, assistantMessage];
-        setMessages(finalMessages);
-        setStreamingMessage('');
-        setIsLoading(false);
-
-        if (conv) {
-          await updateConversationMessages(conv.id, finalMessages);
-        }
-
-      } catch (fallbackError: any) {
-        console.error("[WebSocket Robust Fallback] Critical error during fallback:", fallbackError);
-        toast.error("Transmission interruption. Please check your internet connection and try again.");
-        setIsLoading(false);
-      }
-    }
-  };
-
   const sendMessage = async (content: string, convOverride?: any) => {
     let conv = convOverride || currentConversation;
     const trimmed = content.trim();
@@ -2023,7 +1231,6 @@ export default function App() {
             content: m.content,
             image_url: m.image_url
           })),
-          voice_option: voiceOption,
           ready_to_copy: conv.metadata?.ready_to_copy || false,
           personality: profile?.personality || 'creative',
           conversationId: conv.id,
@@ -2097,8 +1304,6 @@ export default function App() {
         throw new Error('Streaming response not available');
       }
 
-      const isVoicePlaybackEnabled = conv.type === 'voice' && (shouldPlayVoice || autoPlayVoice);
-
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
@@ -2118,11 +1323,6 @@ export default function App() {
       const finalMessages = [...updatedMessages, assistantMessage];
       setMessages(finalMessages);
       setStreamingMessage('');
-
-      if (isVoicePlaybackEnabled) {
-        playVoice(fullContent);
-        setShouldPlayVoice(false);
-      }
 
       await updateConversationMessages(conv.id, finalMessages);
       
@@ -2531,6 +1731,7 @@ export default function App() {
         }}
         onOpenApps={() => setActiveView('apps')}
         onOpenImages={() => setActiveView('images')}
+        onOpenTTS={() => setActiveView('tts')}
         activeView={activeView}
         onLogout={handleLogout}
         profile={profile}
@@ -2604,10 +1805,20 @@ export default function App() {
               <AppsView 
                 onBack={() => setActiveView('chat')}
                 onSelectApp={(type) => {
-                  setShowContextForm(type);
+                  if (type === 'tts') {
+                    setActiveView('tts');
+                  } else {
+                    setShowContextForm(type);
+                  }
                 }} 
               />
             </div>
+          ) : activeView === 'tts' ? (
+            <TextToSpeechView 
+              profile={profile}
+              onUpgradeClick={() => setShowUpgradeModal(true)}
+              onBack={() => setActiveView('chat')}
+            />
           ) : activeView === 'images' ? (
             <div className="flex-1 flex flex-col items-center justify-center p-12 text-center space-y-8 relative">
               <button 
@@ -2855,19 +2066,6 @@ export default function App() {
                                 >
                                   <Plus className="w-4 h-4 rotate-45" />
                                 </button>
-                                
-                                <div className="h-4 w-[1px] bg-zinc-200 dark:bg-zinc-800 mx-0.5 shrink-0" />
-
-                                <button 
-                                  onClick={(e) => { e.stopPropagation(); playVoice(m.content, m.id); }}
-                                  className={cn(
-                                    "p-1.5 hover:bg-zinc-200 dark:hover:bg-zinc-800 rounded-lg transition-colors shrink-0",
-                                    currentlyPlayingMessageId === m.id ? "text-blue-600 bg-blue-50 dark:bg-blue-900/20" : "text-zinc-500 hover:text-zinc-900 dark:hover:text-white"
-                                  )}
-                                  title={currentlyPlayingMessageId === m.id && isPlaying ? "Pause voice" : "Listen to response"}
-                                >
-                                  {currentlyPlayingMessageId === m.id && isPlaying ? <Pause className="w-3.5 h-3.5" /> : <Volume2 className="w-3.5 h-3.5" />}
-                                </button>
                               </>
                             )}
                           </div>
@@ -3063,45 +2261,6 @@ export default function App() {
                     />
                     
                     <div className="absolute right-0 flex items-center gap-1 md:gap-2 mr-2">
-                      <AnimatePresence>
-                        {!input.trim() && (
-                          <>
-                            {/* Speech-to-text Dictation Only */}
-                            <motion.button 
-                              initial={{ opacity: 0, scale: 0.8, width: 0 }}
-                              animate={{ opacity: 1, scale: 1, width: 'auto' }}
-                              exit={{ opacity: 0, scale: 0.8, width: 0 }}
-                              onClick={() => {
-                                toggleListening();
-                              }}
-                              className={cn(
-                                "p-3 md:p-3.5 transition-all rounded-full overflow-hidden flex-shrink-0",
-                                isListening 
-                                  ? "bg-emerald-500/10 text-emerald-500 animate-pulse ring-2 ring-emerald-500/20" 
-                                  : "text-zinc-400 dark:text-zinc-300 hover:text-zinc-900 dark:hover:text-white hover:bg-white dark:hover:bg-zinc-800"
-                              )}
-                              title="Voice Typing"
-                            >
-                              <Mic className={cn("w-4 h-4 md:w-5 md:h-5", isListening && "fill-emerald-500/20")} />
-                            </motion.button>
-
-                            {/* Immersive Real-Time Voice Mode */}
-                            <motion.button 
-                              initial={{ opacity: 0, scale: 0.8, width: 0 }}
-                              animate={{ opacity: 1, scale: 1, width: 'auto' }}
-                              exit={{ opacity: 0, scale: 0.8, width: 0 }}
-                              onClick={() => {
-                                setIsVoiceModeOpen(true);
-                              }}
-                              className="p-3 md:p-3.5 transition-all text-zinc-400 dark:text-zinc-300 hover:text-zinc-900 dark:hover:text-white hover:bg-white dark:hover:bg-zinc-800 rounded-full overflow-hidden flex-shrink-0"
-                              title="Start Voice Conversation"
-                            >
-                              <Headphones className="w-4 h-4 md:w-5 md:h-5" />
-                            </motion.button>
-                          </>
-                        )}
-                      </AnimatePresence>
-
                       <button 
                         onClick={() => sendMessage(input)}
                         disabled={(!input.trim() && !selectedAttachment) || isLoading}
@@ -3143,8 +2302,6 @@ export default function App() {
             }}
             isDarkMode={isDarkMode}
             onToggleTheme={() => setIsDarkMode(!isDarkMode)}
-            autoPlayVoice={autoPlayVoice}
-            onToggleAutoPlay={() => setAutoPlayVoice(!autoPlayVoice)}
             imageSpeed={imageSpeed}
             onToggleImageSpeed={handleToggleImageSpeed}
           />
@@ -3166,13 +2323,6 @@ export default function App() {
           isOpen={showUpgradeModal} 
           onClose={() => setShowUpgradeModal(false)} 
           reason={upgradeReason}
-          profile={profile}
-        />
-        <VoiceMode 
-          isOpen={isVoiceModeOpen}
-          onClose={() => setIsVoiceModeOpen(false)}
-          voiceOption={voiceOption}
-          onSaveMessagePair={handleSaveVoiceModePair}
           profile={profile}
         />
       </AnimatePresence>

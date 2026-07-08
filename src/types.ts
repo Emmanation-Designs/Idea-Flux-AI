@@ -1,4 +1,4 @@
-export type ConversationType = 'idea' | 'script' | 'hashtag' | 'image' | 'voice' | 'general';
+export type ConversationType = 'idea' | 'script' | 'hashtag' | 'image' | 'general' | 'tts';
 export type PersonalityType = 'professional' | 'creative' | 'witty' | 'concise' | 'empathetic' | 'academic';
 
 export interface Message {
@@ -8,7 +8,6 @@ export interface Message {
   created_at: string;
   feedback?: 'like' | 'dislike';
   image_url?: string;
-  audio_url?: string;
   filename?: string;
   model?: string;
   attachment_name?: string;

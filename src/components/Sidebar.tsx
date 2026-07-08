@@ -11,7 +11,8 @@ import {
   Clock,
   Edit2,
   Search,
-  MoreVertical
+  MoreVertical,
+  Volume2
 } from 'lucide-react';
 import React, { useState } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
@@ -30,6 +31,7 @@ export const Sidebar = ({
   onOpenSettings,
   onOpenApps,
   onOpenImages,
+  onOpenTTS,
   onLogout,
   activeView,
   profile,
@@ -45,6 +47,7 @@ export const Sidebar = ({
   onOpenSettings: () => void;
   onOpenApps: () => void;
   onOpenImages: () => void;
+  onOpenTTS: () => void;
   onLogout: () => void;
   activeView: string;
   profile: Profile | null;
@@ -124,6 +127,19 @@ export const Sidebar = ({
           >
             <ImageIcon className="w-4 h-4" />
             Images
+          </button>
+
+          <button 
+            onClick={onOpenTTS}
+            className={cn(
+              "w-full flex items-center gap-3 px-4 py-2.5 text-sm font-medium rounded-xl transition-all",
+              activeView === 'tts' 
+                ? "bg-zinc-200 dark:bg-zinc-800 text-zinc-900 dark:text-zinc-100 shadow-sm" 
+                : "text-zinc-500 hover:bg-zinc-100 dark:hover:bg-zinc-900"
+            )}
+          >
+            <Volume2 className="w-4 h-4" />
+            Text to Speech
           </button>
 
           <button 
