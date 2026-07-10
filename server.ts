@@ -214,6 +214,102 @@ app.post("/api/stripe/webhook", async (req: any, res) => {
   res.json({ received: true });
 });
 
+// --- ElevenLabs Text to Speech Integration ---
+
+let voicesCache: {
+  data: any[];
+  timestamp: number;
+} | null = null;
+const CACHE_TTL_MS = 60 * 1000; // 1-minute memory cache for ElevenLabs voices list
+
+/**
+ * Fetches the voices from ElevenLabs or retrieves them from the local short-term memory cache.
+ */
+async function getElevenLabsVoices(apiKey: string): Promise<any[]> {
+  const now = Date.now();
+  if (voicesCache && (now - voicesCache.timestamp < CACHE_TTL_MS)) {
+    return voicesCache.data;
+  }
+
+  console.log("[TextToSpeech] Fetching voices from ElevenLabs API...");
+  const response = await fetch("https://api.elevenlabs.io/v1/voices", {
+    method: "GET",
+    headers: {
+      "xi-api-key": apiKey,
+    },
+  });
+
+  if (!response.ok) {
+    let errorDetails = "";
+    try {
+      const errJson = await response.json();
+      errorDetails = errJson?.detail?.message || JSON.stringify(errJson);
+    } catch {
+      errorDetails = await response.text();
+    }
+    throw new Error(`ElevenLabs API failed with status ${response.status}: ${errorDetails}`);
+  }
+
+  const json = await response.json();
+  const rawVoices = json.voices || [];
+  const processedVoices = rawVoices.map((v: any) => ({
+    voice_id: v.voice_id,
+    name: v.name,
+    category: v.category,
+    labels: v.labels || {},
+    preview_url: v.preview_url || "",
+  }));
+
+  voicesCache = {
+    data: processedVoices,
+    timestamp: now,
+  };
+
+  return processedVoices;
+}
+
+/**
+ * Endpoint to retrieve available ElevenLabs voices.
+ */
+async function handleGetVoices(req: express.Request, res: express.Response) {
+  console.log("[TextToSpeech] Voices request received");
+  const authHeader = req.headers.authorization;
+  if (!authHeader || !authHeader.startsWith("Bearer ")) {
+    return res.status(401).json({ error: "Unauthorized: Missing session token." });
+  }
+
+  const token = authHeader.split(" ")[1];
+  const supabaseUrl = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || "https://wxezfzhhzlauggufecmm.supabase.co";
+  const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY || process.env.VITE_SUPABASE_ANON_KEY;
+  const supabase = createClient(supabaseUrl, supabaseServiceKey);
+
+  try {
+    const { data: userData, error: authError } = await supabase.auth.getUser(token);
+    if (authError || !userData?.user) {
+      return res.status(401).json({ error: "Unauthorized: Invalid session token." });
+    }
+  } catch (err: any) {
+    return res.status(401).json({ error: "Unauthorized: Failed to authenticate token." });
+  }
+
+  const elevenLabsApiKey = process.env.ELEVENLABS_API_KEY;
+  if (!elevenLabsApiKey) {
+    console.error("[TextToSpeech] Missing ELEVENLABS_API_KEY in environment");
+    return res.status(500).json({ error: "ElevenLabs API Key is missing in server configuration." });
+  }
+
+  try {
+    const voices = await getElevenLabsVoices(elevenLabsApiKey);
+    return res.json({ voices });
+  } catch (err: any) {
+    console.error("[TextToSpeech] Failed to fetch ElevenLabs voices:", err);
+    return res.status(500).json({ error: err.message || "Failed to retrieve voices from ElevenLabs." });
+  }
+}
+
+app.get("/api/text-to-speech/voices", handleGetVoices);
+app.get("/api/tools/text-to-speech/voices", handleGetVoices);
+
 // Text to Speech Generation Endpoint
 app.post("/api/tools/text-to-speech", async (req, res) => {
   const authHeader = req.headers.authorization;
@@ -237,9 +333,18 @@ app.post("/api/tools/text-to-speech", async (req, res) => {
     return res.status(401).json({ error: "Unauthorized: Failed to authenticate token." });
   }
 
-  const { text, voice = "alloy", model = "tts-1", speed = 1.0 } = req.body;
+  const { text, voice, voiceId, model, modelId, speed = 1.0 } = req.body;
+  
+  // Extract and prefer explicit ElevenLabs parameters over deprecated OpenAI fields
+  const targetVoiceId = voiceId || voice;
+  const targetModelId = modelId || model || "eleven_turbo_v2_5";
+
   if (!text || typeof text !== "string" || !text.trim()) {
     return res.status(400).json({ error: "Text payload is required." });
+  }
+
+  if (!targetVoiceId) {
+    return res.status(400).json({ error: "Voice ID is required." });
   }
 
   const characterCount = text.length;
@@ -260,15 +365,15 @@ app.post("/api/tools/text-to-speech", async (req, res) => {
       reason = checkData[0].reason;
       hasDatabaseTracking = true;
     } else {
-      console.warn("[TTS Backend] RPC can_generate_tts failed or not present:", checkError?.message);
+      console.warn("[TextToSpeech] RPC can_generate_tts failed or not present:", checkError?.message);
     }
   } catch (err: any) {
-    console.warn("[TTS Backend] can_generate_tts RPC exception:", err?.message || err);
+    console.warn("[TextToSpeech] can_generate_tts RPC exception:", err?.message || err);
   }
 
   // 2. Client-Side Fallback if SQL function/limits table is absent
   if (!hasDatabaseTracking) {
-    console.log("[TTS Backend] Falling back to programmatic schema and limits check...");
+    console.log("[TextToSpeech] Falling back to programmatic schema and limits check...");
     let plan = "free";
     try {
       const { data: profile } = await supabase
@@ -280,7 +385,7 @@ app.post("/api/tools/text-to-speech", async (req, res) => {
         plan = profile.plan;
       }
     } catch (profileErr) {
-      console.warn("[TTS Backend] Failed to retrieve user plan:", profileErr);
+      console.warn("[TextToSpeech] Failed to retrieve user plan:", profileErr);
     }
 
     const PLAN_LIMITS_FALLBACK = {
@@ -312,7 +417,7 @@ app.post("/api/tools/text-to-speech", async (req, res) => {
           hasDatabaseTracking = true;
         }
       } catch (countErr) {
-        console.warn("[TTS Backend] Fallback generations query failed:", countErr);
+        console.warn("[TextToSpeech] Fallback generations query failed:", countErr);
       }
     } else {
       // Pro/Plus with unlimited count, character count already within limit
@@ -332,8 +437,8 @@ app.post("/api/tools/text-to-speech", async (req, res) => {
       .insert({
         user_id: user.id,
         character_count: characterCount,
-        selected_voice: voice,
-        selected_model: model,
+        selected_voice: targetVoiceId,
+        selected_model: targetModelId,
         generation_status: "pending",
         provider: "elevenlabs",
         metadata: {
@@ -347,34 +452,34 @@ app.post("/api/tools/text-to-speech", async (req, res) => {
       generationId = genLog.id;
     }
   } catch (insertErr) {
-    console.warn("[TTS Backend] Failed to write initial tracking record:", insertErr);
+    console.warn("[TextToSpeech] Failed to write initial tracking record:", insertErr);
   }
 
   // 4. Initialize ElevenLabs and Synthesize Speech
   const elevenLabsApiKey = process.env.ELEVENLABS_API_KEY;
   if (!elevenLabsApiKey) {
-    console.error("[TTS Backend] Missing ELEVENLABS_API_KEY in environment");
+    console.error("[TextToSpeech] Missing ELEVENLABS_API_KEY in environment");
     return res.status(500).json({ error: "ElevenLabs API Key is missing in server configuration." });
   }
 
-  // Map existing OpenAI voices to ElevenLabs pre-made high-quality voices
-  const VOICE_MAP: Record<string, string> = {
-    alloy: "pNInz6obpgfrhhF21Zgd",     // Adam
-    echo: "JBFqnCBcaCvAt60CGHOV",      // George
-    fable: "IKne3meq5aSn9XLyUdCD",     // Charlie
-    onyx: "ErXwobaYiN019vkySvjV",      // Antoni
-    nova: "EXAVITQu4vr4xnSDxMaL",      // Bella
-    shimmer: "AZnzlk1XvdvUeBnXmlld"    // Domi
-  };
+  // 4.5 Validate that the voice exists in our list of available ElevenLabs voices
+  try {
+    const voices = await getElevenLabsVoices(elevenLabsApiKey);
+    const voiceExists = voices.some((v: any) => v.voice_id === targetVoiceId);
+    if (!voiceExists) {
+      console.warn(`[TextToSpeech] Validation failed: voice_id "${targetVoiceId}" not found in available ElevenLabs voices.`);
+      return res.status(400).json({
+        error: `The voice ID "${targetVoiceId}" is not available or valid for this ElevenLabs account.`
+      });
+    }
+  } catch (valErr: any) {
+    console.warn("[TextToSpeech] Dynamic voice validation warning (skipping block to prevent API lockouts):", valErr?.message || valErr);
+  }
 
-  const targetVoiceId = VOICE_MAP[voice] || voice || "pNInz6obpgfrhhF21Zgd";
-  
-  // Map models: tts-1 (low latency) -> eleven_turbo_v2_5, tts-1-hd (high quality) -> eleven_multilingual_v2
-  const targetModelId = model === "tts-1-hd" ? "eleven_multilingual_v2" : "eleven_turbo_v2_5";
   const startTime = Date.now();
 
   try {
-    console.log(`[TTS Backend] Requesting audio from ElevenLabs. Voice: ${voice} (ID: ${targetVoiceId}), Model: ${targetModelId}, Length: ${characterCount}`);
+    console.log(`[TextToSpeech] Requesting audio from ElevenLabs. Voice: ${targetVoiceId}, Model: ${targetModelId}, Length: ${characterCount}`);
     
     const url = `https://api.elevenlabs.io/v1/text-to-speech/${encodeURIComponent(targetVoiceId)}`;
     const response = await fetch(url, {
@@ -425,9 +530,11 @@ app.post("/api/tools/text-to-speech", async (req, res) => {
           })
           .eq("id", generationId);
       } catch (updateErr) {
-        console.warn("[TTS Backend] Failed to update tracking log to completed:", updateErr);
+        console.warn("[TextToSpeech] Failed to update tracking log to completed:", updateErr);
       }
     }
+
+    console.log("[TextToSpeech] Audio generated successfully");
 
     // 6. Respond with streaming binary audio file
     res.set({
@@ -437,7 +544,7 @@ app.post("/api/tools/text-to-speech", async (req, res) => {
     });
     return res.send(buffer);
   } catch (ttsErr: any) {
-    console.error("[TTS Backend] ElevenLabs Synthesis Error:", ttsErr);
+    console.error("[TextToSpeech] Generation failed:", ttsErr);
     if (generationId) {
       try {
         await supabase
@@ -445,7 +552,7 @@ app.post("/api/tools/text-to-speech", async (req, res) => {
           .update({ generation_status: "failed" })
           .eq("id", generationId);
       } catch (logErr) {
-        console.warn("[TTS Backend] Failed to mark track as failed:", logErr);
+        console.warn("[TextToSpeech] Failed to mark track as failed:", logErr);
       }
     }
     return res.status(520).json({ error: ttsErr?.message || "Failed to generate speech audio." });

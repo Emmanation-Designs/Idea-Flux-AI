@@ -40,18 +40,9 @@ interface TTSHistoryItem {
   text_snippet: string;
 }
 
-const VOICE_OPTIONS = [
-  { id: 'alloy', name: 'Alloy', gender: 'Neutral', personality: 'Balanced, professional, and natural', desc: 'Versatile tone ideal for audiobooks, standard tutorials, and standard narration.' },
-  { id: 'echo', name: 'Echo', gender: 'Male', personality: 'Warm, natural, and authoritative', desc: 'Slightly deeper resonance suited for informative briefings and news segments.' },
-  { id: 'fable', name: 'Fable', gender: 'Neutral', personality: 'Expressive and clear conversational pitch', desc: 'Enunciated, dynamic delivery great for guides and narrative reviews.' },
-  { id: 'onyx', name: 'Onyx', gender: 'Male', personality: 'Deep, stable, and highly professional', desc: 'Commanding and confident profile perfect for business reports and briefings.' },
-  { id: 'nova', name: 'Nova', gender: 'Female', personality: 'Bright, articulate, and friendly', desc: 'Welcoming tone designed for educational courses and customer support guides.' },
-  { id: 'shimmer', name: 'Shimmer', gender: 'Female', personality: 'Articulate, corporate, and clear assistant', desc: 'Highly legible pitch, excellent for automated assistants and walkthroughs.' }
-];
-
 const MODEL_OPTIONS = [
-  { id: 'tts-1', name: 'Standard (tts-1)', desc: 'Optimized for lowest latency and standard operations.' },
-  { id: 'tts-1-hd', name: 'High-Definition (tts-1-hd)', desc: 'Optimized for maximum fidelity and production-quality exports.' }
+  { id: 'eleven_turbo_v2_5', name: 'Standard (Turbo v2.5)', desc: 'Optimized for lowest latency and standard text-to-speech.' },
+  { id: 'eleven_multilingual_v2', name: 'High-Definition (Multilingual v2)', desc: 'Optimized for maximum fidelity and foreign language support.' }
 ];
 
 export const TextToSpeechView = ({ profile, onUpgradeClick, onBack }: TextToSpeechViewProps) => {
@@ -60,9 +51,15 @@ export const TextToSpeechView = ({ profile, onUpgradeClick, onBack }: TextToSpee
   const STORAGE_KEY_MODEL = 'trelvix_tts_model';
 
   const [text, setText] = useState('');
-  const [selectedVoice, setSelectedVoice] = useState(() => localStorage.getItem(STORAGE_KEY_VOICE) || 'alloy');
+  const [selectedVoice, setSelectedVoice] = useState(() => localStorage.getItem(STORAGE_KEY_VOICE) || '');
   const [speed, setSpeed] = useState(() => Number(localStorage.getItem(STORAGE_KEY_SPEED)) || 1.0);
-  const [selectedModel, setSelectedModel] = useState(() => localStorage.getItem(STORAGE_KEY_MODEL) || 'tts-1');
+  const [selectedModel, setSelectedModel] = useState(() => localStorage.getItem(STORAGE_KEY_MODEL) || 'eleven_turbo_v2_5');
+  
+  // ElevenLabs dynamic voices states
+  const [voices, setVoices] = useState<any[]>([]);
+  const [isLoadingVoices, setIsLoadingVoices] = useState(true);
+  const [playingPreviewId, setPlayingPreviewId] = useState<string | null>(null);
+  const previewAudioRef = useRef<HTMLAudioElement | null>(null);
   
   // Custom pro sliders
   const [stability, setStability] = useState(0.75);
@@ -172,9 +169,55 @@ export const TextToSpeechView = ({ profile, onUpgradeClick, onBack }: TextToSpee
     }
   };
 
+  const fetchVoices = async () => {
+    try {
+      setIsLoadingVoices(true);
+      const { data: sessionData } = await supabase.auth.getSession();
+      const sessionToken = sessionData?.session?.access_token;
+      
+      const response = await fetch('/api/text-to-speech/voices', {
+        headers: sessionToken ? {
+          'Authorization': `Bearer ${sessionToken}`
+        } : {}
+      });
+      
+      if (!response.ok) {
+        throw new Error(`Failed to load voices: Status ${response.status}`);
+      }
+      
+      const data = await response.json();
+      const loadedVoices = data.voices || [];
+      setVoices(loadedVoices);
+      
+      if (loadedVoices.length > 0) {
+        const storedVoice = localStorage.getItem(STORAGE_KEY_VOICE);
+        const voiceExists = loadedVoices.some((v: any) => v.voice_id === storedVoice);
+        if (!storedVoice || !voiceExists) {
+          setSelectedVoice(loadedVoices[0].voice_id);
+        } else {
+          setSelectedVoice(storedVoice);
+        }
+      }
+    } catch (err: any) {
+      console.error('Error fetching ElevenLabs voices:', err);
+      toast.error('Could not load voices from ElevenLabs.');
+    } finally {
+      setIsLoadingVoices(false);
+    }
+  };
+
   useEffect(() => {
     fetchUsageLimitsAndHistory();
+    fetchVoices();
   }, [profile?.id, profile?.plan]);
+
+  useEffect(() => {
+    return () => {
+      if (previewAudioRef.current) {
+        previewAudioRef.current.pause();
+      }
+    };
+  }, []);
 
   useEffect(() => {
     const audio = audioRef.current;
@@ -231,21 +274,37 @@ export const TextToSpeechView = ({ profile, onUpgradeClick, onBack }: TextToSpee
   };
 
   const playVoicePreview = (voiceId: string) => {
-    toast.info(`Auditioning voice: ${voiceId}`);
-    const utterance = new SpeechSynthesisUtterance(`This is a sample audio preview of the ${voiceId} voice.`);
-    const matchedVoice = VOICE_OPTIONS.find(v => v.id === voiceId);
-    if (matchedVoice) {
-      const synthVoices = window.speechSynthesis?.getVoices();
-      if (synthVoices && synthVoices.length > 0) {
-        const matchingBrowserVoice = synthVoices.find(v => 
-          v.name.toLowerCase().includes(voiceId) || 
-          v.name.toLowerCase().includes(matchedVoice.gender.toLowerCase())
-        );
-        if (matchingBrowserVoice) utterance.voice = matchingBrowserVoice;
-      }
+    const voiceObj = voices.find(v => v.voice_id === voiceId);
+    if (!voiceObj || !voiceObj.preview_url) {
+      toast.error('No preview sample available for this voice.');
+      return;
     }
-    window.speechSynthesis?.cancel();
-    window.speechSynthesis?.speak(utterance);
+
+    if (playingPreviewId === voiceId) {
+      if (previewAudioRef.current) {
+        previewAudioRef.current.pause();
+        setPlayingPreviewId(null);
+      }
+      return;
+    }
+
+    if (previewAudioRef.current) {
+      previewAudioRef.current.pause();
+    }
+
+    toast.info(`Auditioning voice: ${voiceObj.name}`);
+    const audio = new Audio(voiceObj.preview_url);
+    previewAudioRef.current = audio;
+    setPlayingPreviewId(voiceId);
+    
+    audio.play().catch(err => {
+      console.error('Error playing preview:', err);
+      setPlayingPreviewId(null);
+    });
+
+    audio.onended = () => {
+      setPlayingPreviewId(null);
+    };
   };
 
   const handleGenerate = async () => {
@@ -287,8 +346,8 @@ export const TextToSpeechView = ({ profile, onUpgradeClick, onBack }: TextToSpee
         },
         body: JSON.stringify({
           text,
-          voice: selectedVoice,
-          model: selectedModel,
+          voiceId: selectedVoice,
+          modelId: selectedModel,
           speed: speed
         })
       });
@@ -390,7 +449,13 @@ export const TextToSpeechView = ({ profile, onUpgradeClick, onBack }: TextToSpee
     document.body.removeChild(a);
   };
 
-  const currentVoiceObj = VOICE_OPTIONS.find(v => v.id === selectedVoice) || VOICE_OPTIONS[0];
+  const currentVoiceObj = voices.find(v => v.voice_id === selectedVoice) || voices[0] || {
+    voice_id: '',
+    name: 'Select Voice',
+    category: 'premade',
+    labels: { description: 'Select a voice profile' },
+    preview_url: ''
+  };
   const currentModelObj = MODEL_OPTIONS.find(m => m.id === selectedModel) || MODEL_OPTIONS[0];
 
   return (
@@ -610,7 +675,7 @@ export const TextToSpeechView = ({ profile, onUpgradeClick, onBack }: TextToSpee
                       >
                         <span className="flex items-center gap-2">
                           <span className="h-1.5 w-1.5 rounded-full bg-zinc-500 dark:bg-zinc-400" />
-                          {currentVoiceObj.name} - {currentVoiceObj.personality}
+                          {currentVoiceObj.name} {currentVoiceObj.category ? `(${currentVoiceObj.category})` : ''}
                         </span>
                         <ChevronDown className={`w-4 h-4 text-zinc-400 dark:text-zinc-600 transition-transform duration-200 ${showVoiceDropdown ? 'rotate-180' : ''}`} />
                       </button>
@@ -618,41 +683,66 @@ export const TextToSpeechView = ({ profile, onUpgradeClick, onBack }: TextToSpee
                       {/* Floating list dropdown for voice profile options */}
                       {showVoiceDropdown && (
                         <div className="absolute top-[calc(100%+6px)] left-0 right-0 bg-white dark:bg-zinc-950 border border-zinc-200 dark:border-zinc-800 rounded-lg shadow-xl py-1.5 z-30 max-h-64 overflow-y-auto">
-                          {VOICE_OPTIONS.map((voice) => {
-                            const isChosen = voice.id === selectedVoice;
-                            return (
-                              <div
-                                key={voice.id}
-                                onClick={() => {
-                                  setSelectedVoice(voice.id);
-                                  setShowVoiceDropdown(false);
-                                }}
-                                className="px-3.5 py-2.5 hover:bg-zinc-50 dark:hover:bg-zinc-900 text-xs text-zinc-700 dark:text-zinc-300 flex items-center justify-between cursor-pointer"
-                              >
-                                <div className="space-y-0.5 min-w-0 pr-4">
-                                  <div className="flex items-center gap-2">
-                                    <span className="font-bold text-zinc-900 dark:text-zinc-100">{voice.name}</span>
-                                    <span className="text-[10px] text-zinc-400 dark:text-zinc-550 font-medium font-mono">({voice.gender})</span>
+                          {isLoadingVoices ? (
+                            <div className="px-3.5 py-4 text-xs text-zinc-400 dark:text-zinc-600 text-center flex items-center justify-center gap-2">
+                              <RefreshCw className="w-3 h-3 animate-spin" />
+                              <span>Loading ElevenLabs voices...</span>
+                            </div>
+                          ) : voices.length === 0 ? (
+                            <div className="px-3.5 py-4 text-xs text-zinc-400 dark:text-zinc-600 text-center">
+                              No voices found. Please check your ElevenLabs configuration.
+                            </div>
+                          ) : (
+                            voices.map((voice) => {
+                              const isChosen = voice.voice_id === selectedVoice;
+                              const voiceGender = voice.labels?.gender || voice.category || 'Premade';
+                              const voiceLabelInfo = voice.labels?.description || voice.labels?.accent || 'ElevenLabs Voice';
+                              const isCurrentlyPlayingPreview = playingPreviewId === voice.voice_id;
+
+                              return (
+                                <div
+                                  key={voice.voice_id}
+                                  onClick={() => {
+                                    setSelectedVoice(voice.voice_id);
+                                    setShowVoiceDropdown(false);
+                                  }}
+                                  className="px-3.5 py-2.5 hover:bg-zinc-50 dark:hover:bg-zinc-900 text-xs text-zinc-700 dark:text-zinc-300 flex items-center justify-between cursor-pointer"
+                                >
+                                  <div className="space-y-0.5 min-w-0 pr-4">
+                                    <div className="flex items-center gap-2">
+                                      <span className="font-bold text-zinc-900 dark:text-zinc-100">{voice.name}</span>
+                                      <span className="text-[10px] text-zinc-400 dark:text-zinc-550 font-medium font-mono">({voiceGender})</span>
+                                    </div>
+                                    <p className="text-[10px] text-zinc-400 dark:text-zinc-500 truncate">{voiceLabelInfo}</p>
                                   </div>
-                                  <p className="text-[10px] text-zinc-400 dark:text-zinc-500 truncate">{voice.personality}</p>
+                                  <div className="flex items-center gap-2 shrink-0">
+                                    {voice.preview_url && (
+                                      <button
+                                        type="button"
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          playVoicePreview(voice.voice_id);
+                                        }}
+                                        className={`p-1.5 border rounded-full transition-all cursor-pointer flex items-center justify-center ${
+                                          isCurrentlyPlayingPreview
+                                            ? 'bg-zinc-900 dark:bg-zinc-100 text-white dark:text-zinc-900 border-transparent'
+                                            : 'border-zinc-200 dark:border-zinc-800 hover:bg-zinc-100 dark:hover:bg-zinc-900 text-zinc-500 dark:text-zinc-450 hover:text-zinc-800 dark:hover:text-zinc-100'
+                                        }`}
+                                        title="Listen to voice sample"
+                                      >
+                                        {isCurrentlyPlayingPreview ? (
+                                          <span className="h-2.5 w-2.5 flex items-center justify-center font-bold text-[8px] animate-pulse">■</span>
+                                        ) : (
+                                          <Play className="w-2.5 h-2.5 fill-current translate-x-[0.5px]" />
+                                        )}
+                                      </button>
+                                    )}
+                                    {isChosen && <Check className="w-3.5 h-3.5 text-zinc-900 dark:text-zinc-100" />}
+                                  </div>
                                 </div>
-                                <div className="flex items-center gap-2 shrink-0">
-                                  <button
-                                    type="button"
-                                    onClick={(e) => {
-                                      e.stopPropagation();
-                                      playVoicePreview(voice.id);
-                                    }}
-                                    className="p-1.5 border border-zinc-200 dark:border-zinc-800 rounded-full hover:bg-zinc-100 dark:hover:bg-zinc-900 text-zinc-500 dark:text-zinc-450 hover:text-zinc-800 dark:hover:text-zinc-100 transition-all cursor-pointer flex items-center justify-center"
-                                    title="Listen to voice sample"
-                                  >
-                                    <Play className="w-2.5 h-2.5 fill-current translate-x-[0.5px]" />
-                                  </button>
-                                  {isChosen && <Check className="w-3.5 h-3.5 text-zinc-900 dark:text-zinc-100" />}
-                                </div>
-                              </div>
-                            );
-                          })}
+                              );
+                            })
+                          )}
                         </div>
                       )}
                     </div>
@@ -661,17 +751,32 @@ export const TextToSpeechView = ({ profile, onUpgradeClick, onBack }: TextToSpee
                     <div className="p-3.5 bg-zinc-50/50 dark:bg-zinc-950/50 border border-zinc-200/50 dark:border-zinc-900/50 rounded-lg">
                       <div className="flex items-center justify-between mb-1.5">
                         <span className="text-[10px] font-bold text-zinc-400 dark:text-zinc-550 uppercase tracking-wider">{currentVoiceObj.name} Bio</span>
-                        <button
-                          type="button"
-                          onClick={() => playVoicePreview(currentVoiceObj.id)}
-                          className="px-2 py-1 rounded border border-zinc-200 dark:border-zinc-800 hover:bg-white dark:hover:bg-zinc-900 text-[10px] font-semibold text-zinc-600 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-zinc-100 transition-all flex items-center gap-1.5 cursor-pointer"
-                          title="Audition voice preview"
-                        >
-                          <Play className="w-2.5 h-2.5 fill-current translate-x-[0.5px]" />
-                          <span>Audition</span>
-                        </button>
+                        {currentVoiceObj.preview_url && (
+                          <button
+                            type="button"
+                            onClick={() => playVoicePreview(currentVoiceObj.voice_id)}
+                            className="px-2 py-1 rounded border border-zinc-200 dark:border-zinc-800 hover:bg-white dark:hover:bg-zinc-900 text-[10px] font-semibold text-zinc-600 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-zinc-100 transition-all flex items-center gap-1.5 cursor-pointer"
+                            title="Audition voice preview"
+                          >
+                            {playingPreviewId === currentVoiceObj.voice_id ? (
+                              <>
+                                <span className="h-2 w-2 bg-red-500 rounded-sm animate-pulse" />
+                                <span>Stop</span>
+                              </>
+                            ) : (
+                              <>
+                                <Play className="w-2.5 h-2.5 fill-current translate-x-[0.5px]" />
+                                <span>Audition</span>
+                              </>
+                            )}
+                          </button>
+                        )}
                       </div>
-                      <p className="text-[11px] text-zinc-500 dark:text-zinc-400 leading-relaxed font-medium">{currentVoiceObj.desc}</p>
+                      <p className="text-[11px] text-zinc-500 dark:text-zinc-400 leading-relaxed font-medium">
+                        {currentVoiceObj.labels && Object.keys(currentVoiceObj.labels).length > 0
+                          ? Object.entries(currentVoiceObj.labels).map(([k, v]) => `${k}: ${v}`).join(' | ')
+                          : 'ElevenLabs voice profile category: ' + currentVoiceObj.category}
+                      </p>
                     </div>
                   </div>
 
@@ -685,7 +790,7 @@ export const TextToSpeechView = ({ profile, onUpgradeClick, onBack }: TextToSpee
                         className="w-full bg-white dark:bg-zinc-950 border border-zinc-200 dark:border-zinc-800 rounded-lg p-3.5 flex items-center justify-between text-xs font-semibold text-zinc-800 dark:text-zinc-200 hover:bg-zinc-50 dark:hover:bg-zinc-900 transition-all cursor-pointer"
                       >
                         <span className="flex items-center gap-2">
-                          <span className="text-[10px] font-bold px-1.5 py-0.5 border border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-900 rounded font-mono">v1</span>
+                          <span className="text-[10px] font-bold px-1.5 py-0.5 border border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-900 rounded font-mono">v2</span>
                           {currentModelObj.name}
                         </span>
                         <ChevronDown className={`w-4 h-4 text-zinc-400 dark:text-zinc-600 transition-transform duration-200 ${showModelDropdown ? 'rotate-180' : ''}`} />
