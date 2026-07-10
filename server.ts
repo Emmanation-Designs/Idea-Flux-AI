@@ -335,7 +335,7 @@ app.post("/api/tools/text-to-speech", async (req, res) => {
         selected_voice: voice,
         selected_model: model,
         generation_status: "pending",
-        provider: "openai",
+        provider: "elevenlabs",
         metadata: {
           text_snippet: text.slice(0, 80) + (text.length > 80 ? "..." : "")
         }
@@ -350,26 +350,63 @@ app.post("/api/tools/text-to-speech", async (req, res) => {
     console.warn("[TTS Backend] Failed to write initial tracking record:", insertErr);
   }
 
-  // 4. Initialize OpenAI and Synthesize Speech
-  const openaiApiKey = process.env.OPENAI_API_KEY;
-  if (!openaiApiKey) {
-    console.error("[TTS Backend] Missing OPENAI_API_KEY in environment");
-    return res.status(500).json({ error: "OpenAI API Key is missing in server configuration." });
+  // 4. Initialize ElevenLabs and Synthesize Speech
+  const elevenLabsApiKey = process.env.ELEVENLABS_API_KEY;
+  if (!elevenLabsApiKey) {
+    console.error("[TTS Backend] Missing ELEVENLABS_API_KEY in environment");
+    return res.status(500).json({ error: "ElevenLabs API Key is missing in server configuration." });
   }
 
-  const openai = new OpenAI({ apiKey: openaiApiKey });
+  // Map existing OpenAI voices to ElevenLabs pre-made high-quality voices
+  const VOICE_MAP: Record<string, string> = {
+    alloy: "pNInz6obpgfrhhF21Zgd",     // Adam
+    echo: "JBFqnCBcaCvAt60CGHOV",      // George
+    fable: "IKne3meq5aSn9XLyUdCD",     // Charlie
+    onyx: "ErXwobaYiN019vkySvjV",      // Antoni
+    nova: "EXAVITQu4vr4xnSDxMaL",      // Bella
+    shimmer: "AZnzlk1XvdvUeBnXmlld"    // Domi
+  };
+
+  const targetVoiceId = VOICE_MAP[voice] || voice || "pNInz6obpgfrhhF21Zgd";
+  
+  // Map models: tts-1 (low latency) -> eleven_turbo_v2_5, tts-1-hd (high quality) -> eleven_multilingual_v2
+  const targetModelId = model === "tts-1-hd" ? "eleven_multilingual_v2" : "eleven_turbo_v2_5";
   const startTime = Date.now();
 
   try {
-    console.log(`[TTS Backend] Requesting audio from OpenAI. Voice: ${voice}, Model: ${model}, Length: ${characterCount}`);
-    const openaiResponse = await openai.audio.speech.create({
-      model: model === "tts-1-hd" ? "tts-1-hd" : "tts-1",
-      voice: voice as any,
-      input: text,
-      speed: speed || 1.0
+    console.log(`[TTS Backend] Requesting audio from ElevenLabs. Voice: ${voice} (ID: ${targetVoiceId}), Model: ${targetModelId}, Length: ${characterCount}`);
+    
+    const url = `https://api.elevenlabs.io/v1/text-to-speech/${encodeURIComponent(targetVoiceId)}`;
+    const response = await fetch(url, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "xi-api-key": elevenLabsApiKey,
+        "accept": "audio/mpeg"
+      },
+      body: JSON.stringify({
+        text: text,
+        model_id: targetModelId,
+        voice_settings: {
+          stability: 0.5,
+          similarity_boost: 0.75
+        }
+      })
     });
 
-    const buffer = Buffer.from(await openaiResponse.arrayBuffer());
+    if (!response.ok) {
+      let errorDetails = "";
+      try {
+        const errJson = await response.json();
+        errorDetails = errJson?.detail?.message || JSON.stringify(errJson);
+      } catch {
+        errorDetails = await response.text();
+      }
+      throw new Error(`ElevenLabs API failed with status ${response.status}: ${errorDetails}`);
+    }
+
+    const arrayBuffer = await response.arrayBuffer();
+    const buffer = Buffer.from(arrayBuffer);
     const durationMs = Date.now() - startTime;
 
     // 5. Update Log to Completed & Persist Base64 for history retrieval
@@ -399,8 +436,8 @@ app.post("/api/tools/text-to-speech", async (req, res) => {
       "Accept-Ranges": "bytes"
     });
     return res.send(buffer);
-  } catch (openaiErr: any) {
-    console.error("[TTS Backend] OpenAI Synthesis Error:", openaiErr);
+  } catch (ttsErr: any) {
+    console.error("[TTS Backend] ElevenLabs Synthesis Error:", ttsErr);
     if (generationId) {
       try {
         await supabase
@@ -411,7 +448,7 @@ app.post("/api/tools/text-to-speech", async (req, res) => {
         console.warn("[TTS Backend] Failed to mark track as failed:", logErr);
       }
     }
-    return res.status(520).json({ error: openaiErr?.message || "Failed to generate speech audio." });
+    return res.status(520).json({ error: ttsErr?.message || "Failed to generate speech audio." });
   }
 });
 
