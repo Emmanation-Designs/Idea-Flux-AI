@@ -60,6 +60,13 @@ export const Sidebar = ({
   const [searchQuery, setSearchQuery] = useState('');
   const [revealedActionsId, setRevealedActionsId] = useState<string | null>(null);
 
+  const handleAction = (callback: () => void) => {
+    callback();
+    if (window.innerWidth < 1024) {
+      setIsOpen(false);
+    }
+  };
+
   const filteredConversations = conversations.filter(conv => 
     (conv.title || 'Untitled Chat').toLowerCase().includes(searchQuery.toLowerCase())
   );
@@ -75,7 +82,7 @@ export const Sidebar = ({
     >
       <div className="p-6 flex items-center justify-between mb-2">
         <h2 
-          onClick={onNewChat}
+          onClick={() => handleAction(onNewChat)}
           className="font-black text-xs uppercase tracking-[0.2em] flex items-center gap-2 cursor-pointer transition-opacity text-zinc-900 dark:text-white"
         >
           <Zap className="w-5 h-5 text-emerald-500 drop-shadow-[0_0_8px_rgba(16,185,129,0.3)]" />
@@ -88,7 +95,7 @@ export const Sidebar = ({
 
       <div className="px-4 mb-6">
         <button 
-          onClick={onNewChat}
+          onClick={() => handleAction(onNewChat)}
           className="w-full group flex items-center justify-between bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white px-4 py-3 border border-emerald-500/20 hover:border-emerald-400/30 rounded-xl font-bold text-[11px] uppercase tracking-[0.15em] transition-all duration-300 shadow-md hover:shadow-lg shadow-emerald-500/10 hover:shadow-emerald-500/25 active:scale-[0.98] hover:-translate-y-[1px] cursor-pointer"
         >
           <div className="flex items-center gap-2.5">
@@ -117,7 +124,7 @@ export const Sidebar = ({
           </div>
 
           <button 
-            onClick={onOpenImages}
+            onClick={() => handleAction(onOpenImages)}
             className={cn(
               "w-full flex items-center gap-3 px-4 py-2.5 text-sm font-medium rounded-xl transition-all",
               activeView === 'images' 
@@ -130,7 +137,7 @@ export const Sidebar = ({
           </button>
 
           <button 
-            onClick={onOpenTTS}
+            onClick={() => handleAction(onOpenTTS)}
             className={cn(
               "w-full flex items-center gap-3 px-4 py-2.5 text-sm font-medium rounded-xl transition-all",
               activeView === 'tts' 
@@ -143,7 +150,7 @@ export const Sidebar = ({
           </button>
 
           <button 
-            onClick={onOpenApps}
+            onClick={() => handleAction(onOpenApps)}
             className={cn(
               "w-full flex items-center gap-3 px-4 py-2.5 text-sm font-medium rounded-xl transition-all",
               activeView === 'apps' 
@@ -156,7 +163,7 @@ export const Sidebar = ({
           </button>
 
           <button 
-            onClick={onOpenSettings}
+            onClick={() => handleAction(onOpenSettings)}
             className={cn(
               "w-full flex items-center gap-3 px-4 py-2.5 text-sm font-medium rounded-xl transition-all",
               activeView === 'settings' 
@@ -195,7 +202,7 @@ export const Sidebar = ({
                   >
                     <div className="flex items-center w-full gap-1">
                       <button
-                        onClick={() => onSelectConversation(conv.id)}
+                        onClick={() => handleAction(() => onSelectConversation(conv.id))}
                         className={cn(
                           "flex-1 text-left px-4 py-2.5 rounded-xl text-sm transition-all flex items-center gap-3 relative min-w-0",
                           currentConversationId === conv.id
@@ -272,7 +279,7 @@ export const Sidebar = ({
 
       <div className="p-4 border-t border-zinc-200 dark:border-zinc-800 bg-white/50 dark:bg-zinc-950 px-2 space-y-1">
         <button 
-          onClick={onOpenSettings}
+          onClick={() => handleAction(onOpenSettings)}
           className="w-full flex items-center gap-3 p-3 rounded-2xl hover:bg-zinc-100 dark:hover:bg-zinc-900 transition-all text-left outline-none"
         >
           <div className="w-10 h-10 rounded-xl bg-zinc-100 dark:bg-zinc-900 flex items-center justify-center border border-zinc-200 dark:border-zinc-800 overflow-hidden shrink-0">

@@ -1791,7 +1791,10 @@ export default function App() {
         )}
 
         {/* Content Area */}
-        <div className="flex-1 overflow-y-auto overscroll-y-contain flex flex-col">
+        <div className={cn(
+          "flex-1 flex flex-col min-h-0",
+          (activeView === 'chat' || activeView === 'history') ? "overflow-y-auto overscroll-y-contain" : "overflow-hidden"
+        )}>
           {activeView === 'apps' ? (
             <div className="flex-1 flex flex-col overflow-hidden">
               <div className="px-6 pt-6 flex items-center justify-between md:hidden">

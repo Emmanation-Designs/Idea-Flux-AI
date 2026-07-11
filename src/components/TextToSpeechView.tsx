@@ -605,14 +605,14 @@ export const TextToSpeechView = ({ profile, onUpgradeClick, onBack }: TextToSpee
         {/* LEFT COLUMN: Clean writing pad workspace (col-span-8 equivalent) */}
         <div className="flex-1 flex flex-col bg-white dark:bg-zinc-950 min-w-0">
           
-          <div className="flex-1 p-5 md:p-8 flex flex-col justify-between overflow-y-auto">
+          <div className="flex-1 p-5 md:p-8 flex flex-col justify-between overflow-y-auto min-h-0">
             {/* The Plain Textarea canvas (no borders, matches background) */}
-            <div className="w-full">
+            <div className="flex-1 w-full min-h-0 flex flex-col mb-4">
               <textarea
                 value={text}
                 onChange={(e) => setText(e.target.value)}
                 placeholder="Start typing or copy-paste your text here..."
-                className="w-full h-[calc(100vh-320px)] lg:h-[calc(100vh-270px)] bg-transparent border-0 focus:outline-none focus:ring-0 text-[15px] leading-relaxed text-zinc-800 dark:text-zinc-200 placeholder:text-zinc-400 dark:placeholder:text-zinc-700 resize-none font-sans"
+                className="w-full flex-1 bg-transparent border-0 focus:outline-none focus:ring-0 text-[15px] leading-relaxed text-zinc-800 dark:text-zinc-200 placeholder:text-zinc-400 dark:placeholder:text-zinc-700 resize-none font-sans min-h-[120px] overflow-y-auto"
               />
             </div>
 
