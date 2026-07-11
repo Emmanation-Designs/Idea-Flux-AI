@@ -37,4 +37,6 @@ export interface Profile {
   images_used_today: number;
   last_usage_reset: string | null;
   subscription_expires_at: string | null;
+  tts_characters_used?: number;
+  tts_reset_date?: string | null;
 }

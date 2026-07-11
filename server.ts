@@ -371,7 +371,7 @@ app.post("/api/tools/text-to-speech", async (req, res) => {
     return res.status(500).json({ error: "Failed to initialize request authorization." });
   }
 
-  const { text, voice, voiceId, model, modelId, speed = 1.0, stability = 0.75, similarity = 0.85 } = req.body;
+  const { text, voice, voiceId, model, modelId, speed = 1.0, stability = 0.75, similarity = 0.85, style = 0.0 } = req.body;
   
   // Extract and prefer explicit ElevenLabs parameters over legacy fields
   const targetVoiceId = voiceId || voice;
@@ -393,7 +393,7 @@ app.post("/api/tools/text-to-speech", async (req, res) => {
   let hasDatabaseTracking = false;
 
   try {
-    const { data: checkData, error: checkError } = await supabase.rpc("can_generate_tts", {
+    const { data: checkData, error: checkError } = await supabase.rpc("can_generate_tts_monthly", {
       user_uuid: user.id,
       requested_character_count: characterCount
     });
@@ -403,67 +403,68 @@ app.post("/api/tools/text-to-speech", async (req, res) => {
       reason = checkData[0].reason;
       hasDatabaseTracking = true;
     } else {
-      console.warn("[TTS] [Supabase] can_generate_tts RPC failed or not present:", checkError?.message);
+      console.warn("[TTS] [Supabase] can_generate_tts_monthly RPC failed or not present:", checkError?.message);
     }
   } catch (err: any) {
-    console.warn("[TTS] [Supabase] can_generate_tts RPC exception:", err?.message || err);
+    console.warn("[TTS] [Supabase] can_generate_tts_monthly RPC exception:", err?.message || err);
   }
 
   // 2. Client-Side Fallback if SQL function/limits table is absent
   if (!hasDatabaseTracking) {
     console.log("[TTS] [Supabase] Falling back to programmatic schema and limits check...");
     let plan = "free";
+    let charactersUsed = 0;
     try {
       const { data: profile } = await supabase
         .from("profiles")
-        .select("plan")
+        .select("plan, tts_characters_used, tts_reset_date")
         .eq("id", user.id)
         .single();
-      if (profile?.plan) {
-        plan = profile.plan;
+      if (profile) {
+        plan = profile.plan || "free";
+        charactersUsed = profile.tts_characters_used || 0;
+
+        // Dynamic lazy reset in JS/TS fallback if reset date passed
+        const resetDate = profile.tts_reset_date ? new Date(profile.tts_reset_date) : null;
+        if (!resetDate || new Date() >= resetDate) {
+          charactersUsed = 0;
+          const nextReset = new Date();
+          nextReset.setMonth(nextReset.getMonth() + 1);
+          await supabase
+            .from("profiles")
+            .update({
+              tts_characters_used: 0,
+              tts_reset_date: nextReset.toISOString()
+            })
+            .eq("id", user.id);
+        }
       }
     } catch (profileErr) {
       console.warn("[TTS] [Supabase] Failed to retrieve user plan:", profileErr);
     }
 
+    // Static fallback rules matching SUBSCRIPTION_PLANS configuration
     const PLAN_LIMITS_FALLBACK = {
-      free: { maxGens: 3, maxChars: 2000, unlimited: false },
-      pro: { maxGens: Infinity, maxChars: 10000, unlimited: true },
-      plus: { maxGens: Infinity, maxChars: 50000, unlimited: true }
+      free: { maxChars: 2000, allowance: 10000 },
+      pro: { maxChars: 20000, allowance: 500000 },
+      plus: { maxChars: 100000, allowance: 2000000 }
     };
 
     const currentLimits = PLAN_LIMITS_FALLBACK[plan as "free" | "pro" | "plus"] || PLAN_LIMITS_FALLBACK.free;
 
     if (characterCount > currentLimits.maxChars) {
       allowed = false;
-      reason = `Requested length of ${characterCount} characters exceeds the limit of ${currentLimits.maxChars} per generation on your ${plan.toUpperCase()} subscription.`;
-    } else if (!currentLimits.unlimited) {
-      try {
-        const todayStr = new Date().toISOString().split("T")[0];
-        const { count, error: countErr } = await supabase
-          .from("tts_generations")
-          .select("*", { count: "exact", head: true })
-          .eq("user_id", user.id)
-          .gte("created_at", `${todayStr}T00:00:00Z`)
-          .neq("generation_status", "failed");
-
-        if (!countErr && count !== null) {
-          if (count >= currentLimits.maxGens) {
-            allowed = false;
-            reason = `Daily generation threshold (${currentLimits.maxGens} requests) reached on your ${plan.toUpperCase()} subscription tier.`;
-          }
-          hasDatabaseTracking = true;
-        }
-      } catch (countErr) {
-        console.warn("[TTS] [Supabase] Fallback generations query failed:", countErr);
-      }
+      reason = `Requested length of ${characterCount} characters exceeds the maximum limit of ${currentLimits.maxChars} characters per generation on your ${plan.toUpperCase()} plan.`;
+    } else if (charactersUsed + characterCount > currentLimits.allowance) {
+      allowed = false;
+      reason = `Monthly character allowance exhausted. Generation requires ${characterCount} characters, but you only have ${currentLimits.allowance - charactersUsed} remaining on your ${plan.toUpperCase()} plan. Upgrade your plan to continue generating speech.`;
     } else {
       allowed = true;
     }
   }
 
   if (!allowed) {
-    return res.status(403).json({ error: reason || "Daily quota limit reached." });
+    return res.status(403).json({ error: reason || "Monthly character limit reached." });
   }
 
   // 3. Insert Pending Track Log
@@ -531,7 +532,8 @@ app.post("/api/tools/text-to-speech", async (req, res) => {
         model_id: targetModelId,
         voice_settings: {
           stability: stability,
-          similarity_boost: similarity
+          similarity_boost: similarity,
+          style: style
         }
       })
     });
@@ -566,8 +568,25 @@ app.post("/api/tools/text-to-speech", async (req, res) => {
             }
           })
           .eq("id", generationId);
+
+        // Increment user's monthly characters used
+        const { data: currentProfile, error: getErr } = await supabase
+          .from("profiles")
+          .select("tts_characters_used")
+          .eq("id", user.id)
+          .single();
+        if (!getErr) {
+          const updatedUsed = (currentProfile?.tts_characters_used || 0) + characterCount;
+          await supabase
+            .from("profiles")
+            .update({ tts_characters_used: updatedUsed })
+            .eq("id", user.id);
+          console.log(`[TTS] [Supabase] Updated character usage for user ${user.id} from ${currentProfile?.tts_characters_used || 0} to ${updatedUsed}`);
+        } else {
+          console.warn("[TTS] [Supabase] Failed to retrieve current profile usage for increment:", getErr.message);
+        }
       } catch (updateErr) {
-        console.warn("[TTS] [Supabase] Failed to update tracking log to completed:", updateErr);
+        console.warn("[TTS] [Supabase] Failed to update tracking log or character usage:", updateErr);
       }
     }
 
