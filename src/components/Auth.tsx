@@ -6,9 +6,10 @@ import {
   ExternalLink,
   AlertTriangle,
   Check,
-  X,
-  Zap
+  X
 } from 'lucide-react';
+import { openExternalLink, isKodularEnv } from '../utils/nativeCompat';
+import { TrelvixLogo } from './TrelvixLogo';
 import { motion } from 'motion/react';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
@@ -98,6 +99,9 @@ export const Auth = ({ onAuthSuccess, isDarkMode }: { onAuthSuccess: () => void;
         if (isWebView) {
           // If in an APK WebViewer context, render the Chrome external browser bypass helper
           setShowFallback(true);
+          if (isKodularEnv()) {
+            openExternalLink(data.url);
+          }
         } else {
           // Normal desktop or mobile web browser: redirect directly
           window.location.href = data.url;
@@ -113,6 +117,11 @@ export const Auth = ({ onAuthSuccess, isDarkMode }: { onAuthSuccess: () => void;
   // Auto-trigger secure Chrome launch for seamless experience inside Android App!
   useEffect(() => {
     if (showFallback && googleAuthUrl) {
+      if (isKodularEnv()) {
+        openExternalLink(googleAuthUrl);
+        return;
+      }
+
       const cleanUrl = googleAuthUrl.replace(/^https?:\/\//, '');
       const chromeIntentUrl = `intent://${cleanUrl}#Intent;scheme=https;package=com.android.chrome;end`;
       const genericIntentUrl = `intent://${cleanUrl}#Intent;scheme=https;end`;
@@ -244,8 +253,8 @@ export const Auth = ({ onAuthSuccess, isDarkMode }: { onAuthSuccess: () => void;
             animate={{ opacity: 1, scale: 1 }}
             className="w-full max-w-md bg-zinc-900 border border-zinc-800 rounded-[2.5rem] p-10 md:p-12 shadow-2xl flex flex-col items-center text-center"
           >
-          <div className="w-16 h-16 rounded-2xl bg-emerald-500/10 flex items-center justify-center border border-emerald-500/20 mb-6 shadow-inner animate-pulse">
-            <Zap className="w-8 h-8 text-emerald-400" />
+          <div className="w-16 h-16 rounded-2xl bg-zinc-950 flex items-center justify-center border border-zinc-800 mb-6 p-2 shadow-inner animate-pulse">
+            <TrelvixLogo className="w-8 h-8" glow={true} />
           </div>
 
           <h2 className="text-xl font-black text-white mb-2">Opening Google Chrome...</h2>
@@ -259,8 +268,13 @@ export const Auth = ({ onAuthSuccess, isDarkMode }: { onAuthSuccess: () => void;
               href={googleAuthUrl}
               target="_blank"
               rel="noopener noreferrer"
-              onClick={() => {
-                toast.success('Launching secure system browser...');
+              onClick={(e) => {
+                if (isKodularEnv()) {
+                  e.preventDefault();
+                  openExternalLink(googleAuthUrl);
+                } else {
+                  toast.success('Launching secure system browser...');
+                }
               }}
               className="w-full py-4 bg-emerald-500 text-white rounded-xl font-bold text-sm hover:bg-emerald-450 transition-all active:scale-[0.98] flex items-center justify-center gap-2 shadow-lg cursor-pointer"
             >
@@ -270,9 +284,13 @@ export const Auth = ({ onAuthSuccess, isDarkMode }: { onAuthSuccess: () => void;
 
             <button
               onClick={() => {
-                const cleanUrl = googleAuthUrl.replace(/^https?:\/\//, '');
-                const chromeIntentUrl = `intent://${cleanUrl}#Intent;scheme=https;package=com.android.chrome;end`;
-                window.location.href = chromeIntentUrl;
+                if (isKodularEnv()) {
+                  openExternalLink(googleAuthUrl);
+                } else {
+                  const cleanUrl = googleAuthUrl.replace(/^https?:\/\//, '');
+                  const chromeIntentUrl = `intent://${cleanUrl}#Intent;scheme=https;package=com.android.chrome;end`;
+                  window.location.href = chromeIntentUrl;
+                }
               }}
               className="w-full py-3 bg-zinc-800 text-zinc-300 rounded-xl font-medium text-xs hover:bg-zinc-750 transition-all border border-zinc-700/50 cursor-pointer"
             >
@@ -324,7 +342,7 @@ export const Auth = ({ onAuthSuccess, isDarkMode }: { onAuthSuccess: () => void;
         >
         <div className="flex flex-col items-center mb-10 text-center">
           <div className="w-20 h-20 rounded-2xl bg-zinc-950 flex items-center justify-center mb-6 shadow-xl border border-zinc-800 p-2">
-            <Zap className="w-10 h-10 text-emerald-500 drop-shadow-[0_0_15px_rgba(16,185,129,0.4)]" />
+            <TrelvixLogo className="w-10 h-10" glow={true} />
           </div>
           <h1 className="text-3xl font-bold tracking-tight text-white mb-2">Trelvix AI</h1>
           <p className="text-zinc-500 text-sm font-medium leading-relaxed max-w-[240px]">The professional creative engine for high-fidelity content.</p>

@@ -19,6 +19,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 import type { Profile } from '../types';
+import { TrelvixLogo } from './TrelvixLogo';
 
 function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
@@ -85,7 +86,7 @@ export const Sidebar = ({
           onClick={() => handleAction(onNewChat)}
           className="font-black text-xs uppercase tracking-[0.2em] flex items-center gap-2 cursor-pointer transition-opacity text-zinc-900 dark:text-white"
         >
-          <Zap className="w-5 h-5 text-emerald-500 drop-shadow-[0_0_8px_rgba(16,185,129,0.3)]" />
+          <TrelvixLogo className="w-5 h-5" glow={false} />
           Trelvix AI
         </h2>
         <button onClick={() => setIsOpen(false)} className="p-1 hover:bg-zinc-200 dark:hover:bg-zinc-800 rounded-md lg:hidden text-zinc-400">

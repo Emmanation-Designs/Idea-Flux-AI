@@ -34,6 +34,7 @@ import { twMerge } from 'tailwind-merge';
 import type { Profile, PersonalityType } from '../types';
 import { toast } from 'sonner';
 import { supabase } from '../lib/supabase';
+import { openExternalLink } from '../utils/nativeCompat';
 
 function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
@@ -195,7 +196,7 @@ export const Settings = (props: {
       });
       const data = await response.json();
       if (data.url) {
-        window.location.href = data.url;
+        openExternalLink(data.url);
       }
     } catch (err) {
       console.error(err);
@@ -591,7 +592,7 @@ export const Settings = (props: {
                         </p>
                       </div>
                       <button 
-                        onClick={() => window.open('https://billing.stripe.com/p/login/test_4gw5lr8Yt4Yt4Yt4Yt', '_blank')}
+                        onClick={() => openExternalLink('https://billing.stripe.com/p/login/test_4gw5lr8Yt4Yt4Yt4Yt')}
                         className="w-full py-5 bg-zinc-900 dark:bg-zinc-100 text-white dark:text-zinc-900 rounded-2xl text-xs font-black uppercase tracking-widest transition-all hover:scale-[1.01] active:scale-[0.98] shadow-xl flex items-center justify-center gap-2"
                       >
                         <ExternalLink className="w-4 h-4" />

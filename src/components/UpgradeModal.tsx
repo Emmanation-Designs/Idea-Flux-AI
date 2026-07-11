@@ -1,6 +1,8 @@
 import React from 'react';
 import { Zap, X, Check, ExternalLink } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
+import { openExternalLink } from '../utils/nativeCompat';
+import { TrelvixLogo } from './TrelvixLogo';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 import { toast } from 'sonner';
@@ -56,7 +58,7 @@ export const UpgradeModal: React.FC<UpgradeModalProps> = ({ isOpen, onClose, rea
 
       const data = await response.json();
       if (data.url) {
-        window.location.href = data.url;
+        openExternalLink(data.url);
       } else {
         throw new Error(data.error || 'Failed to create checkout session');
       }
@@ -89,8 +91,8 @@ export const UpgradeModal: React.FC<UpgradeModalProps> = ({ isOpen, onClose, rea
             </button>
 
             <div className="flex flex-col items-center text-center relative z-10">
-              <div className="w-16 h-16 bg-zinc-900 dark:bg-white rounded-2xl flex items-center justify-center mb-6 shadow-xl">
-                <Zap className="w-8 h-8 text-white dark:text-zinc-900" />
+              <div className="w-16 h-16 bg-zinc-950 rounded-2xl flex items-center justify-center mb-6 shadow-xl border border-zinc-800 p-2">
+                <TrelvixLogo className="w-8 h-8" glow={true} />
               </div>
 
               {reason !== 'manual' && (

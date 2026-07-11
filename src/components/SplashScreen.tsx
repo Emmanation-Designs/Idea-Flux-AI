@@ -1,6 +1,6 @@
 import React, { useEffect } from 'react';
 import { motion } from 'motion/react';
-import { Zap } from 'lucide-react';
+import { TrelvixLogo } from './TrelvixLogo';
 
 interface SplashScreenProps {
   isDarkMode: boolean;
@@ -98,12 +98,7 @@ export const SplashScreen = ({ isDarkMode, onComplete }: SplashScreenProps) => {
           }}
           className="relative flex items-center justify-center p-4 transform-gpu"
         >
-          <Zap 
-            className={`w-20 h-20 ${
-              isDarkMode ? 'text-emerald-400' : 'text-emerald-500'
-            }`}
-            strokeWidth={1.2}
-          />
+          <TrelvixLogo className="w-20 h-20" glow={true} />
         </motion.div>
 
       </div>

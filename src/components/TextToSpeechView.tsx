@@ -29,6 +29,7 @@ import { supabase } from '../lib/supabase';
 import type { Profile } from '../types';
 import { toast } from 'sonner';
 import { getSubscriptionPlan } from '../lib/subscriptions';
+import { downloadFile } from '../utils/nativeCompat';
 
 interface TextToSpeechViewProps {
   profile: Profile | null;
@@ -548,12 +549,7 @@ export const TextToSpeechView = ({ profile, onUpgradeClick, onBack }: TextToSpee
 
   const downloadAudio = () => {
     if (!audioUrl) return;
-    const a = document.createElement('a');
-    a.href = audioUrl;
-    a.download = `trelvix-tts-${Date.now()}.mp3`;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
+    downloadFile(audioUrl, `trelvix-tts-${Date.now()}.mp3`, 'audio/mpeg');
   };
 
   const currentVoiceObj = voices.find(v => v.voice_id === selectedVoice) || voices[0] || {
@@ -1323,12 +1319,7 @@ export const TextToSpeechView = ({ profile, onUpgradeClick, onBack }: TextToSpee
                                       <button
                                         type="button"
                                         onClick={() => {
-                                          const a = document.createElement('a');
-                                          a.href = item.audio_url!;
-                                          a.download = `trelvix-${item.id}.mp3`;
-                                          document.body.appendChild(a);
-                                          a.click();
-                                          document.body.removeChild(a);
+                                          downloadFile(item.audio_url!, `trelvix-${item.id}.mp3`, 'audio/mpeg');
                                         }}
                                         className="p-2 border border-zinc-200 dark:border-zinc-800 hover:bg-zinc-150 rounded-lg text-zinc-450 hover:text-zinc-700"
                                       >
@@ -1756,12 +1747,7 @@ export const TextToSpeechView = ({ profile, onUpgradeClick, onBack }: TextToSpee
                                         <button
                                           type="button"
                                           onClick={() => {
-                                            const a = document.createElement('a');
-                                            a.href = item.audio_url!;
-                                            a.download = `trelvix-${item.id}.mp3`;
-                                            document.body.appendChild(a);
-                                            a.click();
-                                            document.body.removeChild(a);
+                                            downloadFile(item.audio_url!, `trelvix-${item.id}.mp3`, 'audio/mpeg');
                                           }}
                                           className="p-2 border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 hover:bg-zinc-100 rounded-full text-zinc-455 hover:text-zinc-700"
                                         >

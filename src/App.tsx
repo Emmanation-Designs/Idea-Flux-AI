@@ -30,7 +30,10 @@ import {
   FileText,
   Sparkles,
   Clock,
-  Loader2
+  Loader2,
+  ZoomIn,
+  ZoomOut,
+  RotateCcw
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Toaster, toast } from 'sonner';
@@ -51,6 +54,7 @@ const supportsLookbehind = (() => {
 import { twMerge } from 'tailwind-merge';
 import { supabase } from './lib/supabase';
 import { applyWatermark } from './utils/watermark';
+import { downloadFile, openExternalLink } from './utils/nativeCompat';
 
 import type { Message, ConversationType, Profile } from './types';
 
@@ -92,6 +96,7 @@ const preprocessMath = (content: string): string => {
 
 // --- Components ---
 import { Sidebar } from './components/Sidebar';
+import { TrelvixLogo } from './components/TrelvixLogo';
 
 const ImageWithLoader = ({ src, alt, className, onClick, skipWatermark = false }: { src: string, alt: string, className?: string, onClick?: (e: React.MouseEvent) => void, skipWatermark?: boolean }) => {
   const [isLoaded, setIsLoaded] = useState(false);
@@ -263,7 +268,21 @@ export default function App() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [expandedImage, setExpandedImage] = useState<{url: string, title: string} | null>(null);
   const [isDownloading, setIsDownloading] = useState(false);
-  const [isZoomed, setIsZoomed] = useState(false);
+  const [zoomScale, setZoomScale] = useState(1);
+  const [zoomPosition, setZoomPosition] = useState({ x: 0, y: 0 });
+  const [isDraggingImage, setIsDraggingImage] = useState(false);
+  const dragStartRef = useRef({ x: 0, y: 0 });
+  const touchStartDistRef = useRef<number | null>(null);
+  const touchStartScaleRef = useRef<number>(1);
+
+  useEffect(() => {
+    if (!expandedImage) {
+      setZoomScale(1);
+      setZoomPosition({ x: 0, y: 0 });
+      setIsDraggingImage(false);
+    }
+  }, [expandedImage]);
+
   const [streamingMessage, setStreamingMessage] = useState('');
   const [activeView, setActiveView] = useState<'chat' | 'history' | 'apps' | 'images' | 'settings' | 'tts'>('chat');
   const [imageSpeed, setImageSpeed] = useState<'fast' | 'quality'>(() => {
@@ -1401,12 +1420,7 @@ export default function App() {
     if (messages.length === 0) return;
     const text = messages.map(m => `${m.role.toUpperCase()}: ${m.content}\n\n`).join('---\n\n');
     const blob = new Blob([text], { type: 'text/plain' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `trelvix-chat-${currentConversation?.title || 'export'}.txt`;
-    a.click();
-    URL.revokeObjectURL(url);
+    downloadFile(blob, `trelvix-chat-${currentConversation?.title || 'export'}.txt`, 'text/plain');
   };
 
   const handleLogout = async () => {
@@ -1568,17 +1582,13 @@ export default function App() {
 
   const handleDownloadMessage = (content: string, id: string) => {
     const blob = new Blob([content], { type: 'text/plain' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `trelvix-answer-${id.slice(0, 8)}.txt`;
-    a.click();
-    URL.revokeObjectURL(url);
+    downloadFile(blob, `trelvix-answer-${id.slice(0, 8)}.txt`, 'text/plain');
     toast.success('Download started');
   };
 
   const handleExpandImage = async (url: string, title: string) => {
-    setIsZoomed(false);
+    setZoomScale(1);
+    setZoomPosition({ x: 0, y: 0 });
     if (!url) return;
     
     // Resolve DB reference immediately so the modal shows the full image without another loader delay
@@ -1592,6 +1602,91 @@ export default function App() {
     }
     
     setExpandedImage({ url, title });
+  };
+
+  const handleImageWheel = (e: React.WheelEvent) => {
+    const zoomIntensity = 0.08;
+    const delta = e.deltaY < 0 ? 1 : -1;
+    const newScale = Math.min(Math.max(zoomScale + delta * zoomIntensity * zoomScale, 0.5), 6.0);
+    
+    setZoomScale(newScale);
+    if (newScale <= 1.01) {
+      setZoomPosition({ x: 0, y: 0 });
+    }
+  };
+
+  const handleImageMouseDown = (e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDraggingImage(true);
+    dragStartRef.current = {
+      x: e.clientX - zoomPosition.x,
+      y: e.clientY - zoomPosition.y
+    };
+  };
+
+  const handleImageMouseMove = (e: React.MouseEvent) => {
+    if (!isDraggingImage) return;
+    e.preventDefault();
+    e.stopPropagation();
+    
+    if (zoomScale > 1) {
+      const newX = e.clientX - dragStartRef.current.x;
+      const newY = e.clientY - dragStartRef.current.y;
+      setZoomPosition({ x: newX, y: newY });
+    }
+  };
+
+  const handleImageMouseUpOrLeave = () => {
+    setIsDraggingImage(false);
+  };
+
+  const handleImageTouchStart = (e: React.TouchEvent) => {
+    if (e.touches.length === 2) {
+      const t1 = e.touches[0];
+      const t2 = e.touches[1];
+      const dist = Math.hypot(t1.clientX - t2.clientX, t1.clientY - t2.clientY);
+      touchStartDistRef.current = dist;
+      touchStartScaleRef.current = zoomScale;
+      setIsDraggingImage(false);
+    } else if (e.touches.length === 1) {
+      const t = e.touches[0];
+      setIsDraggingImage(true);
+      dragStartRef.current = {
+        x: t.clientX - zoomPosition.x,
+        y: t.clientY - zoomPosition.y
+      };
+    }
+  };
+
+  const handleImageTouchMove = (e: React.TouchEvent) => {
+    if (e.touches.length === 2 && touchStartDistRef.current !== null) {
+      e.preventDefault();
+      const t1 = e.touches[0];
+      const t2 = e.touches[1];
+      const dist = Math.hypot(t1.clientX - t2.clientX, t1.clientY - t2.clientY);
+      
+      const factor = dist / touchStartDistRef.current;
+      const newScale = Math.min(Math.max(touchStartScaleRef.current * factor, 0.5), 6.0);
+      
+      setZoomScale(newScale);
+      if (newScale <= 1.01) {
+        setZoomPosition({ x: 0, y: 0 });
+      }
+    } else if (e.touches.length === 1 && isDraggingImage) {
+      if (zoomScale > 1) {
+        e.preventDefault();
+        const t = e.touches[0];
+        const newX = t.clientX - dragStartRef.current.x;
+        const newY = t.clientY - dragStartRef.current.y;
+        setZoomPosition({ x: newX, y: newY });
+      }
+    }
+  };
+
+  const handleImageTouchEnd = () => {
+    touchStartDistRef.current = null;
+    setIsDraggingImage(false);
   };
 
   const handleDownloadImage = async (url: string, filename: string) => {
@@ -1614,12 +1709,7 @@ export default function App() {
 
       if (downloadUrl.startsWith('data:')) {
         const watermarkedUrl = isProOrPlus ? downloadUrl : await applyWatermark(downloadUrl);
-        const a = document.createElement('a');
-        a.href = watermarkedUrl;
-        a.download = filename.endsWith('.png') ? filename : `${filename}.png`;
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
+        await downloadFile(watermarkedUrl, filename.endsWith('.png') ? filename : `${filename}.png`, 'image/png');
         toast.success('Image download started', { id: 'img-dl' });
         return;
       }
@@ -1645,12 +1735,7 @@ export default function App() {
       
       const watermarkedUrl = isProOrPlus ? base64FromBlob : await applyWatermark(base64FromBlob);
       
-      const a = document.createElement('a');
-      a.href = watermarkedUrl;
-      a.download = filename.endsWith('.png') ? filename : `${filename}.png`;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
+      await downloadFile(watermarkedUrl, filename.endsWith('.png') ? filename : `${filename}.png`, 'image/png');
       toast.success('Image download started', { id: 'img-dl' });
     } catch (error) {
       console.error('Download error:', error);
@@ -1756,7 +1841,7 @@ export default function App() {
                 </button>
               )}
               {!isSidebarOpen && (messages.length > 0 || streamingMessage) && (
-                <Zap className="w-6 h-6 text-emerald-500 drop-shadow-[0_0_10px_rgba(16,185,129,0.3)]" />
+                <TrelvixLogo className="w-6 h-6" glow={false} />
               )}
               <h1 className="font-bold text-lg hidden md:block">
                 {currentConversation 
@@ -2416,35 +2501,85 @@ export default function App() {
                 </div>
               </div>
 
-              {/* Main Image Viewport supporting dual modes (fit screen or pixel-perfect zoom scroll) */}
+              {/* Main Image Viewport supporting interactive drag, scroll wheel, and touch pinch zoom */}
               <div 
-                className={cn(
-                  "relative w-full flex-1 min-h-0 flex items-center justify-center bg-zinc-950/20 rounded-3xl border border-white/5",
-                  isZoomed ? "overflow-auto touch-pan-x touch-pan-y" : "overflow-hidden"
-                )}
-                onClick={() => setIsZoomed(!isZoomed)}
+                className="relative w-full flex-1 min-h-0 flex items-center justify-center bg-zinc-950/40 rounded-3xl border border-white/5 overflow-hidden select-none"
+                onWheel={handleImageWheel}
+                onMouseDown={handleImageMouseDown}
+                onMouseMove={handleImageMouseMove}
+                onMouseUp={handleImageMouseUpOrLeave}
+                onMouseLeave={handleImageMouseUpOrLeave}
+                onTouchStart={handleImageTouchStart}
+                onTouchMove={handleImageTouchMove}
+                onTouchEnd={handleImageTouchEnd}
               >
-                <div className={cn(
-                  "transition-all duration-300",
-                  isZoomed ? "min-w-max min-h-max p-4" : "w-full h-full flex items-center justify-center"
-                )}>
+                <div 
+                  className="w-full h-full flex items-center justify-center pointer-events-none"
+                  style={{
+                    transform: `translate3d(${zoomPosition.x}px, ${zoomPosition.y}px, 0) scale(${zoomScale})`,
+                    transition: isDraggingImage ? 'none' : 'transform 0.15s ease-out',
+                    transformOrigin: 'center center'
+                  }}
+                >
                   <ImageWithLoader 
                     src={expandedImage.url} 
                     alt={expandedImage.title} 
                     skipWatermark={profile?.plan === 'pro' || profile?.plan === 'plus'}
-                    className={cn(
-                      "transition-all bg-transparent shadow-2xl rounded-2xl border border-white/5 select-none touch-none",
-                      isZoomed 
-                        ? "max-h-none max-w-none w-auto h-auto cursor-zoom-out" 
-                        : "max-h-[75vh] md:max-h-[82vh] max-w-full w-auto h-auto object-contain cursor-zoom-in"
-                    )}
+                    className="max-h-[75vh] md:max-h-[82vh] max-w-full w-auto h-auto object-contain select-none pointer-events-none shadow-2xl rounded-2xl border border-white/5"
                   />
+                </div>
+
+                {/* Ambient dynamic controls directly overlayed on the image viewport */}
+                <div className="absolute bottom-4 left-1/2 -translate-x-1/2 bg-black/70 backdrop-blur-md px-4 py-2.5 rounded-full border border-white/10 flex items-center gap-4 shadow-lg pointer-events-auto">
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setZoomScale(prev => {
+                        const next = Math.max(prev - 0.25, 0.5);
+                        if (next <= 1.01) setZoomPosition({ x: 0, y: 0 });
+                        return next;
+                      });
+                    }}
+                    className="w-8 h-8 rounded-full bg-white/10 hover:bg-white/25 active:scale-90 text-white flex items-center justify-center transition-all"
+                    title="Zoom Out"
+                  >
+                    <ZoomOut className="w-4 h-4" />
+                  </button>
+
+                  <span className="text-white text-xs font-mono font-medium tracking-wide min-w-[3rem] text-center select-none">
+                    {Math.round(zoomScale * 100)}%
+                  </span>
+
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setZoomScale(prev => Math.min(prev + 0.25, 6.0));
+                    }}
+                    className="w-8 h-8 rounded-full bg-white/10 hover:bg-white/25 active:scale-90 text-white flex items-center justify-center transition-all"
+                    title="Zoom In"
+                  >
+                    <ZoomIn className="w-4 h-4" />
+                  </button>
+
+                  <div className="w-px h-4 bg-white/10" />
+
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setZoomScale(1);
+                      setZoomPosition({ x: 0, y: 0 });
+                    }}
+                    className="w-8 h-8 rounded-full bg-white/10 hover:bg-white/25 active:scale-90 text-white flex items-center justify-center transition-all"
+                    title="Reset Zoom"
+                  >
+                    <RotateCcw className="w-4 h-4" />
+                  </button>
                 </div>
               </div>
 
               {/* Light Subtitle Action Instruction Indicator */}
               <div className="mt-2 shrink-0 select-none text-[10px] text-white/30 font-semibold tracking-wider uppercase border-t border-white/5 pt-2 w-full text-center">
-                <span>{isZoomed ? "Zoom: Actual Size (Tap to fit screen)" : "Zoom: Fit Screen (Tap image to view full scale)"}</span>
+                <span>Pinch to zoom, scroll wheel to scale, or drag to pan around</span>
               </div>
             </motion.div>
           </motion.div>
