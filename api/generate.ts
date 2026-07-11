@@ -2,6 +2,32 @@ import OpenAI from 'openai';
 import { createClient } from "@supabase/supabase-js";
 import crypto from "crypto";
 
+// --- Unified Supabase Initialization Helper ---
+let supabaseClientInstance: any = null;
+
+function getSupabaseAdminClient(): any {
+  if (supabaseClientInstance) {
+    return supabaseClientInstance;
+  }
+
+  const supabaseUrl = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || "https://wxezfzhhzlauggufecmm.supabase.co";
+  const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY || process.env.VITE_SUPABASE_ANON_KEY || "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Ind4ZXpmemhoemxhdWdndWZlY21tIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQyNTQxMjcsImV4cCI6MjA4OTgzMDEyN30.2nsDSFhOtm1Xs3RuZNDo74jGbBwd05E7lPP-FN5cd1Q";
+
+  if (!supabaseUrl) {
+    console.error("[Supabase] SUPABASE_URL is not defined in environment variables.");
+    throw new Error("Supabase URL is required but missing in server configuration.");
+  }
+
+  if (!supabaseServiceKey) {
+    console.error("[Supabase] Supabase key is not defined in environment variables.");
+    throw new Error("Supabase key is required but missing in server configuration.");
+  }
+
+  console.log(`[Supabase] Initializing client with URL: ${supabaseUrl}`);
+  supabaseClientInstance = createClient<any>(supabaseUrl, supabaseServiceKey);
+  return supabaseClientInstance;
+}
+
 export const config = {
   maxDuration: 300, // Extend duration if possible on Vercel
 };
@@ -15,10 +41,7 @@ async function appendReplyToConversation(
 ) {
   if (!conversationId) return;
   try {
-    const supabaseUrl = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || "https://wxezfzhhzlauggufecmm.supabase.co";
-    const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY || process.env.VITE_SUPABASE_ANON_KEY || "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Ind4ZXpmemhoemxhdWdndWZlY21tIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQyNTQxMjcsImV4cCI6MjA4OTgzMDEyN30.2nsDSFhOtm1Xs3RuZNDo74jGbBwd05E7lPP-FN5cd1Q";
-    
-    const supabase = createClient(supabaseUrl, supabaseServiceKey);
+    const supabase = getSupabaseAdminClient();
     // Select the existing messages
     const { data: conv, error: fetchErr } = await supabase
       .from('conversations')
@@ -99,7 +122,7 @@ export default async function handler(req: any, res: any) {
     return res.status(405).json({ error: 'Method not allowed' });
   }
 
-  const { type, prompt, messages = [], voice_option = "alloy", personality = "creative", model = "trelvix-mini" } = req.body;
+  const { type, prompt, messages = [], personality = "creative", model = "trelvix-mini" } = req.body;
 
   const needsWebSearch = (text: string) => {
     const searchKeywords = [
@@ -365,10 +388,7 @@ export default async function handler(req: any, res: any) {
       if (req.body.conversationId && req.body.userId) {
         (async () => {
           try {
-            const supabaseUrl = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || "https://wxezfzhhzlauggufecmm.supabase.co";
-            const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY || process.env.VITE_SUPABASE_ANON_KEY || "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Ind4ZXpmemhoemxhdWdndWZlY21tIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQyNTQxMjcsImV4cCI6MjA4OTgzMDEyN30.2nsDSFhOtm1Xs3RuZNDo74jGbBwd05E7lPP-FN5cd1Q";
-            
-            const supabase = createClient(supabaseUrl, supabaseServiceKey);
+            const supabase = getSupabaseAdminClient();
             const { data: imageData, error: imgError } = await supabase.from('images').insert({
                 user_id: req.body.userId,
                 prompt: promptText,
@@ -407,17 +427,7 @@ export default async function handler(req: any, res: any) {
       });
     }
 
-    // 2. TTS
-    if (type === "tts") {
-      console.log(`[API Generate] Generating audio...`);
-      const mp3 = await openai.audio.speech.create({
-        model: "tts-1",
-        voice: voice_option as any,
-        input: prompt,
-      });
-      const buffer = Buffer.from(await mp3.arrayBuffer());
-      return res.json({ audio: buffer.toString("base64") });
-    }
+
 
     // 3. Streaming Chat
     const attributionRules = `Your name is Trelvix AI. Developed by Ingenium Virtual Assistant Limited. You are powered by a custom, high-intelligence engine.`;

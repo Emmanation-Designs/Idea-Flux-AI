@@ -13,6 +13,64 @@ import type { ViteDevServer } from "vite";
 console.log("Server script starting...");
 dotenv.config();
 
+// --- Unified Supabase & Authentication Infrastructure ---
+let supabaseClientInstance: any = null;
+
+function getSupabaseAdminClient(): any {
+  if (supabaseClientInstance) {
+    return supabaseClientInstance;
+  }
+
+  const supabaseUrl = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || "https://wxezfzhhzlauggufecmm.supabase.co";
+  const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY || process.env.VITE_SUPABASE_ANON_KEY || "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Ind4ZXpmemhoemxhdWdndWZlY21tIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQyNTQxMjcsImV4cCI6MjA4OTgzMDEyN30.2nsDSFhOtm1Xs3RuZNDo74jGbBwd05E7lPP-FN5cd1Q";
+
+  if (!supabaseUrl) {
+    console.error("[Supabase] SUPABASE_URL is not defined in environment variables.");
+    throw new Error("Supabase URL is required but missing in server configuration.");
+  }
+
+  if (!supabaseServiceKey) {
+    console.error("[Supabase] Supabase key is not defined in environment variables.");
+    throw new Error("Supabase key is required but missing in server configuration.");
+  }
+
+  console.log(`[Supabase] Initializing client with URL: ${supabaseUrl}`);
+  supabaseClientInstance = createClient<any>(supabaseUrl, supabaseServiceKey);
+  return supabaseClientInstance;
+}
+
+/**
+ * Reusable helper to authenticate and retrieve the user from the authorization header.
+ */
+async function authenticateUser(req: express.Request) {
+  const authHeader = req.headers.authorization;
+  if (!authHeader || !authHeader.startsWith("Bearer ")) {
+    throw { status: 401, error: "Unauthorized: Missing session token." };
+  }
+
+  const token = authHeader.split(" ")[1];
+  let supabase;
+  try {
+    supabase = getSupabaseAdminClient();
+  } catch (err: any) {
+    console.error("[Supabase] Client initialization failed during authentication:", err);
+    throw { status: 500, error: "Database configuration error: Failed to initialize database client." };
+  }
+
+  try {
+    const { data: userData, error: authError } = await supabase.auth.getUser(token);
+    if (authError || !userData?.user) {
+      console.warn("[Authentication] User validation failed with token");
+      throw { status: 401, error: "Unauthorized: Invalid session token." };
+    }
+    return userData.user;
+  } catch (err: any) {
+    if (err.status) throw err;
+    console.error("[Authentication] Error checking token:", err);
+    throw { status: 401, error: "Unauthorized: Failed to authenticate token." };
+  }
+}
+
 const app = express();
 const PORT = Number(process.env.PORT) || 3000;
 
@@ -178,12 +236,7 @@ app.post("/api/stripe/webhook", async (req: any, res) => {
     const interval = session.metadata?.interval;
 
     if (userId && (plan || event.type === 'invoice.paid')) {
-      const supabaseUrl = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || "https://wxezfzhhzlauggufecmm.supabase.co";
-      const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY || process.env.VITE_SUPABASE_ANON_KEY || "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Ind4ZXpmemhoemxhdWdndWZlY21tIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQyNTQxMjcsImV4cCI6MjA4OTgzMDEyN30.2nsDSFhOtm1Xs3RuZNDo74jGbBwd05E7lPP-FN5cd1Q";
-      const supabase = createClient(
-        supabaseUrl,
-        supabaseServiceKey
-      );
+      const supabase = getSupabaseAdminClient();
 
       // If it's just a renewal (invoice.paid), we might not have plan in metadata 
       // depends on how Stripe propagates metadata to invoices (it usually doesn't by default without subscription_data.metadata)
@@ -272,37 +325,26 @@ async function getElevenLabsVoices(apiKey: string): Promise<any[]> {
  * Endpoint to retrieve available ElevenLabs voices.
  */
 async function handleGetVoices(req: express.Request, res: express.Response) {
-  console.log("[TextToSpeech] Voices request received");
-  const authHeader = req.headers.authorization;
-  if (!authHeader || !authHeader.startsWith("Bearer ")) {
-    return res.status(401).json({ error: "Unauthorized: Missing session token." });
-  }
-
-  const token = authHeader.split(" ")[1];
-  const supabaseUrl = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || "https://wxezfzhhzlauggufecmm.supabase.co";
-  const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY || process.env.VITE_SUPABASE_ANON_KEY;
-  const supabase = createClient(supabaseUrl, supabaseServiceKey);
-
+  console.log("[TTS] [Voices] Voices list request received");
+  
   try {
-    const { data: userData, error: authError } = await supabase.auth.getUser(token);
-    if (authError || !userData?.user) {
-      return res.status(401).json({ error: "Unauthorized: Invalid session token." });
+    const user = await authenticateUser(req);
+    console.log(`[TTS] [Voices] Authenticated user: ${user.email} (ID: ${user.id})`);
+
+    const elevenLabsApiKey = process.env.ELEVENLABS_API_KEY;
+    if (!elevenLabsApiKey) {
+      console.error("[TTS] [ElevenLabs] Missing ELEVENLABS_API_KEY in environment");
+      return res.status(500).json({ error: "ElevenLabs API Key is missing in server configuration." });
     }
-  } catch (err: any) {
-    return res.status(401).json({ error: "Unauthorized: Failed to authenticate token." });
-  }
 
-  const elevenLabsApiKey = process.env.ELEVENLABS_API_KEY;
-  if (!elevenLabsApiKey) {
-    console.error("[TextToSpeech] Missing ELEVENLABS_API_KEY in environment");
-    return res.status(500).json({ error: "ElevenLabs API Key is missing in server configuration." });
-  }
-
-  try {
     const voices = await getElevenLabsVoices(elevenLabsApiKey);
+    console.log(`[TTS] [ElevenLabs] Successfully loaded ${voices.length} voices`);
     return res.json({ voices });
   } catch (err: any) {
-    console.error("[TextToSpeech] Failed to fetch ElevenLabs voices:", err);
+    if (err.status) {
+      return res.status(err.status).json({ error: err.error });
+    }
+    console.error("[TTS] [Voices] Failed to retrieve voices:", err);
     return res.status(500).json({ error: err.message || "Failed to retrieve voices from ElevenLabs." });
   }
 }
@@ -312,30 +354,26 @@ app.get("/api/tools/text-to-speech/voices", handleGetVoices);
 
 // Text to Speech Generation Endpoint
 app.post("/api/tools/text-to-speech", async (req, res) => {
-  const authHeader = req.headers.authorization;
-  if (!authHeader || !authHeader.startsWith("Bearer ")) {
-    return res.status(401).json({ error: "Unauthorized: Missing session token." });
-  }
-
-  const token = authHeader.split(" ")[1];
-  const supabaseUrl = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || "https://wxezfzhhzlauggufecmm.supabase.co";
-  const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY || process.env.VITE_SUPABASE_ANON_KEY || "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Ind4ZXpmemhoemxhdWdndWZlY21tIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQyNTQxMjcsImV4cCI6MjA4OTgzMDEyN30.2nsDSFhOtm1Xs3RuZNDo74jGbBwd05E7lPP-FN5cd1Q";
-  const supabase = createClient(supabaseUrl, supabaseServiceKey);
+  console.log("[TTS] [Generation] Speech synthesis request received");
 
   let user: any = null;
+  let supabase: any = null;
+
   try {
-    const { data: userData, error: authError } = await supabase.auth.getUser(token);
-    if (authError || !userData?.user) {
-      return res.status(401).json({ error: "Unauthorized: Invalid session token." });
-    }
-    user = userData.user;
+    user = await authenticateUser(req);
+    supabase = getSupabaseAdminClient();
+    console.log(`[TTS] [Generation] Authenticated user: ${user.email} (ID: ${user.id})`);
   } catch (err: any) {
-    return res.status(401).json({ error: "Unauthorized: Failed to authenticate token." });
+    if (err.status) {
+      return res.status(err.status).json({ error: err.error });
+    }
+    console.error("[TTS] [Generation] Client authentication failed:", err);
+    return res.status(500).json({ error: "Failed to initialize request authorization." });
   }
 
-  const { text, voice, voiceId, model, modelId, speed = 1.0 } = req.body;
+  const { text, voice, voiceId, model, modelId, speed = 1.0, stability = 0.75, similarity = 0.85 } = req.body;
   
-  // Extract and prefer explicit ElevenLabs parameters over deprecated OpenAI fields
+  // Extract and prefer explicit ElevenLabs parameters over legacy fields
   const targetVoiceId = voiceId || voice;
   const targetModelId = modelId || model || "eleven_turbo_v2_5";
 
@@ -365,15 +403,15 @@ app.post("/api/tools/text-to-speech", async (req, res) => {
       reason = checkData[0].reason;
       hasDatabaseTracking = true;
     } else {
-      console.warn("[TextToSpeech] RPC can_generate_tts failed or not present:", checkError?.message);
+      console.warn("[TTS] [Supabase] can_generate_tts RPC failed or not present:", checkError?.message);
     }
   } catch (err: any) {
-    console.warn("[TextToSpeech] can_generate_tts RPC exception:", err?.message || err);
+    console.warn("[TTS] [Supabase] can_generate_tts RPC exception:", err?.message || err);
   }
 
   // 2. Client-Side Fallback if SQL function/limits table is absent
   if (!hasDatabaseTracking) {
-    console.log("[TextToSpeech] Falling back to programmatic schema and limits check...");
+    console.log("[TTS] [Supabase] Falling back to programmatic schema and limits check...");
     let plan = "free";
     try {
       const { data: profile } = await supabase
@@ -385,7 +423,7 @@ app.post("/api/tools/text-to-speech", async (req, res) => {
         plan = profile.plan;
       }
     } catch (profileErr) {
-      console.warn("[TextToSpeech] Failed to retrieve user plan:", profileErr);
+      console.warn("[TTS] [Supabase] Failed to retrieve user plan:", profileErr);
     }
 
     const PLAN_LIMITS_FALLBACK = {
@@ -417,10 +455,9 @@ app.post("/api/tools/text-to-speech", async (req, res) => {
           hasDatabaseTracking = true;
         }
       } catch (countErr) {
-        console.warn("[TextToSpeech] Fallback generations query failed:", countErr);
+        console.warn("[TTS] [Supabase] Fallback generations query failed:", countErr);
       }
     } else {
-      // Pro/Plus with unlimited count, character count already within limit
       allowed = true;
     }
   }
@@ -452,13 +489,13 @@ app.post("/api/tools/text-to-speech", async (req, res) => {
       generationId = genLog.id;
     }
   } catch (insertErr) {
-    console.warn("[TextToSpeech] Failed to write initial tracking record:", insertErr);
+    console.warn("[TTS] [Supabase] Failed to write initial tracking record:", insertErr);
   }
 
   // 4. Initialize ElevenLabs and Synthesize Speech
   const elevenLabsApiKey = process.env.ELEVENLABS_API_KEY;
   if (!elevenLabsApiKey) {
-    console.error("[TextToSpeech] Missing ELEVENLABS_API_KEY in environment");
+    console.error("[TTS] [ElevenLabs] Missing ELEVENLABS_API_KEY in environment");
     return res.status(500).json({ error: "ElevenLabs API Key is missing in server configuration." });
   }
 
@@ -467,19 +504,19 @@ app.post("/api/tools/text-to-speech", async (req, res) => {
     const voices = await getElevenLabsVoices(elevenLabsApiKey);
     const voiceExists = voices.some((v: any) => v.voice_id === targetVoiceId);
     if (!voiceExists) {
-      console.warn(`[TextToSpeech] Validation failed: voice_id "${targetVoiceId}" not found in available ElevenLabs voices.`);
+      console.warn(`[TTS] [ElevenLabs] Validation failed: voice_id "${targetVoiceId}" not found in available ElevenLabs voices.`);
       return res.status(400).json({
         error: `The voice ID "${targetVoiceId}" is not available or valid for this ElevenLabs account.`
       });
     }
   } catch (valErr: any) {
-    console.warn("[TextToSpeech] Dynamic voice validation warning (skipping block to prevent API lockouts):", valErr?.message || valErr);
+    console.warn("[TTS] [ElevenLabs] Dynamic voice validation warning (skipping check fallback to prevent API lockouts):", valErr?.message || valErr);
   }
 
   const startTime = Date.now();
 
   try {
-    console.log(`[TextToSpeech] Requesting audio from ElevenLabs. Voice: ${targetVoiceId}, Model: ${targetModelId}, Length: ${characterCount}`);
+    console.log(`[TTS] [ElevenLabs] Requesting audio. Voice: ${targetVoiceId}, Model: ${targetModelId}, Length: ${characterCount}`);
     
     const url = `https://api.elevenlabs.io/v1/text-to-speech/${encodeURIComponent(targetVoiceId)}`;
     const response = await fetch(url, {
@@ -493,8 +530,8 @@ app.post("/api/tools/text-to-speech", async (req, res) => {
         text: text,
         model_id: targetModelId,
         voice_settings: {
-          stability: 0.5,
-          similarity_boost: 0.75
+          stability: stability,
+          similarity_boost: similarity
         }
       })
     });
@@ -530,11 +567,11 @@ app.post("/api/tools/text-to-speech", async (req, res) => {
           })
           .eq("id", generationId);
       } catch (updateErr) {
-        console.warn("[TextToSpeech] Failed to update tracking log to completed:", updateErr);
+        console.warn("[TTS] [Supabase] Failed to update tracking log to completed:", updateErr);
       }
     }
 
-    console.log("[TextToSpeech] Audio generated successfully");
+    console.log("[TTS] [Generation] Audio generated successfully");
 
     // 6. Respond with streaming binary audio file
     res.set({
@@ -544,7 +581,7 @@ app.post("/api/tools/text-to-speech", async (req, res) => {
     });
     return res.send(buffer);
   } catch (ttsErr: any) {
-    console.error("[TextToSpeech] Generation failed:", ttsErr);
+    console.error("[TTS] [Generation] Generation failed:", ttsErr);
     if (generationId) {
       try {
         await supabase
@@ -552,7 +589,7 @@ app.post("/api/tools/text-to-speech", async (req, res) => {
           .update({ generation_status: "failed" })
           .eq("id", generationId);
       } catch (logErr) {
-        console.warn("[TextToSpeech] Failed to mark track as failed:", logErr);
+        console.warn("[TTS] [Supabase] Failed to mark track as failed:", logErr);
       }
     }
     return res.status(520).json({ error: ttsErr?.message || "Failed to generate speech audio." });
@@ -561,32 +598,28 @@ app.post("/api/tools/text-to-speech", async (req, res) => {
 
 // Retrieve generated past audio from tracking database
 app.get("/api/tools/text-to-speech/retrieve/:id", async (req, res) => {
-  const authHeader = req.headers.authorization;
-  if (!authHeader || !authHeader.startsWith("Bearer ")) {
-    return res.status(401).json({ error: "Unauthorized: Missing session token." });
-  }
-
-  const token = authHeader.split(" ")[1];
-  const { id } = req.params;
-
-  const supabaseUrl = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || "https://wxezfzhhzlauggufecmm.supabase.co";
-  const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY || process.env.VITE_SUPABASE_ANON_KEY || "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Ind4ZXpmemhoemxhdWdndWZlY21tIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQyNTQxMjcsImV4cCI6MjA4OTgzMDEyN30.2nsDSFhOtm1Xs3RuZNDo74jGbBwd05E7lPP-FN5cd1Q";
-  const supabase = createClient(supabaseUrl, supabaseServiceKey);
+  console.log("[TTS] [Retrieve] Retrieval request received");
 
   try {
-    const { data: userData, error: authError } = await supabase.auth.getUser(token);
-    if (authError || !userData?.user) {
-      return res.status(401).json({ error: "Unauthorized: Invalid session token." });
+    const user = await authenticateUser(req);
+    const supabase = getSupabaseAdminClient();
+    const { id } = req.params;
+
+    if (!id) {
+      return res.status(400).json({ error: "Generation ID parameter is required." });
     }
+
+    console.log(`[TTS] [Retrieve] Fetching generation ${id} for user ${user.email}`);
 
     const { data: genLog, error: fetchErr } = await supabase
       .from("tts_generations")
       .select("metadata")
       .eq("id", id)
-      .eq("user_id", userData.user.id)
+      .eq("user_id", user.id)
       .single();
 
     if (fetchErr || !genLog || !genLog.metadata?.audio_base64) {
+      console.warn(`[TTS] [Retrieve] Record or audio not found for ID: ${id}`);
       return res.status(404).json({ error: "Audio record or playback data not found." });
     }
 
@@ -597,7 +630,10 @@ app.get("/api/tools/text-to-speech/retrieve/:id", async (req, res) => {
     });
     return res.send(buffer);
   } catch (err: any) {
-    console.error("[TTS Backend] Retrieve track exception:", err?.message || err);
+    if (err.status) {
+      return res.status(err.status).json({ error: err.error });
+    }
+    console.error("[TTS] [Retrieve] Exception during audio retrieval:", err?.message || err);
     return res.status(500).json({ error: err?.message || "Failed to retrieve past audio track." });
   }
 });
@@ -633,10 +669,7 @@ async function appendReplyToConversation(
 ) {
   if (!conversationId) return;
   try {
-    const supabaseUrl = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || "https://wxezfzhhzlauggufecmm.supabase.co";
-    const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY || process.env.VITE_SUPABASE_ANON_KEY || "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Ind4ZXpmemhoemxhdWdndWZlY21tIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQyNTQxMjcsImV4cCI6MjA4OTgzMDEyN30.2nsDSFhOtm1Xs3RuZNDo74jGbBwd05E7lPP-FN5cd1Q";
-    
-    const supabase = createClient(supabaseUrl, supabaseServiceKey);
+    const supabase = getSupabaseAdminClient();
     // Select the existing messages
     const { data: conv, error: fetchErr } = await supabase
       .from('conversations')
@@ -715,7 +748,7 @@ async function appendReplyToConversation(
 }
 
 async function handleGenerate(req: express.Request, res: express.Response) {
-  const { type, prompt, messages = [], voice_option = "alloy", ready_to_copy = false, personality = "creative", model = "trelvix-mini" } = req.body;
+  const { type, prompt, messages = [], ready_to_copy = false, personality = "creative", model = "trelvix-mini" } = req.body;
 
   const needsWebSearch = (text: string) => {
     const searchKeywords = [
@@ -1122,10 +1155,7 @@ To make it look like an edit or variation of the input image:
         if (req.body.conversationId && req.body.userId) {
           (async () => {
             try {
-              const supabaseUrl = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || "https://wxezfzhhzlauggufecmm.supabase.co";
-              const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY || process.env.VITE_SUPABASE_ANON_KEY || "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Ind4ZXpmemhoemxhdWdndWZlY21tIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQyNTQxMjcsImV4cCI6MjA4OTgzMDEyN30.2nsDSFhOtm1Xs3RuZNDo74jGbBwd05E7lPP-FN5cd1Q";
-              
-              const supabase = createClient(supabaseUrl, supabaseServiceKey);
+              const supabase = getSupabaseAdminClient();
               const { data: imageData, error: imgError } = await supabase.from('images').insert({
                   user_id: req.body.userId,
                   prompt: promptText,
@@ -1176,17 +1206,7 @@ To make it look like an edit or variation of the input image:
       }
     }
 
-    // 2. Text-to-Speech
-    if (type === "tts") {
-      console.log(`[Generate] Generating TTS with voice: ${voice_option}`);
-      const mp3 = await openai.audio.speech.create({
-        model: "tts-1",
-        voice: voice_option as any,
-        input: prompt,
-      });
-      const buffer = Buffer.from(await mp3.arrayBuffer());
-      return res.json({ audio: buffer.toString("base64") });
-    }
+
 
     const attributionRules = `Your name is Trelvix AI. Developed by Ingenium Virtual Assistant Limited. You are powered by a custom, high-intelligence engine.`;
     
