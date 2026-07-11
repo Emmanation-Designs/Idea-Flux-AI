@@ -375,7 +375,30 @@ app.post("/api/tools/text-to-speech", async (req, res) => {
   
   // Extract and prefer explicit ElevenLabs parameters over legacy fields
   const targetVoiceId = voiceId || voice;
-  const targetModelId = modelId || model || "eleven_turbo_v2_5";
+  let targetModelId = modelId || model || "eleven_turbo_v2_5";
+
+  // Sanitize and map legacy OpenAI models to valid ElevenLabs models
+  if (targetModelId === "tts-1" || targetModelId === "gpt-4o-mini-tts" || targetModelId === "gpt-4o-tts") {
+    targetModelId = "eleven_turbo_v2_5";
+  } else if (targetModelId === "tts-1-hd") {
+    targetModelId = "eleven_multilingual_v2";
+  }
+
+  // Validate the ElevenLabs model ID defensively
+  const VALID_ELEVENLABS_MODELS = [
+    "eleven_turbo_v2_5",
+    "eleven_multilingual_v2",
+    "eleven_monolingual_v1",
+    "eleven_turbo_v2",
+    "eleven_flash_v2_5",
+    "eleven_flash_v2"
+  ];
+
+  if (!VALID_ELEVENLABS_MODELS.includes(targetModelId)) {
+    return res.status(400).json({
+      error: `Invalid model ID: "${targetModelId}". Please select a valid ElevenLabs model (e.g., "eleven_turbo_v2_5" or "eleven_multilingual_v2").`
+    });
+  }
 
   if (!text || typeof text !== "string" || !text.trim()) {
     return res.status(400).json({ error: "Text payload is required." });

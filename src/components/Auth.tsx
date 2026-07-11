@@ -6,14 +6,14 @@ import {
   ExternalLink,
   AlertTriangle,
   Check,
-  X
+  X,
+  Zap
 } from 'lucide-react';
 import { motion } from 'motion/react';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 import { toast } from 'sonner';
 import { supabase } from '../lib/supabase';
-import { TrelvixLogo } from './TrelvixLogo';
 
 function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
@@ -173,17 +173,18 @@ export const Auth = ({ onAuthSuccess, isDarkMode }: { onAuthSuccess: () => void;
 
   if (isChromeCallback) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-zinc-950 p-6 relative overflow-hidden">
-        <div className="absolute top-0 left-0 w-full h-full opacity-25 pointer-events-none">
+      <div className="h-screen w-screen overflow-y-auto bg-zinc-950 relative">
+        <div className="absolute inset-0 opacity-25 pointer-events-none overflow-hidden">
           <div className="absolute top-[-10%] left-[-10%] w-[50%] h-[50%] bg-emerald-500 rounded-full blur-[140px]" />
           <div className="absolute bottom-[-10%] right-[-10%] w-[50%] h-[50%] bg-blue-500 rounded-full blur-[140px]" />
         </div>
 
-        <motion.div 
-          initial={{ opacity: 0, scale: 0.95 }}
-          animate={{ opacity: 1, scale: 1 }}
-          className="w-full max-w-md bg-zinc-900 border border-zinc-850 rounded-[2.5rem] p-10 shadow-2xl relative z-10 flex flex-col text-center"
-        >
+        <div className="min-h-full w-full flex items-center justify-center py-12 px-6 relative z-10">
+          <motion.div 
+            initial={{ opacity: 0, scale: 0.95 }}
+            animate={{ opacity: 1, scale: 1 }}
+            className="w-full max-w-md bg-zinc-900 border border-zinc-850 rounded-[2.5rem] p-10 shadow-2xl flex flex-col text-center"
+          >
           <div className="w-20 h-20 rounded-3xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 flex items-center justify-center mx-auto mb-6 shadow-glow">
             <Check className="w-10 h-10 animate-bounce" />
           </div>
@@ -224,25 +225,27 @@ export const Auth = ({ onAuthSuccess, isDarkMode }: { onAuthSuccess: () => void;
             </p>
           </div>
         </motion.div>
+        </div>
       </div>
     );
   }
 
   if (showFallback) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-zinc-950 p-4 relative overflow-hidden">
-        <div className="absolute top-0 left-0 w-full h-full opacity-20 pointer-events-none">
+      <div className="h-screen w-screen overflow-y-auto bg-zinc-950 relative">
+        <div className="absolute inset-0 opacity-20 pointer-events-none overflow-hidden">
           <div className="absolute top-[-10%] left-[-10%] w-[40%] h-[40%] bg-emerald-500 rounded-full blur-[120px]" />
           <div className="absolute bottom-[-10%] right-[-10%] w-[40%] h-[40%] bg-blue-500 rounded-full blur-[120px]" />
         </div>
 
-        <motion.div 
-          initial={{ opacity: 0, scale: 0.95 }}
-          animate={{ opacity: 1, scale: 1 }}
-          className="w-full max-w-md bg-zinc-900 border border-zinc-800 rounded-[2.5rem] p-10 md:p-12 shadow-2xl relative z-10 flex flex-col items-center text-center"
-        >
+        <div className="min-h-full w-full flex items-center justify-center py-12 px-4 relative z-10">
+          <motion.div 
+            initial={{ opacity: 0, scale: 0.95 }}
+            animate={{ opacity: 1, scale: 1 }}
+            className="w-full max-w-md bg-zinc-900 border border-zinc-800 rounded-[2.5rem] p-10 md:p-12 shadow-2xl flex flex-col items-center text-center"
+          >
           <div className="w-16 h-16 rounded-2xl bg-emerald-500/10 flex items-center justify-center border border-emerald-500/20 mb-6 shadow-inner animate-pulse">
-            <TrelvixLogo className="w-10 h-10 text-emerald-400" />
+            <Zap className="w-8 h-8 text-emerald-400" />
           </div>
 
           <h2 className="text-xl font-black text-white mb-2">Opening Google Chrome...</h2>
@@ -301,25 +304,27 @@ export const Auth = ({ onAuthSuccess, isDarkMode }: { onAuthSuccess: () => void;
             </button>
           </div>
         </motion.div>
+        </div>
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-zinc-950 p-4 relative overflow-hidden">
-      <div className="absolute top-0 left-0 w-full h-full opacity-20 pointer-events-none">
+    <div className="h-screen w-screen overflow-y-auto bg-zinc-950 relative">
+      <div className="absolute inset-0 opacity-20 pointer-events-none overflow-hidden">
         <div className="absolute top-[-10%] left-[-10%] w-[40%] h-[40%] bg-emerald-500 rounded-full blur-[120px]" />
         <div className="absolute bottom-[-10%] right-[-10%] w-[40%] h-[40%] bg-blue-500 rounded-full blur-[120px]" />
       </div>
 
-      <motion.div 
-        initial={{ opacity: 0, y: 20 }}
-        animate={{ opacity: 1, y: 0 }}
-        className="w-full max-w-md bg-zinc-900 border border-zinc-800 rounded-[2.5rem] p-10 md:p-12 shadow-2xl relative z-10"
-      >
+      <div className="min-h-full w-full flex items-center justify-center py-12 px-4 relative z-10">
+        <motion.div 
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="w-full max-w-md bg-zinc-900 border border-zinc-800 rounded-[2.5rem] p-10 md:p-12 shadow-2xl"
+        >
         <div className="flex flex-col items-center mb-10 text-center">
           <div className="w-20 h-20 rounded-2xl bg-zinc-950 flex items-center justify-center mb-6 shadow-xl border border-zinc-800 p-2">
-            <TrelvixLogo className="w-14 h-14" />
+            <Zap className="w-10 h-10 text-emerald-500 drop-shadow-[0_0_15px_rgba(16,185,129,0.4)]" />
           </div>
           <h1 className="text-3xl font-bold tracking-tight text-white mb-2">Trelvix AI</h1>
           <p className="text-zinc-500 text-sm font-medium leading-relaxed max-w-[240px]">The professional creative engine for high-fidelity content.</p>
@@ -426,6 +431,7 @@ export const Auth = ({ onAuthSuccess, isDarkMode }: { onAuthSuccess: () => void;
           </button>
         </div>
       </motion.div>
+      </div>
 
     </div>
   );

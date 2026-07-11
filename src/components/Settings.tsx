@@ -236,13 +236,13 @@ export const Settings = (props: {
       animate={{ opacity: 1 }}
       exit={{ opacity: 0 }}
       onClick={onClose}
-      className="fixed inset-0 z-50 flex items-center justify-center p-0 md:p-6 bg-black/40 backdrop-blur-sm cursor-pointer"
+      className="fixed inset-0 z-50 flex items-center justify-center p-0 md:p-6 bg-black/40 backdrop-blur-sm overflow-y-auto cursor-pointer"
     >
       <motion.div 
         initial={{ scale: 0.95, opacity: 0, y: 20 }}
         animate={{ scale: 1, opacity: 1, y: 0 }}
         onClick={(e) => e.stopPropagation()}
-        className="w-full h-full md:h-[680px] md:max-w-4xl bg-white dark:bg-zinc-950 md:rounded-3xl shadow-2xl border border-zinc-200 dark:border-zinc-800 flex overflow-hidden cursor-default"
+        className="w-full h-[100dvh] md:h-[680px] md:max-h-[calc(100vh-3rem)] md:max-w-4xl bg-white dark:bg-zinc-950 md:rounded-3xl shadow-2xl border border-zinc-200 dark:border-zinc-800 flex overflow-hidden cursor-default"
       >
         {/* Sidebar */}
         <div className={cn(

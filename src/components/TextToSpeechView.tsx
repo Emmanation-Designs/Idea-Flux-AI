@@ -60,7 +60,13 @@ export const TextToSpeechView = ({ profile, onUpgradeClick, onBack }: TextToSpee
   const [text, setText] = useState('');
   const [selectedVoice, setSelectedVoice] = useState(() => localStorage.getItem(STORAGE_KEY_VOICE) || '');
   const [speed, setSpeed] = useState(() => Number(localStorage.getItem(STORAGE_KEY_SPEED)) || 1.0);
-  const [selectedModel, setSelectedModel] = useState(() => localStorage.getItem(STORAGE_KEY_MODEL) || 'eleven_turbo_v2_5');
+  const [selectedModel, setSelectedModel] = useState(() => {
+    const saved = localStorage.getItem(STORAGE_KEY_MODEL);
+    if (saved && MODEL_OPTIONS.some(m => m.id === saved)) {
+      return saved;
+    }
+    return 'eleven_turbo_v2_5';
+  });
   
   // ElevenLabs dynamic voices states
   const [voices, setVoices] = useState<any[]>([]);
