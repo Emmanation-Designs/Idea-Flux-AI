@@ -6,6 +6,7 @@ import { TrelvixLogo } from './TrelvixLogo';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 import { toast } from 'sonner';
+import { getPlan, getPlanPrice, getPlanLimits, PlanId } from '../subscription/catalog';
 
 function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
@@ -21,18 +22,64 @@ interface UpgradeModalProps {
 export const UpgradeModal: React.FC<UpgradeModalProps> = ({ isOpen, onClose, reason = 'manual', profile }) => {
   const [billingPeriod, setBillingPeriod] = React.useState<'monthly' | 'yearly'>('monthly');
 
+  const getLocalRegion = (): 'nigeria' | 'international' => {
+    try {
+      const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+      if (tz && (tz.includes('Lagos') || tz.includes('Africa/Lagos') || tz.includes('Nigeria'))) {
+        return 'nigeria';
+      }
+    } catch (e) {}
+    return 'international';
+  };
+
+  const region = getLocalRegion();
+
+  const getFeaturesList = (planId: PlanId) => {
+    const limits = getPlanLimits(planId);
+    if (planId === 'plus') {
+      return [
+        'Unlimited chat messages',
+        `${limits.image_generation} image generations / day`,
+        `${limits.image_edit} image edits / day`,
+        'Premium AI Models & priority speed',
+        'No advertisement banner'
+      ];
+    } else if (planId === 'pro') {
+      return [
+        'Unlimited chat messages',
+        `${limits.image_generation} image generations / day`,
+        `${limits.image_edit} image edits / day`,
+        'Elite AI Models & maximum speed',
+        'Full Document & PDF suite access',
+        'Dedicated priority queue'
+      ];
+    }
+    return [];
+  };
+
+  const plusPlan = getPlan('plus');
+  const proPlan = getPlan('pro');
+
+  const plusMonthlyPrice = getPlanPrice('plus', region).price;
+  const plusYearlyPrice = Math.round(plusMonthlyPrice * 12 * 0.85);
+
+  const proMonthlyPrice = getPlanPrice('pro', region).price;
+  const proYearlyPrice = Math.round(proMonthlyPrice * 12 * 0.85);
+
   const plans = {
     pro: {
-      name: 'Pro',
-      monthly: 10,
-      yearly: 96,
-      features: ['100 messages / day', 'Unlimited analysis', '20 images / day', 'Priority support']
+      name: proPlan.identity.displayName,
+      monthly: proMonthlyPrice,
+      yearly: proYearlyPrice,
+      features: getFeaturesList('pro'),
+      marketing: proPlan.marketing
     },
     plus: {
-      name: 'Plus',
-      monthly: 25,
-      yearly: 240,
-      features: ['Unlimited messages', 'Unlimited analysis', 'Unlimited images', 'Enterprise support']
+      name: plusPlan.identity.displayName,
+      monthly: plusMonthlyPrice,
+      yearly: plusYearlyPrice,
+      features: getFeaturesList('plus'),
+      marketing: plusPlan.marketing
     }
   };
 
@@ -46,13 +93,14 @@ export const UpgradeModal: React.FC<UpgradeModalProps> = ({ isOpen, onClose, rea
     
     setIsSubscribing(planId);
     try {
-      const response = await fetch('/api/stripe/checkout', {
+      const response = await fetch('/api/payment/checkout', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           plan: planId,
           interval: billingPeriod === 'monthly' ? 'month' : 'year',
-          userId: profile.id
+          userId: profile.id,
+          region
         })
       });
 
@@ -167,7 +215,7 @@ export const UpgradeModal: React.FC<UpgradeModalProps> = ({ isOpen, onClose, rea
                           : "bg-white dark:bg-zinc-800 border-2 border-zinc-900 dark:border-white text-zinc-900 dark:text-white"
                       )}
                     >
-                      {isSubscribing === id ? 'Connecting...' : 'Subscribe Now'}
+                      {isSubscribing === id ? 'Connecting...' : plan.marketing.buttonText}
                     </button>
                   </div>
                 ))}

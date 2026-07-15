@@ -31,6 +31,7 @@ export interface Profile {
   name?: string | null;
   avatar_url?: string | null;
   plan: 'free' | 'pro' | 'plus';
+  current_plan?: 'free' | 'pro' | 'plus';
   personality?: PersonalityType;
   messages_used_today: number;
   analysis_used_today: number;
@@ -39,4 +40,11 @@ export interface Profile {
   subscription_expires_at: string | null;
   tts_characters_used?: number;
   tts_reset_date?: string | null;
+  subscription_status?: string | null;
+  subscription_provider?: string | null;
+  subscription_start?: string | null;
+  subscription_end?: string | null;
+  billing_country?: string | null;
+  billing_currency?: string | null;
+  country_code?: string | null;
 }

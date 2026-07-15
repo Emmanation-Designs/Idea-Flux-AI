@@ -2,13 +2,26 @@ import express from "express";
 import path from "path";
 import OpenAI from "openai";
 import dotenv from "dotenv";
-import Stripe from "stripe";
 import { createClient } from "@supabase/supabase-js";
 import fs from "fs";
 import crypto from "crypto";
 
 // Import Vite types only for type checking
 import type { ViteDevServer } from "vite";
+import { checkLimit, incrementUsage, getUserUsage, getPlanLimits } from "./src/lib/usageService.js";
+import { getSubscription, updateSubscription } from "./src/lib/subscriptionService.js";
+import { getPaymentAdapter } from "./src/lib/paymentService.js";
+import { getPlan, getPaymentConfiguration } from "./src/subscription/catalog.js";
+import { 
+  activateSubscription, 
+  renewSubscription, 
+  cancelSubscription, 
+  expireSubscription, 
+  downgradeToFree, 
+  changePlan, 
+  syncSubscription, 
+  validateSubscription 
+} from "./src/subscription/subscriptionLifecycleService.js";
 
 console.log("Server script starting...");
 dotenv.config();
@@ -72,7 +85,16 @@ async function authenticateUser(req: express.Request) {
       console.warn("[Authentication] User validation failed with token");
       throw { status: 401, error: "Unauthorized: Invalid session token." };
     }
-    return userData.user;
+    const user = userData.user;
+    
+    // Automatically validate and synchronize subscription (STEP 9)
+    try {
+      await validateSubscription(supabase, user.id);
+    } catch (syncErr: any) {
+      console.error(`[Subscription Validation Error] Failed to validate/sync subscription for user ${user.id}:`, syncErr.message || syncErr);
+    }
+
+    return user;
   } catch (err: any) {
     if (err.status) throw err;
     console.error("[Authentication] Error checking token:", err);
@@ -85,7 +107,7 @@ const PORT = Number(process.env.PORT) || 3000;
 
 app.use(express.json({
   verify: (req: any, res, buf) => {
-    if (req.originalUrl.startsWith('/api/stripe/webhook')) {
+    if (req.originalUrl.startsWith('/api/stripe/webhook') || req.originalUrl.startsWith('/api/payment/webhook')) {
       req.rawBody = buf;
     }
   }
@@ -107,6 +129,71 @@ app.get("/api/health", (req, res) => {
     hasTavilyApiKey: !!process.env.TAVILY_API_KEY,
     environment: process.env.VERCEL ? 'vercel' : 'local'
   });
+});
+
+// Explicit subscription synchronization endpoint
+app.post("/api/subscription/sync", async (req, res) => {
+  try {
+    const user = await authenticateUser(req);
+    const supabase = getSupabaseAdminClient();
+    await validateSubscription(supabase, user.id);
+    const details = await getSubscription(supabase, user.id);
+    res.json({ status: "success", subscription: details });
+  } catch (error: any) {
+    console.error("[Subscription Sync API Error]:", error);
+    res.status(error.status || 500).json({ error: error.error || error.message || "Failed to sync subscription" });
+  }
+});
+
+// Subscription and detailed usage endpoint
+app.get("/api/subscription/usage", async (req, res) => {
+  try {
+    const user = await authenticateUser(req);
+    const supabase = getSupabaseAdminClient();
+    await validateSubscription(supabase, user.id);
+    const profile = await getSubscription(supabase, user.id);
+    const usage = await getUserUsage(supabase, user.id);
+    const limits = await getPlanLimits(supabase, profile.current_plan || 'free');
+    res.json({ usage, limits, profile });
+  } catch (error: any) {
+    console.error("[Subscription Usage API Error]:", error);
+    res.status(error.status || 500).json({ error: error.error || error.message || "Failed to fetch usage info" });
+  }
+});
+
+// Cancel subscription endpoint
+app.post("/api/subscription/cancel", async (req, res) => {
+  try {
+    const user = await authenticateUser(req);
+    const supabase = getSupabaseAdminClient();
+    await cancelSubscription(supabase, user.id);
+    const details = await getSubscription(supabase, user.id);
+    res.json({ status: "success", subscription: details });
+  } catch (error: any) {
+    console.error("[Subscription Cancel API Error]:", error);
+    res.status(error.status || 500).json({ error: error.error || error.message || "Failed to cancel subscription" });
+  }
+});
+
+// Resume subscription endpoint
+app.post("/api/subscription/resume", async (req, res) => {
+  try {
+    const user = await authenticateUser(req);
+    const supabase = getSupabaseAdminClient();
+    const profile = await getSubscription(supabase, user.id);
+    if (profile.subscription_status === 'CANCELLED') {
+      const { error } = await supabase
+        .from('profiles')
+        .update({ subscription_status: 'ACTIVE', updated_at: new Date().toISOString() })
+        .eq('id', user.id);
+      if (error) throw error;
+    }
+    const details = await getSubscription(supabase, user.id);
+    res.json({ status: "success", subscription: details });
+  } catch (error: any) {
+    console.error("[Subscription Resume API Error]:", error);
+    res.status(error.status || 500).json({ error: error.error || error.message || "Failed to resume subscription" });
+  }
 });
 
 
@@ -143,137 +230,139 @@ app.post("/api/generate", async (req, res) => {
   return handleGenerate(req, res);
 });
 
-// Stripe Checkout Route
-app.post("/api/stripe/checkout", async (req, res) => {
+// --- Provider-Agnostic Payment Integration ---
+
+// Generic Checkout Session route
+app.post("/api/payment/checkout", async (req, res) => {
   try {
-    const { plan, interval, userId } = req.body;
+    const { plan, interval, userId, provider: requestedProvider, region } = req.body;
     const origin = req.headers.origin || "https://trelvixai.com";
 
     if (!userId) return res.status(400).json({ error: 'User ID is required' });
     if (!plan || !interval) return res.status(400).json({ error: 'Plan and interval are required' });
 
-    const stripeSecretKey = process.env.STRIPE_SECRET_KEY;
-    if (!stripeSecretKey) {
-      console.error('[Stripe] Missing STRIPE_SECRET_KEY');
-      return res.status(500).json({ error: 'Server configuration error: Missing Stripe Secret Key' });
+    const provider = requestedProvider || process.env.ACTIVE_PAYMENT_PROVIDER || 'stripe';
+
+    // Provider validation (STEP 7)
+    const validProviders = ['stripe', 'paypal', 'paystack', 'sandbox', 'apple', 'google'];
+    if (!validProviders.includes(provider.toLowerCase())) {
+      return res.status(400).json({ error: `Invalid payment provider: ${provider}` });
     }
 
-    const stripe = new Stripe(stripeSecretKey, {
-      apiVersion: '2023-10-16' as any,
+    // Plan validation (STEP 7)
+    const planId = plan.toLowerCase();
+    const validPlans = ['free', 'plus', 'pro'];
+    if (!validPlans.includes(planId)) {
+      return res.status(400).json({ error: `Unknown plan: ${plan}` });
+    }
+
+    // Inactive plan validation (STEP 7)
+    const planConfig = getPlan(planId as any);
+    if (!planConfig) {
+      return res.status(400).json({ error: `Unknown plan: ${plan}` });
+    }
+    if (planConfig.identity.status !== 'active') {
+      return res.status(400).json({ error: `Plan is inactive: ${plan}` });
+    }
+
+    // Region validation (STEP 7)
+    const userRegion = (region || 'international').toLowerCase();
+    const validRegions = ['nigeria', 'international'];
+    if (!validRegions.includes(userRegion)) {
+      return res.status(400).json({ error: `Unknown region: ${region}` });
+    }
+
+    // Payment configuration check for PayPal (STEP 5 & 7)
+    if (provider.toLowerCase() === 'paypal' || provider.toLowerCase() === 'paystack') {
+      const paymentConfig = getPaymentConfiguration(planId as any, provider.toLowerCase() as any, userRegion as any) as any;
+      if (provider.toLowerCase() === 'paypal' && (!paymentConfig || !paymentConfig.planId || !paymentConfig.productId)) {
+        const uppercasePlan = planId.toUpperCase();
+        const prettyRegion = userRegion === 'nigeria' ? 'Nigeria' : 'International';
+        return res.status(400).json({
+          error: `PayPal Plan ID has not yet been configured for ${uppercasePlan} (${prettyRegion}).`
+        });
+      } else if (provider.toLowerCase() === 'paystack' && (!paymentConfig || !paymentConfig.planCode)) {
+        const uppercasePlan = planId.toUpperCase();
+        const prettyRegion = userRegion === 'nigeria' ? 'Nigeria' : 'International';
+        return res.status(400).json({
+          error: `Paystack Plan Code has not yet been configured for ${uppercasePlan} (${prettyRegion}).`
+        });
+      }
+    }
+
+    // Instantiates either Stripe, PayPal, or mock/sandbox provider adapter dynamically
+    const adapter = getPaymentAdapter(provider);
+
+    console.log(`[Payment Checkout] Creating session using provider: ${provider} for user: ${userId}`);
+    const result = await adapter.createCheckoutSession({
+      plan,
+      interval,
+      userId,
+      origin,
+      region: userRegion,
+      user: { id: userId }
     });
 
-    const proMonthly = process.env.STRIPE_PRO_MONTHLY_PRICE_ID;
-    const proYearly = process.env.STRIPE_PRO_YEARLY_PRICE_ID;
-    const plusMonthly = process.env.STRIPE_PLUS_MONTHLY_PRICE_ID;
-    const plusYearly = process.env.STRIPE_PLUS_YEARLY_PRICE_ID;
-
-    let priceId = '';
-    if (plan === 'pro') {
-      priceId = interval === 'year' ? proYearly || '' : proMonthly || '';
-    } else if (plan === 'plus') {
-      priceId = interval === 'year' ? plusYearly || '' : plusMonthly || '';
-    }
-
-    if (!priceId) {
-      const errorMsg = `No Price ID configured for plan: ${plan}, interval: ${interval}`;
-      console.error(`[Stripe] ${errorMsg}`);
-      return res.status(400).json({ error: errorMsg });
-    }
-
-    if (priceId.startsWith('prod_')) {
-      const errorMsg = `Environment variable for ${plan} ${interval} contains a Product ID (${priceId}) instead of a Price ID (price_...). Please update your environment variables.`;
-      console.error(`[Stripe] ${errorMsg}`);
-      return res.status(400).json({ error: errorMsg });
-    }
-
-    console.log(`[Stripe] Creating checkout session for user:${userId}, plan:${plan}, price:${priceId}`);
-
-    const session = await stripe.checkout.sessions.create({
-      payment_method_types: ['card'],
-      line_items: [{ price: priceId, quantity: 1 }],
-      mode: 'subscription',
-      success_url: `${origin}/settings?success=true`,
-      cancel_url: `${origin}/settings`,
-      client_reference_id: userId,
-      metadata: { userId, plan, interval },
-      allow_promotion_codes: true,
-      billing_address_collection: 'auto',
-    });
-
-    res.json({ url: session.url });
+    res.json({ url: result.url });
   } catch (error: any) {
-    console.error('[Stripe Checkout Error]:', error);
+    console.error('[Payment Checkout Error]:', error);
     res.status(500).json({ 
-      error: error.message || 'An error occurred during Stripe checkout creation',
+      error: error.message || 'An error occurred during checkout creation',
       code: error.code || 'checkout_error'
     });
   }
 });
 
-// Stripe Webhook Route
-app.post("/api/stripe/webhook", async (req: any, res) => {
-  const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!, {
-    apiVersion: '2023-10-16' as any,
-  });
-
-  const sig = req.headers['stripe-signature'];
-  const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET;
-
-  if (!sig || !webhookSecret) {
-    console.error('[Stripe Webhook] Missing signature or secret');
-    return res.status(400).send('Webhook Error: Missing signature or secret');
-  }
-
-  let event: Stripe.Event;
-
+// Generic Webhook Processing route
+app.post("/api/payment/webhook", async (req: any, res) => {
+  const provider = req.query.provider || process.env.ACTIVE_PAYMENT_PROVIDER || 'stripe';
+  
   try {
-    event = stripe.webhooks.constructEvent(req.rawBody, sig, webhookSecret);
-  } catch (err: any) {
-    console.error(`[Stripe Webhook Signature Error]: ${err.message}`);
-    return res.status(400).send(`Webhook Error: ${err.message}`);
-  }
+    const adapter = getPaymentAdapter(provider);
+    const result = await adapter.verifyWebhook(req.headers, req.rawBody);
 
-  console.log(`[Stripe Webhook] Received event: ${event.type}`);
+    if (result) {
+      const { userId, plan, interval, provider: resolvedProvider, eventType } = result;
+      console.log(`[Payment Webhook] Webhook validated via ${resolvedProvider} (${eventType}) for user: ${userId}`);
 
-  if (event.type === 'checkout.session.completed' || event.type === 'invoice.paid') {
-    const session = event.data.object as any;
-    
-    // For checkout.session.completed, we use client_reference_id
-    // For invoice.paid, we might need to look up the sub or use metadata if passed
-    const userId = session.client_reference_id || session.metadata?.userId;
-    const plan = session.metadata?.plan;
-    const interval = session.metadata?.interval;
-
-    if (userId && (plan || event.type === 'invoice.paid')) {
       const supabase = getSupabaseAdminClient();
 
-      // If it's just a renewal (invoice.paid), we might not have plan in metadata 
-      // depends on how Stripe propagates metadata to invoices (it usually doesn't by default without subscription_data.metadata)
-      
-      let updateData: any = {
-        subscription_expires_at: new Date(Date.now() + (interval === 'year' ? 366 : 31) * 24 * 60 * 60 * 1000).toISOString(),
-        last_usage_reset: new Date().toISOString().split('T')[0]
-      };
-
-      if (plan) {
-        updateData.plan = plan;
+      if (eventType === 'subscription.cancelled' || eventType === 'customer.subscription.deleted') {
+        await cancelSubscription(supabase, userId);
+      } else if (eventType === 'invoice.payment_failed' || eventType === 'subscription.expired') {
+        await expireSubscription(supabase, userId);
+      } else if (eventType === 'invoice.paid') {
+        await renewSubscription(supabase, userId, (interval || 'month') as any);
+      } else {
+        const planId = plan ? (plan.toLowerCase() as any) : 'plus';
+        await activateSubscription(
+          supabase,
+          userId,
+          planId,
+          resolvedProvider as any,
+          'international',
+          (interval || 'month') as any
+        );
       }
-
-      console.log(`[Stripe Webhook] Updating profile for user:${userId}`, updateData);
-
-      const { error } = await supabase
-        .from('profiles')
-        .update(updateData)
-        .eq('id', userId);
-
-      if (error) {
-        console.error(`[Stripe Webhook] Supabase update error:`, error);
-        return res.status(500).send('Internal server error updating profile');
-      }
+    } else {
+      console.log(`[Payment Webhook] Event processed but did not require profile updates.`);
     }
-  }
 
-  res.json({ received: true });
+    res.json({ received: true });
+  } catch (err: any) {
+    console.error(`[Payment Webhook Error] (${provider}): ${err.message}`);
+    return res.status(400).send(`Webhook Error: ${err.message}`);
+  }
+});
+
+// Backwards compatibility legacy wrappers
+app.post("/api/stripe/checkout", async (req, res) => {
+  req.body.provider = 'stripe';
+  res.redirect(307, '/api/payment/checkout');
+});
+
+app.post("/api/stripe/webhook", async (req, res) => {
+  res.redirect(307, '/api/payment/webhook?provider=stripe');
 });
 
 // --- ElevenLabs Text to Speech Integration ---
@@ -498,80 +587,18 @@ app.post("/api/tools/text-to-speech", async (req, res) => {
 
   const characterCount = text.length;
 
-  // 1. Check Subscriptions and Plan Limits
+  // 1. Check Subscriptions and Plan Limits using the Centralized Limit Engine
   let allowed = true;
   let reason = "";
-  let hasDatabaseTracking = false;
 
   try {
-    const { data: checkData, error: checkError } = await supabase.rpc("can_generate_tts_monthly", {
-      user_uuid: user.id,
-      requested_character_count: characterCount
-    });
-
-    if (!checkError && checkData && checkData.length > 0) {
-      allowed = checkData[0].allowed;
-      reason = checkData[0].reason;
-      hasDatabaseTracking = true;
-    } else {
-      console.warn(`[TTS][Request: ${requestId}] can_generate_tts_monthly RPC failed:`, checkError?.message);
-    }
+    const limitResult = await checkLimit(supabase, user.id, 'tts', characterCount);
+    allowed = limitResult.allowed;
+    reason = limitResult.reason || "";
   } catch (err: any) {
-    console.warn(`[TTS][Request: ${requestId}] can_generate_tts_monthly RPC exception:`, err?.message || err);
-  }
-
-  // 2. Client-Side Fallback if SQL function/limits table is absent
-  if (!hasDatabaseTracking) {
-    console.log(`[TTS][Request: ${requestId}] Falling back to programmatic schema and limits check...`);
-    let plan = "free";
-    let charactersUsed = 0;
-    try {
-      const { data: profile } = await supabase
-        .from("profiles")
-        .select("plan, tts_characters_used, tts_reset_date")
-        .eq("id", user.id)
-        .single();
-      if (profile) {
-        plan = profile.plan || "free";
-        charactersUsed = profile.tts_characters_used || 0;
-
-        // Dynamic lazy reset in JS/TS fallback if reset date passed
-        const resetDate = profile.tts_reset_date ? new Date(profile.tts_reset_date) : null;
-        if (!resetDate || new Date() >= resetDate) {
-          charactersUsed = 0;
-          const nextReset = new Date();
-          nextReset.setMonth(nextReset.getMonth() + 1);
-          await supabase
-            .from("profiles")
-            .update({
-              tts_characters_used: 0,
-              tts_reset_date: nextReset.toISOString()
-            })
-            .eq("id", user.id);
-        }
-      }
-    } catch (profileErr: any) {
-      console.warn(`[TTS][Request: ${requestId}] Failed to retrieve user plan:`, profileErr?.message || profileErr);
-    }
-
-    // Static fallback rules matching SUBSCRIPTION_PLANS configuration
-    const PLAN_LIMITS_FALLBACK = {
-      free: { maxChars: 2000, allowance: 10000 },
-      pro: { maxChars: 20000, allowance: 500000 },
-      plus: { maxChars: 100000, allowance: 2000000 }
-    };
-
-    const currentLimits = PLAN_LIMITS_FALLBACK[plan as "free" | "pro" | "plus"] || PLAN_LIMITS_FALLBACK.free;
-
-    if (characterCount > currentLimits.maxChars) {
-      allowed = false;
-      reason = `Requested length of ${characterCount} characters exceeds the maximum limit of ${currentLimits.maxChars} characters per generation on your ${plan.toUpperCase()} plan.`;
-    } else if (charactersUsed + characterCount > currentLimits.allowance) {
-      allowed = false;
-      reason = `Monthly character allowance exhausted. Generation requires ${characterCount} characters, but you only have ${currentLimits.allowance - charactersUsed} remaining on your ${plan.toUpperCase()} plan. Upgrade your plan to continue generating speech.`;
-    } else {
-      allowed = true;
-    }
+    console.error(`[TTS][Request: ${requestId}] Central limit check failed:`, err.message);
+    allowed = false;
+    reason = "Failed to verify character usage limit.";
   }
 
   if (!allowed) {
@@ -735,23 +762,22 @@ app.post("/api/tools/text-to-speech", async (req, res) => {
     } else {
       console.log(`[TTS][Request: ${requestId}] Database Updated Successfully`);
 
-      // Update monthly character quota consumed on profile
+      // Update monthly character quota consumed on profile and centralized tracking
       try {
-        const { data: currentProfile, error: getErr } = await supabase
+        await incrementUsage(supabase, user.id, 'tts', characterCount);
+        console.log(`[TTS][Request: ${requestId}] Incremented centralized tts characters used by ${characterCount}`);
+        
+        // Keep legacy profiles.tts_characters_used in sync for complete safety
+        const { data: currentProfile } = await supabase
           .from("profiles")
           .select("tts_characters_used")
           .eq("id", user.id)
           .single();
-        if (!getErr) {
-          const updatedUsed = (currentProfile?.tts_characters_used || 0) + characterCount;
-          await supabase
-            .from("profiles")
-            .update({ tts_characters_used: updatedUsed })
-            .eq("id", user.id);
-          console.log(`[TTS][Request: ${requestId}] Updated character usage for user ${user.id} to ${updatedUsed}`);
-        } else {
-          console.warn(`[TTS][Request: ${requestId}] Failed to load user profile for quota increment:`, getErr.message);
-        }
+        const updatedUsed = (currentProfile?.tts_characters_used || 0) + characterCount;
+        await supabase
+          .from("profiles")
+          .update({ tts_characters_used: updatedUsed })
+          .eq("id", user.id);
       } catch (quotaErr: any) {
         console.warn(`[TTS][Request: ${requestId}] Quota update exception:`, quotaErr?.message || quotaErr);
       }
@@ -983,6 +1009,70 @@ async function handleGenerate(req: express.Request, res: express.Response) {
     
     // Explicitly detect if the user wants to compile a document, CV, layout, text sheet or report
     const isDocRequest = docExclusionFilter.test(lastMessageContent);
+
+    // --- Centralized Limit Verification Protocol ---
+    let userId = req.body.userId;
+    if (!userId && req.headers.authorization) {
+      try {
+        const authenticatedUser = await authenticateUser(req);
+        userId = authenticatedUser.id;
+      } catch (err) {
+        console.warn("[Generate] Failed to authenticate user from header:", err);
+      }
+    }
+
+    if (!userId) {
+      return res.status(401).json({ error: "Unauthorized: Missing user authentication context." });
+    }
+
+    const supabase = getSupabaseAdminClient();
+
+    // Automatically validate and synchronize subscription (STEP 9)
+    try {
+      await validateSubscription(supabase, userId);
+    } catch (syncErr: any) {
+      console.error(`[Subscription Validation Error in handleGenerate] Failed for user ${userId}:`, syncErr.message || syncErr);
+    }
+
+    // Dynamically map intent to centralized usage tracking feature
+    let feature: 'chat' | 'image_generation' | 'image_edit' | 'image_analysis' | 'document_ai' | 'pdf' | 'ocr' = 'chat';
+
+    if (isImageIntent) {
+      if (fileHasImage) {
+        feature = 'image_edit';
+      } else {
+        feature = 'image_generation';
+      }
+    } else if (fileHasImage) {
+      const lowerPrompt = lastMessageContent.toLowerCase();
+      if (lowerPrompt.match(/\b(ocr|extract|read text|transcribe|read the text)\b/)) {
+        feature = 'ocr';
+      } else {
+        feature = 'image_analysis';
+      }
+    } else if (isDocRequest) {
+      const lowerPrompt = lastMessageContent.toLowerCase();
+      if (lowerPrompt.includes("pdf")) {
+        feature = 'pdf';
+      } else {
+        feature = 'document_ai';
+      }
+    } else {
+      feature = 'chat';
+    }
+
+    console.log(`[Limit Engine] Checking usage limit for user:${userId} on feature:${feature}`);
+    try {
+      const limitResult = await checkLimit(supabase, userId, feature, 1);
+      if (!limitResult.allowed) {
+        console.warn(`[Limit Engine] Limit check REJECTED for user:${userId} on feature:${feature}. Reason: ${limitResult.reason}`);
+        return res.status(429).json({ error: limitResult.reason });
+      }
+      console.log(`[Limit Engine] Limit check PASSED for user:${userId} on feature:${feature}`);
+    } catch (limitErr: any) {
+      console.error("[Limit Engine] Error in limit verification pipeline:", limitErr.message);
+      // Fallback: allow to prevent downtime if table is missing during setup
+    }
 
     const searchRequired = needsWebSearch(lastMessageContent) && !isImageIntent;
 
@@ -1363,6 +1453,14 @@ To make it look like an edit or variation of the input image:
           })().catch(console.error);
         }
 
+        // Increment usage count atomically
+        try {
+          await incrementUsage(supabase, userId, feature, 1);
+          console.log(`[Limit Engine] Atomic usage increment complete for user:${userId} on feature:${feature}`);
+        } catch (incErr: any) {
+          console.error(`[Limit Engine] Failed to increment usage for user:${userId}:`, incErr.message);
+        }
+
         clearInterval(keepAliveInterval);
         res.write(JSON.stringify({ 
           imageUrl: base64Image,
@@ -1555,6 +1653,15 @@ Because you are integrated with our custom frontend compiler, YOU CAN and MUST c
     }
     
     console.log(`[Generate] Grounded stream completed successfully`);
+
+    // Increment usage count atomically
+    try {
+      await incrementUsage(supabase, userId, feature, 1);
+      console.log(`[Limit Engine] Atomic usage increment complete for user:${userId} on feature:${feature}`);
+    } catch (incErr: any) {
+      console.error(`[Limit Engine] Failed to increment usage for user:${userId}:`, incErr.message);
+    }
+
     res.end();
 
     if (req.body.conversationId) {

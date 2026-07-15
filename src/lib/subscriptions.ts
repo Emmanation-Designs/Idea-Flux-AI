@@ -1,3 +1,5 @@
+import { SUBSCRIPTION_CATALOG } from '../subscription/catalog';
+
 export interface SubscriptionPlan {
   id: 'free' | 'pro' | 'plus';
   name: string;
@@ -9,20 +11,20 @@ export const SUBSCRIPTION_PLANS: Record<'free' | 'pro' | 'plus', SubscriptionPla
   free: {
     id: 'free',
     name: 'Free Plan',
-    monthlyAllowance: 10000,
-    maxCharactersPerGeneration: 2000,
-  },
-  pro: {
-    id: 'pro',
-    name: 'Pro Plan',
-    monthlyAllowance: 500000,
-    maxCharactersPerGeneration: 20000,
+    monthlyAllowance: SUBSCRIPTION_CATALOG.free.limits.tts,
+    maxCharactersPerGeneration: SUBSCRIPTION_CATALOG.free.limits.tts_max_chars,
   },
   plus: {
     id: 'plus',
     name: 'Plus Plan',
-    monthlyAllowance: 2000000,
-    maxCharactersPerGeneration: 100000,
+    monthlyAllowance: SUBSCRIPTION_CATALOG.plus.limits.tts,
+    maxCharactersPerGeneration: SUBSCRIPTION_CATALOG.plus.limits.tts_max_chars,
+  },
+  pro: {
+    id: 'pro',
+    name: 'Pro Plan',
+    monthlyAllowance: SUBSCRIPTION_CATALOG.pro.limits.tts,
+    maxCharactersPerGeneration: SUBSCRIPTION_CATALOG.pro.limits.tts_max_chars,
   },
 };
 

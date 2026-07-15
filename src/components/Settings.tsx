@@ -35,6 +35,8 @@ import type { Profile, PersonalityType } from '../types';
 import { toast } from 'sonner';
 import { supabase } from '../lib/supabase';
 import { openExternalLink } from '../utils/nativeCompat';
+import { getPlan, getPlanPrice, getPlanLimits, PlanId } from '../subscription/catalog';
+import { BillingCenter } from './BillingCenter';
 
 function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
@@ -166,18 +168,64 @@ export const Settings = (props: {
     }
   };
 
+  const getLocalRegion = (): 'nigeria' | 'international' => {
+    try {
+      const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+      if (tz && (tz.includes('Lagos') || tz.includes('Africa/Lagos') || tz.includes('Nigeria'))) {
+        return 'nigeria';
+      }
+    } catch (e) {}
+    return 'international';
+  };
+
+  const region = getLocalRegion();
+
+  const getFeaturesList = (planId: PlanId) => {
+    const limits = getPlanLimits(planId);
+    if (planId === 'plus') {
+      return [
+        'Unlimited chat messages',
+        `${limits.image_generation} image generations / day`,
+        `${limits.image_edit} image edits / day`,
+        'Premium AI Models & priority speed',
+        'No advertisement banner'
+      ];
+    } else if (planId === 'pro') {
+      return [
+        'Unlimited chat messages',
+        `${limits.image_generation} image generations / day`,
+        `${limits.image_edit} image edits / day`,
+        'Elite AI Models & maximum speed',
+        'Full Document & PDF suite access',
+        'Dedicated priority queue'
+      ];
+    }
+    return [];
+  };
+
+  const plusPlan = getPlan('plus');
+  const proPlan = getPlan('pro');
+
+  const plusMonthlyPrice = getPlanPrice('plus', region).price;
+  const plusYearlyPrice = Math.round(plusMonthlyPrice * 12 * 0.85);
+
+  const proMonthlyPrice = getPlanPrice('pro', region).price;
+  const proYearlyPrice = Math.round(proMonthlyPrice * 12 * 0.85);
+
   const plans = {
     pro: {
-      name: 'Pro',
-      monthly: 10,
-      yearly: 96,
-      features: ['100 messages / day', 'Unlimited analysis', '20 images / day', 'Priority support']
+      name: proPlan.identity.displayName,
+      monthly: proMonthlyPrice,
+      yearly: proYearlyPrice,
+      features: getFeaturesList('pro'),
+      marketing: proPlan.marketing
     },
     plus: {
-      name: 'Plus',
-      monthly: 25,
-      yearly: 240,
-      features: ['Unlimited messages', 'Unlimited analysis', 'Unlimited images', 'Enterprise support']
+      name: plusPlan.identity.displayName,
+      monthly: plusMonthlyPrice,
+      yearly: plusYearlyPrice,
+      features: getFeaturesList('plus'),
+      marketing: plusPlan.marketing
     }
   };
 
@@ -185,13 +233,14 @@ export const Settings = (props: {
     if (!profile?.id) return;
     setIsSubscribing(planId);
     try {
-      const response = await fetch('/api/stripe/checkout', {
+      const response = await fetch('/api/payment/checkout', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           plan: planId,
           interval: billingPeriod,
-          userId: profile.id
+          userId: profile.id,
+          region
         })
       });
       const data = await response.json();
@@ -486,120 +535,16 @@ export const Settings = (props: {
               )}
 
               {activeSection === 'billing' && (
-                <div className="space-y-8">
+                <div className="space-y-6">
                   <div className="space-y-2">
-                    <h3 className="text-lg font-bold">Billing & Usage</h3>
-                    <p className="text-sm text-zinc-500">Manage your subscription and monitor your usage limits.</p>
+                    <h3 className="text-xl font-black tracking-tight">Billing & SaaS Workspace</h3>
+                    <p className="text-sm text-zinc-500">Manage your active dynamic subscription model, view billing limits, and track SaaS resource usage.</p>
                   </div>
-
-                  {profile?.plan === 'free' ? (
-                    <div className="space-y-6">
-                      <div className="flex p-1 bg-zinc-100 dark:bg-zinc-900 rounded-xl w-fit border border-zinc-200 dark:border-zinc-800">
-                        <button 
-                          onClick={() => setBillingPeriod('month')}
-                          className={cn(
-                            "px-4 py-1.5 rounded-lg text-xs font-bold transition-all",
-                            billingPeriod === 'month' ? "bg-white dark:bg-zinc-800 text-zinc-900 dark:text-zinc-100 shadow-sm" : "text-zinc-500"
-                          )}
-                        >
-                          Monthly
-                        </button>
-                        <button 
-                          onClick={() => setBillingPeriod('year')}
-                          className={cn(
-                            "px-4 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5",
-                            billingPeriod === 'year' ? "bg-white dark:bg-zinc-800 text-zinc-900 dark:text-zinc-100 shadow-sm" : "text-zinc-500"
-                          )}
-                        >
-                          Yearly
-                          <span className="px-1.5 py-0.5 bg-emerald-500 text-white text-[8px] rounded uppercase">20% Off</span>
-                        </button>
-                      </div>
-
-                      <div className="grid grid-cols-1 gap-6">
-                        {Object.entries(plans).map(([id, plan]) => (
-                          <div key={id} className="p-8 rounded-3xl border border-zinc-100 dark:border-zinc-800 bg-white dark:bg-zinc-900 flex flex-col lg:flex-row lg:items-center justify-between gap-8 hover:shadow-lg transition-all duration-500">
-                            <div className="space-y-4">
-                              <div className="flex items-center gap-3">
-                                <h5 className="font-black text-lg leading-none tracking-tight">{plan.name}</h5>
-                                {id === 'pro' && <span className="px-2 py-0.5 bg-emerald-500/10 text-emerald-500 text-[9px] font-black uppercase rounded-full">Popular</span>}
-                              </div>
-                              <div className="flex items-baseline gap-1.5">
-                                <span className="text-4xl font-black tracking-tighter text-zinc-900 dark:text-white">${billingPeriod === 'month' ? plan.monthly : plan.yearly}</span>
-                                <span className="text-xs font-bold text-zinc-400 uppercase tracking-widest">/{billingPeriod === 'month' ? 'month' : 'year'}</span>
-                              </div>
-                              <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-8 gap-y-2">
-                                {plan.features.map((f) => (
-                                  <div key={f} className="flex items-center gap-2.5 text-[11px] font-medium text-zinc-500">
-                                    <div className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
-                                    {f}
-                                  </div>
-                                ))}
-                              </div>
-                            </div>
-                            <button 
-                              onClick={() => handleSubscribe(id)}
-                              disabled={isSubscribing !== null}
-                              className="px-8 py-4 bg-zinc-900 dark:bg-zinc-100 text-white dark:text-zinc-900 rounded-xl font-black text-xs uppercase tracking-widest transition-all hover:scale-[1.02] active:scale-95 disabled:opacity-50 shadow-lg h-fit whitespace-nowrap"
-                            >
-                              {isSubscribing === id ? 'Processing...' : 'Go ' + plan.name}
-                            </button>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  ) : (
-                    <div className="space-y-6">
-                      <div className="p-8 bg-zinc-50 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-3xl">
-                        <div className="flex items-center justify-between mb-6">
-                          <div className="flex items-center gap-4">
-                            <div className="w-12 h-12 rounded-2xl bg-emerald-500/10 flex items-center justify-center">
-                              <Zap className="w-6 h-6 text-emerald-500" />
-                            </div>
-                            <div>
-                              <div className="text-[10px] text-zinc-400 font-bold uppercase tracking-widest mb-1">Current Active Plan</div>
-                              <div className="text-xl font-black capitalize tracking-tight">{profile?.plan} Plan</div>
-                            </div>
-                          </div>
-                          <div className="px-3 py-1 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 text-[10px] font-black rounded-lg border border-emerald-500/20 tracking-widest uppercase">
-                            ACTIVE
-                          </div>
-                        </div>
-                        
-                        <div className="grid grid-cols-2 gap-4">
-                          <div className="p-4 bg-white dark:bg-zinc-950 rounded-2xl border border-zinc-100 dark:border-zinc-800">
-                            <div className="text-[10px] text-zinc-400 font-bold uppercase tracking-wider mb-1">Status</div>
-                            <div className="text-sm font-bold text-emerald-500">Subscription Active</div>
-                          </div>
-                          <div className="p-4 bg-white dark:bg-zinc-950 rounded-2xl border border-zinc-100 dark:border-zinc-800">
-                            <div className="text-[10px] text-zinc-400 font-bold uppercase tracking-wider mb-1">Renewal</div>
-                            <div className="text-sm font-bold">
-                              {profile?.subscription_expires_at ? (
-                                (() => {
-                                  const expiryDate = new Date(profile.subscription_expires_at);
-                                  const now = new Date();
-                                  const diffTime = Math.abs(expiryDate.getTime() - now.getTime());
-                                  const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
-                                  return `${diffDays} days left`;
-                                })()
-                              ) : 'N/A'}
-                            </div>
-                          </div>
-                        </div>
-
-                        <p className="text-[11px] text-zinc-500 leading-relaxed mt-6 italic">
-                          Manage your subscription details, update payment methods, or cancel anytime through the Stripe Customer Portal.
-                        </p>
-                      </div>
-                      <button 
-                        onClick={() => openExternalLink('https://billing.stripe.com/p/login/test_4gw5lr8Yt4Yt4Yt4Yt')}
-                        className="w-full py-5 bg-zinc-900 dark:bg-zinc-100 text-white dark:text-zinc-900 rounded-2xl text-xs font-black uppercase tracking-widest transition-all hover:scale-[1.01] active:scale-[0.98] shadow-xl flex items-center justify-center gap-2"
-                      >
-                        <ExternalLink className="w-4 h-4" />
-                        Manage on Customer Portal
-                      </button>
-                    </div>
-                  )}
+                  <BillingCenter 
+                    profile={profile} 
+                    onUpdateProfile={onUpdateProfile} 
+                    onClose={onClose} 
+                  />
                 </div>
               )}
 
