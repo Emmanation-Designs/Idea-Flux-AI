@@ -1,4 +1,4 @@
-import { SUBSCRIPTION_CATALOG } from '../subscription/catalog';
+import { SUBSCRIPTION_CATALOG } from '../subscription/catalog.js';
 
 export interface SubscriptionPlan {
   id: 'free' | 'pro' | 'plus';

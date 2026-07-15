@@ -1,4 +1,4 @@
-import { getPlan, getPlanPrice, getPaymentConfiguration, PlanId, Region } from '../subscription/catalog';
+import { getPlan, getPlanPrice, getPaymentConfiguration, PlanId, Region } from '../subscription/catalog.js';
 
 export interface PayPalAdapterParams {
   planId: PlanId;
