@@ -69,6 +69,9 @@ export async function downloadFile(
   filename: string,
   mimeType: string
 ): Promise<void> {
+  const isBlob = source instanceof Blob;
+  const isDataUri = typeof source === 'string' && source.startsWith('data:');
+
   if (isKodularEnv()) {
     console.log(`[NativeBridge] Routing download for ${filename} (${mimeType}) through Kodular WebViewer bridge.`);
     try {
@@ -76,18 +79,17 @@ export async function downloadFile(
       const base64Data = await toBase64(source);
       
       // Determine direct URL if it's a web link
-      const directUrl = (typeof source === 'string' && !source.startsWith('data:')) ? source : '';
+      const directUrl = (!isBlob && !isDataUri) ? (source as string) : '';
 
-      // Set WebViewString with clean action-payload schema
+      // Set WebViewString with clean, standardized, future-proof action-payload schema
       (window as any).AppInventor.setWebViewString(
         JSON.stringify({
-          action: 'download_file',
-          payload: {
-            url: directUrl,
-            base64: base64Data,
-            filename: filename,
-            mimeType: mimeType
-          }
+          action: 'download',
+          source: (isBlob || isDataUri) ? 'base64' : 'url',
+          filename: filename,
+          mimeType: mimeType,
+          url: directUrl,
+          data: base64Data
         })
       );
       return;
@@ -101,11 +103,11 @@ export async function downloadFile(
   let url = '';
   let isTempBlob = false;
 
-  if (source instanceof Blob) {
-    url = URL.createObjectURL(source);
+  if (isBlob) {
+    url = URL.createObjectURL(source as Blob);
     isTempBlob = true;
   } else {
-    url = source;
+    url = source as string;
   }
 
   const a = document.createElement('a');
@@ -134,10 +136,8 @@ export function openExternalLink(url: string): void {
     try {
       (window as any).AppInventor.setWebViewString(
         JSON.stringify({
-          action: 'open_external_browser',
-          payload: {
-            url: url
-          }
+          action: 'open_browser',
+          url: url
         })
       );
       return;

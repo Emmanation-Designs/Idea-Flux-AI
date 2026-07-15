@@ -256,15 +256,23 @@ export const TextToSpeechView = ({ profile, onUpgradeClick, onBack }: TextToSpee
         .limit(10);
 
       if (!historyErr && historyData) {
-        const mapped: TTSHistoryItem[] = historyData.map(h => ({
-          id: h.id,
-          created_at: h.created_at,
-          character_count: h.character_count,
-          selected_voice: h.selected_voice,
-          selected_model: h.selected_model,
-          generation_status: h.generation_status,
-          text_snippet: h.metadata?.text_snippet || 'Synthesized audio transcript'
-        }));
+        const mapped: TTSHistoryItem[] = historyData.map(h => {
+          const originalText = h.metadata?.original_text;
+          const textSnippet = originalText
+            ? (originalText.length > 150 ? originalText.slice(0, 150) + '...' : originalText)
+            : (h.metadata?.text_snippet || 'Synthesized audio transcript');
+
+          return {
+            id: h.id,
+            created_at: h.created_at,
+            character_count: h.character_count,
+            selected_voice: h.selected_voice,
+            selected_model: h.selected_model,
+            generation_status: h.generation_status,
+            audio_url: `/api/tools/text-to-speech/retrieve/${h.id}`,
+            text_snippet: textSnippet
+          };
+        });
         setHistory(mapped);
       }
     } catch (err) {

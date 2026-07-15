@@ -21,8 +21,8 @@ function getSupabaseAdminClient(): any {
     return supabaseClientInstance;
   }
 
-  const supabaseUrl = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || "https://wxezfzhhzlauggufecmm.supabase.co";
-  const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY || process.env.VITE_SUPABASE_ANON_KEY || "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Ind4ZXpmemhoemxhdWdndWZlY21tIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQyNTQxMjcsImV4cCI6MjA4OTgzMDEyN30.2nsDSFhOtm1Xs3RuZNDo74jGbBwd05E7lPP-FN5cd1Q";
+  const supabaseUrl = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL;
+  const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
   if (!supabaseUrl) {
     console.error("[Supabase] SUPABASE_URL is not defined in environment variables.");
@@ -30,8 +30,17 @@ function getSupabaseAdminClient(): any {
   }
 
   if (!supabaseServiceKey) {
-    console.error("[Supabase] Supabase key is not defined in environment variables.");
-    throw new Error("Supabase key is required but missing in server configuration.");
+    console.error("[Supabase] SUPABASE_SERVICE_ROLE_KEY is not defined in environment variables.");
+    throw new Error("SUPABASE_SERVICE_ROLE_KEY is required but missing in server configuration.");
+  }
+
+  // Validate that the Service Role Key is a valid JWT
+  const parts = supabaseServiceKey.split(".");
+  const isValidJWT = parts.length === 3 && supabaseServiceKey.startsWith("eyJ");
+
+  if (!isValidJWT) {
+    console.error("[Supabase] CRITICAL: SUPABASE_SERVICE_ROLE_KEY is not a valid JWT!");
+    throw new Error("SUPABASE_SERVICE_ROLE_KEY is invalid. It must be a valid JSON Web Token (JWT).");
   }
 
   console.log(`[Supabase] Initializing client with URL: ${supabaseUrl}`);
@@ -352,23 +361,99 @@ async function handleGetVoices(req: express.Request, res: express.Response) {
 app.get("/api/text-to-speech/voices", handleGetVoices);
 app.get("/api/tools/text-to-speech/voices", handleGetVoices);
 
+// --- Provider-Agnostic TTS Architecture ---
+
+export interface TTSProvider {
+  name: string;
+  generateSpeech(params: {
+    text: string;
+    voiceId: string;
+    modelId: string;
+    stability?: number;
+    similarity?: number;
+    style?: number;
+  }): Promise<{
+    buffer: Buffer;
+    latencyMs: number;
+    modelUsed: string;
+    voiceUsed: string;
+  }>;
+}
+
+const ElevenLabsProvider: TTSProvider = {
+  name: "elevenlabs",
+  async generateSpeech({ text, voiceId, modelId, stability, similarity, style }) {
+    const apiKey = process.env.ELEVENLABS_API_KEY;
+    if (!apiKey) {
+      throw new Error("ElevenLabs API Key is missing in server configuration.");
+    }
+
+    const url = `https://api.elevenlabs.io/v1/text-to-speech/${encodeURIComponent(voiceId)}`;
+    const response = await fetch(url, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "xi-api-key": apiKey,
+        "accept": "audio/mpeg"
+      },
+      body: JSON.stringify({
+        text,
+        model_id: modelId,
+        voice_settings: {
+          stability: stability ?? 0.75,
+          similarity_boost: similarity ?? 0.85,
+          style: style ?? 0.0
+        }
+      })
+    });
+
+    if (!response.ok) {
+      let errorDetails = "";
+      try {
+        const errJson = await response.json();
+        errorDetails = errJson?.detail?.message || JSON.stringify(errJson);
+      } catch {
+        errorDetails = await response.text();
+      }
+      throw new Error(`ElevenLabs API failed with status ${response.status}: ${errorDetails}`);
+    }
+
+    const arrayBuffer = await response.arrayBuffer();
+    return {
+      buffer: Buffer.from(arrayBuffer),
+      latencyMs: 0, // Calculated accurately by the handler
+      modelUsed: modelId,
+      voiceUsed: voiceId
+    };
+  }
+};
+
+const activeProvider: TTSProvider = ElevenLabsProvider;
+
 // Text to Speech Generation Endpoint
 app.post("/api/tools/text-to-speech", async (req, res) => {
-  console.log("[TTS] [Generation] Speech synthesis request received");
+  const requestId = crypto.randomUUID();
+  console.log(`[TTS][Request: ${requestId}] Speech synthesis request received`);
 
   let user: any = null;
   let supabase: any = null;
 
   try {
     user = await authenticateUser(req);
-    supabase = getSupabaseAdminClient();
-    console.log(`[TTS] [Generation] Authenticated user: ${user.email} (ID: ${user.id})`);
+    console.log(`[TTS][Request: ${requestId}] Authenticated User: ${user.email} (ID: ${user.id})`);
   } catch (err: any) {
+    console.error(`[TTS][Request: ${requestId}] Authentication failed:`, err);
     if (err.status) {
       return res.status(err.status).json({ error: err.error });
     }
-    console.error("[TTS] [Generation] Client authentication failed:", err);
     return res.status(500).json({ error: "Failed to initialize request authorization." });
+  }
+
+  try {
+    supabase = getSupabaseAdminClient();
+  } catch (err: any) {
+    console.error(`[TTS][Request: ${requestId}] [Database Client Failed] Exception during initialization:`, err.message);
+    return res.status(500).json({ error: `Database configuration error: ${err.message}` });
   }
 
   const { text, voice, voiceId, model, modelId, speed = 1.0, stability = 0.75, similarity = 0.85, style = 0.0 } = req.body;
@@ -395,16 +480,19 @@ app.post("/api/tools/text-to-speech", async (req, res) => {
   ];
 
   if (!VALID_ELEVENLABS_MODELS.includes(targetModelId)) {
+    console.error(`[TTS][Request: ${requestId}] Invalid model ID requested: "${targetModelId}"`);
     return res.status(400).json({
       error: `Invalid model ID: "${targetModelId}". Please select a valid ElevenLabs model (e.g., "eleven_turbo_v2_5" or "eleven_multilingual_v2").`
     });
   }
 
   if (!text || typeof text !== "string" || !text.trim()) {
+    console.error(`[TTS][Request: ${requestId}] Validation failed: text payload is empty`);
     return res.status(400).json({ error: "Text payload is required." });
   }
 
   if (!targetVoiceId) {
+    console.error(`[TTS][Request: ${requestId}] Validation failed: voice ID is missing`);
     return res.status(400).json({ error: "Voice ID is required." });
   }
 
@@ -426,15 +514,15 @@ app.post("/api/tools/text-to-speech", async (req, res) => {
       reason = checkData[0].reason;
       hasDatabaseTracking = true;
     } else {
-      console.warn("[TTS] [Supabase] can_generate_tts_monthly RPC failed or not present:", checkError?.message);
+      console.warn(`[TTS][Request: ${requestId}] can_generate_tts_monthly RPC failed:`, checkError?.message);
     }
   } catch (err: any) {
-    console.warn("[TTS] [Supabase] can_generate_tts_monthly RPC exception:", err?.message || err);
+    console.warn(`[TTS][Request: ${requestId}] can_generate_tts_monthly RPC exception:`, err?.message || err);
   }
 
   // 2. Client-Side Fallback if SQL function/limits table is absent
   if (!hasDatabaseTracking) {
-    console.log("[TTS] [Supabase] Falling back to programmatic schema and limits check...");
+    console.log(`[TTS][Request: ${requestId}] Falling back to programmatic schema and limits check...`);
     let plan = "free";
     let charactersUsed = 0;
     try {
@@ -462,8 +550,8 @@ app.post("/api/tools/text-to-speech", async (req, res) => {
             .eq("id", user.id);
         }
       }
-    } catch (profileErr) {
-      console.warn("[TTS] [Supabase] Failed to retrieve user plan:", profileErr);
+    } catch (profileErr: any) {
+      console.warn(`[TTS][Request: ${requestId}] Failed to retrieve user plan:`, profileErr?.message || profileErr);
     }
 
     // Static fallback rules matching SUBSCRIPTION_PLANS configuration
@@ -487,11 +575,31 @@ app.post("/api/tools/text-to-speech", async (req, res) => {
   }
 
   if (!allowed) {
+    console.warn(`[TTS][Request: ${requestId}] Limit validation rejected request. Reason: ${reason}`);
     return res.status(403).json({ error: reason || "Monthly character limit reached." });
   }
 
-  // 3. Insert Pending Track Log
+  console.log(`[TTS][Request: ${requestId}] Limits Validated`);
+
+  // Resolve human-readable voice name dynamically in backend if possible
+  let voiceName = targetVoiceId;
+  const elevenLabsApiKey = process.env.ELEVENLABS_API_KEY;
+  if (elevenLabsApiKey) {
+    try {
+      const voices = await getElevenLabsVoices(elevenLabsApiKey);
+      const foundVoice = voices.find((v: any) => v.voice_id === targetVoiceId);
+      if (foundVoice) {
+        voiceName = foundVoice.name;
+      }
+    } catch (vErr: any) {
+      console.warn(`[TTS][Request: ${requestId}] Voice name dynamic resolution warning:`, vErr?.message || vErr);
+    }
+  }
+
+  // 3. Create Pending Generation Record - Fail loudly, do not continue on failure
   let generationId: string | null = null;
+  const createdAt = new Date().toISOString();
+
   try {
     const { data: genLog, error: insertErr } = await supabase
       .from("tts_generations")
@@ -501,98 +609,134 @@ app.post("/api/tools/text-to-speech", async (req, res) => {
         selected_voice: targetVoiceId,
         selected_model: targetModelId,
         generation_status: "pending",
-        provider: "elevenlabs",
+        provider: activeProvider.name,
+        voice_id: targetVoiceId,
         metadata: {
-          text_snippet: text.slice(0, 80) + (text.length > 80 ? "..." : "")
+          original_text: text,
+          text_snippet: text.slice(0, 80) + (text.length > 80 ? "..." : ""),
+          voice_id: targetVoiceId,
+          voice_name: voiceName,
+          selected_model: targetModelId,
+          speed: speed,
+          created_at: createdAt,
+          request_id: requestId
         }
       })
       .select("id")
       .single();
 
-    if (!insertErr && genLog) {
-      generationId = genLog.id;
+    if (insertErr) {
+      console.error(`[TTS][Request: ${requestId}] [Database insert failed] Error creating log record:`, insertErr);
+      return res.status(500).json({ error: `Failed to record speech generation history: ${insertErr.message}` });
     }
-  } catch (insertErr) {
-    console.warn("[TTS] [Supabase] Failed to write initial tracking record:", insertErr);
-  }
 
-  // 4. Initialize ElevenLabs and Synthesize Speech
-  const elevenLabsApiKey = process.env.ELEVENLABS_API_KEY;
-  if (!elevenLabsApiKey) {
-    console.error("[TTS] [ElevenLabs] Missing ELEVENLABS_API_KEY in environment");
-    return res.status(500).json({ error: "ElevenLabs API Key is missing in server configuration." });
-  }
-
-  // 4.5 Validate that the voice exists in our list of available ElevenLabs voices
-  try {
-    const voices = await getElevenLabsVoices(elevenLabsApiKey);
-    const voiceExists = voices.some((v: any) => v.voice_id === targetVoiceId);
-    if (!voiceExists) {
-      console.warn(`[TTS] [ElevenLabs] Validation failed: voice_id "${targetVoiceId}" not found in available ElevenLabs voices.`);
-      return res.status(400).json({
-        error: `The voice ID "${targetVoiceId}" is not available or valid for this ElevenLabs account.`
-      });
+    if (!genLog) {
+      console.error(`[TTS][Request: ${requestId}] [Database insert failed] No generation log returned`);
+      return res.status(500).json({ error: "Failed to create speech generation log." });
     }
-  } catch (valErr: any) {
-    console.warn("[TTS] [ElevenLabs] Dynamic voice validation warning (skipping check fallback to prevent API lockouts):", valErr?.message || valErr);
+
+    generationId = genLog.id;
+    console.log(`[TTS][Request: ${requestId}] Pending Record Created (ID: ${generationId})`);
+  } catch (dbInsertErr: any) {
+    console.error(`[TTS][Request: ${requestId}] [Database insert failed] Exception during insert:`, dbInsertErr?.message || dbInsertErr);
+    return res.status(500).json({ error: `Database insert exception: ${dbInsertErr?.message || dbInsertErr}` });
   }
 
+  // 4. Generate audio via our provider abstraction
+  console.log(`[TTS][Request: ${requestId}] ${activeProvider.name.toUpperCase()} Generation Started`);
   const startTime = Date.now();
+  let audioBuffer: Buffer;
+  let latencyMs = 0;
 
   try {
-    console.log(`[TTS] [ElevenLabs] Requesting audio. Voice: ${targetVoiceId}, Model: ${targetModelId}, Length: ${characterCount}`);
-    
-    const url = `https://api.elevenlabs.io/v1/text-to-speech/${encodeURIComponent(targetVoiceId)}`;
-    const response = await fetch(url, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "xi-api-key": elevenLabsApiKey,
-        "accept": "audio/mpeg"
-      },
-      body: JSON.stringify({
-        text: text,
-        model_id: targetModelId,
-        voice_settings: {
-          stability: stability,
-          similarity_boost: similarity,
-          style: style
-        }
-      })
+    const generationResult = await activeProvider.generateSpeech({
+      text,
+      voiceId: targetVoiceId,
+      modelId: targetModelId,
+      stability,
+      similarity,
+      style
     });
 
-    if (!response.ok) {
-      let errorDetails = "";
-      try {
-        const errJson = await response.json();
-        errorDetails = errJson?.detail?.message || JSON.stringify(errJson);
-      } catch {
-        errorDetails = await response.text();
-      }
-      throw new Error(`ElevenLabs API failed with status ${response.status}: ${errorDetails}`);
-    }
+    audioBuffer = generationResult.buffer;
+    latencyMs = Date.now() - startTime;
+    console.log(`[TTS][Request: ${requestId}] ${activeProvider.name.toUpperCase()} Generation Completed (${latencyMs} ms)`);
+  } catch (providerErr: any) {
+    const errorMsg = providerErr?.message || "Speech synthesis failed.";
+    console.error(`[TTS][Request: ${requestId}] [Generation Failed] Provider Error:`, errorMsg);
 
-    const arrayBuffer = await response.arrayBuffer();
-    const buffer = Buffer.from(arrayBuffer);
-    const durationMs = Date.now() - startTime;
-
-    // 5. Update Log to Completed & Persist Base64 for history retrieval
+    // Update state to failed in DB so it doesn't get stuck in pending
     if (generationId) {
       try {
         await supabase
           .from("tts_generations")
           .update({
-            generation_status: "completed",
-            generation_time_ms: durationMs,
-            file_size_bytes: buffer.length,
+            generation_status: "failed",
             metadata: {
+              original_text: text,
               text_snippet: text.slice(0, 80) + (text.length > 80 ? "..." : ""),
-              audio_base64: buffer.toString("base64")
+              voice_id: targetVoiceId,
+              voice_name: voiceName,
+              selected_model: targetModelId,
+              speed: speed,
+              created_at: createdAt,
+              completed_at: new Date().toISOString(),
+              request_id: requestId,
+              failure_reason: errorMsg,
+              provider_error: errorMsg
             }
           })
           .eq("id", generationId);
+        console.log(`[TTS][Request: ${requestId}] Record status updated to 'failed' in database`);
+      } catch (failedUpdateErr: any) {
+        console.error(`[TTS][Request: ${requestId}] Failed to mark record as failed in database:`, failedUpdateErr?.message || failedUpdateErr);
+      }
+    }
 
-        // Increment user's monthly characters used
+    return res.status(520).json({ error: errorMsg });
+  }
+
+  // 5. Attempt Database Completion Update (Non-destructive: we return audio anyway even if this fails)
+  const completedAt = new Date().toISOString();
+  const totalDurationMs = Date.now() - startTime;
+
+  console.log(`[TTS][Request: ${requestId}] Attempting Database Completion Update`);
+  try {
+    const { error: updateErr } = await supabase
+      .from("tts_generations")
+      .update({
+        generation_status: "completed",
+        generation_time_ms: totalDurationMs,
+        file_size_bytes: audioBuffer.length,
+        metadata: {
+          original_text: text,
+          text_snippet: text.slice(0, 80) + (text.length > 80 ? "..." : ""),
+          voice_id: targetVoiceId,
+          voice_name: voiceName,
+          selected_model: targetModelId,
+          speed: speed,
+          created_at: createdAt,
+          completed_at: completedAt,
+          audio_base64: audioBuffer.toString("base64"),
+          request_id: requestId,
+          generation_duration_ms: totalDurationMs,
+          provider_latency_ms: latencyMs,
+          audio_size_bytes: audioBuffer.length,
+          provider: activeProvider.name,
+          provider_model: targetModelId,
+          provider_voice: targetVoiceId
+        }
+      })
+      .eq("id", generationId);
+
+    if (updateErr) {
+      console.error(`[TTS][Request: ${requestId}] [Database Update Failed] CRITICAL error updating record:`, updateErr);
+      console.error(`[TTS][Request: ${requestId}] [CRITICAL] Speech generated successfully but the history update failed. ID: ${generationId}`);
+    } else {
+      console.log(`[TTS][Request: ${requestId}] Database Updated Successfully`);
+
+      // Update monthly character quota consumed on profile
+      try {
         const { data: currentProfile, error: getErr } = await supabase
           .from("profiles")
           .select("tts_characters_used")
@@ -604,43 +748,33 @@ app.post("/api/tools/text-to-speech", async (req, res) => {
             .from("profiles")
             .update({ tts_characters_used: updatedUsed })
             .eq("id", user.id);
-          console.log(`[TTS] [Supabase] Updated character usage for user ${user.id} from ${currentProfile?.tts_characters_used || 0} to ${updatedUsed}`);
+          console.log(`[TTS][Request: ${requestId}] Updated character usage for user ${user.id} to ${updatedUsed}`);
         } else {
-          console.warn("[TTS] [Supabase] Failed to retrieve current profile usage for increment:", getErr.message);
+          console.warn(`[TTS][Request: ${requestId}] Failed to load user profile for quota increment:`, getErr.message);
         }
-      } catch (updateErr) {
-        console.warn("[TTS] [Supabase] Failed to update tracking log or character usage:", updateErr);
+      } catch (quotaErr: any) {
+        console.warn(`[TTS][Request: ${requestId}] Quota update exception:`, quotaErr?.message || quotaErr);
       }
     }
-
-    console.log("[TTS] [Generation] Audio generated successfully");
-
-    // 6. Respond with streaming binary audio file
-    res.set({
-      "Content-Type": "audio/mpeg",
-      "Content-Length": buffer.length,
-      "Accept-Ranges": "bytes"
-    });
-    return res.send(buffer);
-  } catch (ttsErr: any) {
-    console.error("[TTS] [Generation] Generation failed:", ttsErr);
-    if (generationId) {
-      try {
-        await supabase
-          .from("tts_generations")
-          .update({ generation_status: "failed" })
-          .eq("id", generationId);
-      } catch (logErr) {
-        console.warn("[TTS] [Supabase] Failed to mark track as failed:", logErr);
-      }
-    }
-    return res.status(520).json({ error: ttsErr?.message || "Failed to generate speech audio." });
+  } catch (dbUpdateException: any) {
+    console.error(`[TTS][Request: ${requestId}] [Database Update Failed] Exception during update:`, dbUpdateException?.message || dbUpdateException);
+    console.error(`[TTS][Request: ${requestId}] [CRITICAL] Exception updating generation status. Audio generated successfully but untracked. ID: ${generationId}`);
   }
+
+  // 6. Return successfully generated audio to user
+  console.log(`[TTS][Request: ${requestId}] Returned Audio`);
+  res.set({
+    "Content-Type": "audio/mpeg",
+    "Content-Length": audioBuffer.length,
+    "Accept-Ranges": "bytes"
+  });
+  return res.send(audioBuffer);
 });
 
 // Retrieve generated past audio from tracking database
 app.get("/api/tools/text-to-speech/retrieve/:id", async (req, res) => {
-  console.log("[TTS] [Retrieve] Retrieval request received");
+  const retrieveRequestId = crypto.randomUUID();
+  console.log(`[TTS][Request: ${retrieveRequestId}] Retrieval request received for ID: ${req.params.id}`);
 
   try {
     const user = await authenticateUser(req);
@@ -648,10 +782,11 @@ app.get("/api/tools/text-to-speech/retrieve/:id", async (req, res) => {
     const { id } = req.params;
 
     if (!id) {
+      console.error(`[TTS][Request: ${retrieveRequestId}] Missing generation ID parameter`);
       return res.status(400).json({ error: "Generation ID parameter is required." });
     }
 
-    console.log(`[TTS] [Retrieve] Fetching generation ${id} for user ${user.email}`);
+    console.log(`[TTS][Request: ${retrieveRequestId}] Fetching generation ${id} for user ${user.email}`);
 
     const { data: genLog, error: fetchErr } = await supabase
       .from("tts_generations")
@@ -661,7 +796,7 @@ app.get("/api/tools/text-to-speech/retrieve/:id", async (req, res) => {
       .single();
 
     if (fetchErr || !genLog || !genLog.metadata?.audio_base64) {
-      console.warn(`[TTS] [Retrieve] Record or audio not found for ID: ${id}`);
+      console.warn(`[TTS][Request: ${retrieveRequestId}] Record or audio not found for ID: ${id}`);
       return res.status(404).json({ error: "Audio record or playback data not found." });
     }
 
@@ -670,12 +805,13 @@ app.get("/api/tools/text-to-speech/retrieve/:id", async (req, res) => {
       "Content-Type": "audio/mpeg",
       "Content-Length": buffer.length
     });
+    console.log(`[TTS][Request: ${retrieveRequestId}] Audio retrieved successfully`);
     return res.send(buffer);
   } catch (err: any) {
     if (err.status) {
       return res.status(err.status).json({ error: err.error });
     }
-    console.error("[TTS] [Retrieve] Exception during audio retrieval:", err?.message || err);
+    console.error(`[TTS][Request: ${retrieveRequestId}] Exception during audio retrieval:`, err?.message || err);
     return res.status(500).json({ error: err?.message || "Failed to retrieve past audio track." });
   }
 });
