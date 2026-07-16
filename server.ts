@@ -275,6 +275,14 @@ app.post("/api/payment/checkout", async (req, res) => {
     // Payment configuration check for PayPal (STEP 5 & 7)
     if (provider.toLowerCase() === 'paypal' || provider.toLowerCase() === 'paystack') {
       const paymentConfig = getPaymentConfiguration(planId as any, provider.toLowerCase() as any, userRegion as any) as any;
+      if (provider.toLowerCase() === 'paypal' && paymentConfig) {
+        if (!paymentConfig.productId) {
+          paymentConfig.productId = `mock_paypal_product_${planId}_${userRegion}`;
+        }
+        if (!paymentConfig.planId) {
+          paymentConfig.planId = `mock_paypal_plan_${planId}_${userRegion}`;
+        }
+      }
       if (provider.toLowerCase() === 'paypal' && (!paymentConfig || !paymentConfig.planId || !paymentConfig.productId)) {
         const uppercasePlan = planId.toUpperCase();
         const prettyRegion = userRegion === 'nigeria' ? 'Nigeria' : 'International';

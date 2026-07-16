@@ -1,12 +1,15 @@
 import React from 'react';
-import { Zap, X, Check, ExternalLink } from 'lucide-react';
+import { 
+  X, Check, ExternalLink, Lock, CreditCard, ArrowUpRight, 
+  Sparkles, MessageSquare, Image, Layers, Brain, Code, Search, 
+  LayoutGrid, Clock, FileText, Cpu, Shield 
+} from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { openExternalLink } from '../utils/nativeCompat';
-import { TrelvixLogo } from './TrelvixLogo';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 import { toast } from 'sonner';
-import { getPlan, getPlanPrice, getPlanLimits, PlanId } from '../subscription/catalog';
+import { getPlanPrice, PlanId } from '../subscription/catalog';
 
 function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
@@ -33,64 +36,31 @@ export const UpgradeModal: React.FC<UpgradeModalProps> = ({ isOpen, onClose, rea
   };
 
   const region = getLocalRegion();
+  const currentPlanId: PlanId = profile?.plan || 'free';
 
-  const getFeaturesList = (planId: PlanId) => {
-    const limits = getPlanLimits(planId);
-    if (planId === 'plus') {
-      return [
-        'Unlimited chat messages',
-        `${limits.image_generation} image generations / day`,
-        `${limits.image_edit} image edits / day`,
-        'Premium AI Models & priority speed',
-        'No advertisement banner'
-      ];
-    } else if (planId === 'pro') {
-      return [
-        'Unlimited chat messages',
-        `${limits.image_generation} image generations / day`,
-        `${limits.image_edit} image edits / day`,
-        'Elite AI Models & maximum speed',
-        'Full Document & PDF suite access',
-        'Dedicated priority queue'
-      ];
-    }
-    return [];
-  };
+  // Format dynamic regional prices
+  const currencySymbol = getPlanPrice('plus', region).currency === 'USD' ? '$' : '₦';
 
-  const plusPlan = getPlan('plus');
-  const proPlan = getPlan('pro');
+  const plusMonthly = getPlanPrice('plus', region).price;
+  const plusPrice = billingPeriod === 'monthly' ? plusMonthly : Math.round(plusMonthly * 12 * 0.9);
 
-  const plusMonthlyPrice = getPlanPrice('plus', region).price;
-  const plusYearlyPrice = Math.round(plusMonthlyPrice * 12 * 0.85);
-
-  const proMonthlyPrice = getPlanPrice('pro', region).price;
-  const proYearlyPrice = Math.round(proMonthlyPrice * 12 * 0.85);
-
-  const plans = {
-    pro: {
-      name: proPlan.identity.displayName,
-      monthly: proMonthlyPrice,
-      yearly: proYearlyPrice,
-      features: getFeaturesList('pro'),
-      marketing: proPlan.marketing
-    },
-    plus: {
-      name: plusPlan.identity.displayName,
-      monthly: plusMonthlyPrice,
-      yearly: plusYearlyPrice,
-      features: getFeaturesList('plus'),
-      marketing: plusPlan.marketing
-    }
-  };
+  const proMonthly = getPlanPrice('pro', region).price;
+  const proPrice = billingPeriod === 'monthly' ? proMonthly : Math.round(proMonthly * 12 * 0.9);
 
   const [isSubscribing, setIsSubscribing] = React.useState<string | null>(null);
+  const [paymentModalOpen, setPaymentModalOpen] = React.useState(false);
+  const [selectedPlanForUpgrade, setSelectedPlanForUpgrade] = React.useState<string | null>(null);
 
   const handleSubscribe = async (planId: string) => {
     if (!profile?.id) {
       toast.error('Please log in to subscribe');
       return;
     }
-    
+    setSelectedPlanForUpgrade(planId);
+    setPaymentModalOpen(true);
+  };
+
+  const executeCheckout = async (planId: string, provider: 'paypal' | 'paystack') => {
     setIsSubscribing(planId);
     try {
       const response = await fetch('/api/payment/checkout', {
@@ -100,152 +70,404 @@ export const UpgradeModal: React.FC<UpgradeModalProps> = ({ isOpen, onClose, rea
           plan: planId,
           interval: billingPeriod === 'monthly' ? 'month' : 'year',
           userId: profile.id,
-          region
+          region,
+          provider
         })
       });
 
       const data = await response.json();
       if (data.url) {
         openExternalLink(data.url);
+        setPaymentModalOpen(false);
+        onClose();
       } else {
         throw new Error(data.error || 'Failed to create checkout session');
       }
     } catch (err: any) {
       console.error('[Checkout Error]:', err);
       toast.error(err.message || 'Subscription failed to start');
+    } finally {
       setIsSubscribing(null);
     }
   };
 
+  // Human-readable feature lists matching exact image style (no hard numbers for limits, simplified descriptors)
+  const freeFeatures = [
+    { text: "Core model", icon: Sparkles },
+    { text: "Limited messages and uploads", icon: MessageSquare },
+    { text: "Limited image creation", icon: Image },
+    { text: "Limited memory", icon: Layers }
+  ];
+
+  const plusFeatures = [
+    { text: "Advanced models", icon: Sparkles },
+    { text: "Advanced image creation with Thinking", icon: Brain },
+    { text: "Expanded memory across chats", icon: Brain },
+    { text: "Codex coding agent", icon: Code },
+    { text: "Expanded deep research", icon: Search },
+    { text: "Projects and custom GPTs", icon: LayoutGrid }
+  ];
+
+  const proFeatures = [
+    { text: "Everything in Plus, and:", icon: Check },
+    { text: "Elite performance & maximum speed", icon: Cpu },
+    { text: "Priority access to new features", icon: Clock },
+    { text: "Full Document & PDF suite access", icon: FileText },
+    { text: "Advanced developer tools", icon: Cpu },
+    { text: "Dedicated support queue", icon: Shield }
+  ];
+
+  const isFreeCurrent = currentPlanId === 'free';
+  const isPlusCurrent = currentPlanId === 'plus';
+  const isProCurrent = currentPlanId === 'pro';
+
   return (
-    <AnimatePresence>
-      {isOpen && (
-        <div 
-          onClick={onClose}
-          className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/60 backdrop-blur-md overflow-y-auto cursor-pointer"
-        >
-          <motion.div
-            initial={{ scale: 0.9, opacity: 0, y: 20 }}
-            animate={{ scale: 1, opacity: 1, y: 0 }}
-            exit={{ scale: 0.9, opacity: 0, y: 20 }}
-            onClick={(e) => e.stopPropagation()}
-            className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-[2.5rem] w-full max-w-2xl p-8 md:p-12 shadow-2xl relative overflow-hidden my-8 cursor-default"
-          >
-            <button 
-              onClick={onClose}
-              className="absolute top-6 right-6 p-2 hover:bg-zinc-100 dark:hover:bg-zinc-800 rounded-full transition-colors z-10"
-            >
-              <X className="w-5 h-5" />
-            </button>
+    <>
+      <AnimatePresence>
+        {isOpen && (
+          <div className="fixed inset-0 z-[100] bg-[#07080A] text-white overflow-y-auto cursor-default">
+            <div className="min-h-screen flex flex-col items-center justify-start p-4 md:p-8 md:py-16 relative">
+              
+              {/* Back / Close button */}
+              <button 
+                onClick={onClose}
+                className="absolute top-4 left-4 md:top-8 md:left-8 p-2.5 bg-[#121417] hover:bg-[#1C1E24] border border-[#23262F] text-zinc-400 hover:text-white rounded-full transition-all active:scale-95 z-[110]"
+                title="Go Back"
+              >
+                <X className="w-5 h-5" />
+              </button>
 
-            <div className="flex flex-col items-center text-center relative z-10">
-              <div className="w-16 h-16 bg-zinc-950 rounded-2xl flex items-center justify-center mb-6 shadow-xl border border-zinc-800 p-2">
-                <TrelvixLogo className="w-8 h-8" glow={true} />
-              </div>
-
-              {reason !== 'manual' && (
-                <div className="mb-4 px-4 py-1.5 bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-400 text-xs font-black rounded-full uppercase tracking-widest">
-                  Limit Reached
-                </div>
-              )}
-
-              <h2 className="text-3xl font-black mb-2">Upgrade to Premium</h2>
-              <p className="text-zinc-500 dark:text-zinc-400 text-sm mb-8 max-w-sm mx-auto">
-                Unlock the full power of Trelvix AI and remove all daily limitations.
-              </p>
-
-              {/* Billing Toggle */}
-              <div className="flex p-1 bg-zinc-100 dark:bg-zinc-800 rounded-2xl mb-10 w-fit mx-auto">
-                <button 
-                  onClick={() => setBillingPeriod('monthly')}
-                  className={cn(
-                    "px-6 py-2 rounded-xl text-xs font-black transition-all uppercase tracking-widest",
-                    billingPeriod === 'monthly' ? "bg-white dark:bg-zinc-700 text-zinc-900 dark:text-white shadow-sm" : "text-zinc-500"
-                  )}
-                >
-                  Monthly
-                </button>
-                <button 
-                  onClick={() => setBillingPeriod('yearly')}
-                  className={cn(
-                    "px-6 py-2 rounded-xl text-xs font-black transition-all uppercase tracking-widest flex items-center gap-2",
-                    billingPeriod === 'yearly' ? "bg-white dark:bg-zinc-700 text-zinc-900 dark:text-white shadow-sm" : "text-zinc-500"
-                  )}
-                >
-                  Yearly
-                  <span className="px-1.5 py-0.5 bg-emerald-500 text-white text-[8px] rounded-md">-15%</span>
-                </button>
-              </div>
-
-              <div className="grid md:grid-cols-2 gap-6 w-full">
-                {Object.entries(plans).map(([id, plan]) => (
-                  <div 
-                    key={id}
+              {/* Title Section */}
+              <div className="text-center mt-12 md:mt-4 mb-10 space-y-4">
+                <h1 className="text-3xl md:text-5xl font-black tracking-tight text-white">
+                  Upgrade your plan
+                </h1>
+                
+                {/* Pill Toggle matching image */}
+                <div className="flex p-1 bg-[#121417] border border-[#20232A] rounded-full w-fit mx-auto shadow-inner">
+                  <button
+                    onClick={() => setBillingPeriod('monthly')}
                     className={cn(
-                      "p-8 rounded-[2rem] border-2 transition-all flex flex-col text-left group hover:scale-[1.02]",
-                      id === 'pro' 
-                        ? "border-amber-500 bg-amber-50/30 dark:bg-amber-900/10" 
-                        : "border-zinc-200 dark:border-zinc-800 bg-zinc-50/30 dark:bg-zinc-800/20"
+                      "px-6 py-2 rounded-full text-xs font-bold transition-all whitespace-nowrap uppercase tracking-wider",
+                      billingPeriod === 'monthly' ? "bg-[#252830] text-white shadow-md" : "text-zinc-500 hover:text-zinc-300"
                     )}
                   >
-                    <div className="mb-6">
-                      <h3 className="text-xl font-black mb-1">{plan.name}</h3>
-                      <div className="flex items-baseline gap-1">
-                        <span className="text-3xl font-black">${billingPeriod === 'monthly' ? plan.monthly : plan.yearly}</span>
-                        <span className="text-xs font-bold opacity-40 uppercase tracking-widest">/{billingPeriod === 'monthly' ? 'mo' : 'yr'}</span>
+                    Personal
+                  </button>
+                  <button
+                    onClick={() => setBillingPeriod('yearly')}
+                    className={cn(
+                      "px-6 py-2 rounded-full text-xs font-bold transition-all whitespace-nowrap uppercase tracking-wider flex items-center gap-1.5",
+                      billingPeriod === 'yearly' ? "bg-[#252830] text-white shadow-md" : "text-zinc-500 hover:text-zinc-300"
+                    )}
+                  >
+                    Yearly
+                    <span className="px-1.5 py-0.5 bg-emerald-500/20 text-emerald-400 text-[8px] rounded uppercase font-black tracking-widest">-10%</span>
+                  </button>
+                </div>
+              </div>
+
+              {/* 3 Column Grid for Free, Plus, Pro */}
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-8 w-full max-w-6xl px-2 md:px-6">
+                
+                {/* Free Plan Card */}
+                <div className="bg-[#121417] border border-[#1F2228] rounded-3xl p-6 md:p-8 flex flex-col justify-between min-h-[580px] shadow-lg relative overflow-hidden">
+                  <div className="space-y-6">
+                    <div className="space-y-2">
+                      <h3 className="text-2xl font-extrabold text-white">Free</h3>
+                      <p className="text-xs text-zinc-400">See what AI can do</p>
+                    </div>
+
+                    <div className="flex items-baseline gap-0.5 py-2">
+                      <span className="text-zinc-500 text-2xl font-bold self-start mt-1">{currencySymbol}</span>
+                      <span className="text-5xl md:text-6xl font-black text-white tracking-tight">0</span>
+                      <span className="text-xs font-semibold text-zinc-500 ml-1">{billingPeriod === 'monthly' ? '/ month' : '/ year'}</span>
+                    </div>
+
+                    <button 
+                      disabled={isFreeCurrent}
+                      className={cn(
+                        "w-full py-3 px-6 rounded-full font-bold text-xs uppercase tracking-widest transition-all text-center border",
+                        isFreeCurrent 
+                          ? "bg-zinc-900/60 border-zinc-800 text-zinc-500 cursor-not-allowed" 
+                          : "bg-zinc-800 hover:bg-zinc-700 border-zinc-700 text-white cursor-pointer active:scale-95"
+                      )}
+                    >
+                      {isFreeCurrent ? "Your current plan" : "Select Free"}
+                    </button>
+
+                    <hr className="border-zinc-800/60" />
+
+                    <div className="space-y-3.5">
+                      {freeFeatures.map((feat, i) => {
+                        const Icon = feat.icon;
+                        return (
+                          <div key={i} className="flex items-start gap-3 text-xs text-zinc-300 font-medium">
+                            <Icon className="w-4 h-4 text-zinc-500 shrink-0 mt-0.5" />
+                            <span>{feat.text}</span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                </div>
+
+                {/* Plus Plan Card (Highlighted / Accent) */}
+                <div className="bg-[#0E1524] border border-[#1D2F4B] rounded-3xl p-6 md:p-8 flex flex-col justify-between min-h-[580px] shadow-[0_0_50px_rgba(59,130,246,0.05)] relative overflow-hidden">
+                  
+                  {/* Popular Badge */}
+                  <div className="absolute top-6 right-6">
+                    <span className="px-2.5 py-1 bg-blue-500/10 text-blue-300 text-[10px] font-black uppercase tracking-widest rounded-md border border-blue-500/20">
+                      Popular
+                    </span>
+                  </div>
+
+                  <div className="space-y-6">
+                    <div className="space-y-2">
+                      <h3 className="text-2xl font-extrabold text-white">Plus</h3>
+                      <p className="text-xs text-zinc-400">Unlock the full experience</p>
+                    </div>
+
+                    <div className="py-2">
+                      <div className="flex items-baseline gap-0.5">
+                        <span className="text-blue-400 text-2xl font-bold self-start mt-1">{currencySymbol}</span>
+                        <span className="text-5xl md:text-6xl font-black text-white tracking-tight">{plusPrice}</span>
+                        <span className="text-xs font-semibold text-zinc-500 ml-1">{billingPeriod === 'monthly' ? '/ month' : '/ year'}</span>
+                      </div>
+                      <div className="text-[10px] text-zinc-500 uppercase tracking-wider mt-1.5 font-bold">
+                        {billingPeriod === 'yearly' ? "Billed annually" : "Billed monthly"}
                       </div>
                     </div>
 
-                    <ul className="space-y-3 mb-8 flex-1">
-                      {plan.features.map((feature, i) => (
-                        <li key={i} className="flex items-start gap-3 text-sm font-medium">
-                          <Check className="w-4 h-4 text-emerald-500 shrink-0 mt-0.5" />
-                          <span>{feature}</span>
-                        </li>
-                      ))}
-                    </ul>
-
                     <button 
-                      onClick={() => handleSubscribe(id)}
+                      onClick={() => !isPlusCurrent && handleSubscribe('plus')}
                       disabled={isSubscribing !== null}
                       className={cn(
-                        "w-full py-4 rounded-2xl font-black text-xs uppercase tracking-widest transition-all active:scale-95 shadow-xl disabled:opacity-50",
-                        id === 'pro' 
-                          ? "bg-zinc-900 dark:bg-white text-white dark:text-zinc-900 shadow-zinc-900/20 dark:shadow-white/10" 
-                          : "bg-white dark:bg-zinc-800 border-2 border-zinc-900 dark:border-white text-zinc-900 dark:text-white"
+                        "w-full py-3 px-6 rounded-full font-bold text-xs uppercase tracking-widest transition-all text-center shadow-md",
+                        isPlusCurrent 
+                          ? "bg-zinc-900/60 border border-zinc-800 text-zinc-500 cursor-not-allowed" 
+                          : "bg-blue-500 hover:bg-blue-600 text-white cursor-pointer active:scale-95"
                       )}
                     >
-                      {isSubscribing === id ? 'Connecting...' : plan.marketing.buttonText}
+                      {isPlusCurrent ? "Your current plan" : (isSubscribing === 'plus' ? "Connecting..." : "Upgrade to Plus")}
                     </button>
+
+                    <hr className="border-blue-900/40" />
+
+                    <div className="space-y-3.5">
+                      {plusFeatures.map((feat, i) => {
+                        const Icon = feat.icon;
+                        return (
+                          <div key={i} className="flex items-start gap-3 text-xs text-zinc-200 font-medium">
+                            <Icon className="w-4 h-4 text-blue-400 shrink-0 mt-0.5" />
+                            <span>{feat.text}</span>
+                          </div>
+                        );
+                      })}
+                    </div>
                   </div>
-                ))}
+                </div>
+
+                {/* Pro Plan Card */}
+                <div className="bg-[#140F24] border border-[#2F1F4E] rounded-3xl p-6 md:p-8 flex flex-col justify-between min-h-[580px] shadow-[0_0_50px_rgba(147,51,234,0.05)] relative overflow-hidden">
+                  
+                  {/* Pro Badge */}
+                  <div className="absolute top-6 right-6">
+                    <span className="px-2.5 py-1 bg-purple-500/15 text-purple-300 text-[10px] font-black uppercase tracking-widest rounded-md border border-purple-500/20">
+                      Best Value
+                    </span>
+                  </div>
+
+                  <div className="space-y-6">
+                    <div className="space-y-2">
+                      <h3 className="text-2xl font-extrabold text-white">Pro</h3>
+                      <p className="text-xs text-zinc-400">Elite performance & intelligence</p>
+                    </div>
+
+                    <div className="py-2">
+                      <div className="flex items-baseline gap-0.5">
+                        <span className="text-purple-400 text-2xl font-bold self-start mt-1">{currencySymbol}</span>
+                        <span className="text-5xl md:text-6xl font-black text-white tracking-tight">{proPrice}</span>
+                        <span className="text-xs font-semibold text-zinc-500 ml-1">{billingPeriod === 'monthly' ? '/ month' : '/ year'}</span>
+                      </div>
+                      <div className="text-[10px] text-zinc-500 uppercase tracking-wider mt-1.5 font-bold">
+                        {billingPeriod === 'yearly' ? "Billed annually" : "Billed monthly"}
+                      </div>
+                    </div>
+
+                    <button 
+                      onClick={() => !isProCurrent && handleSubscribe('pro')}
+                      disabled={isSubscribing !== null}
+                      className={cn(
+                        "w-full py-3 px-6 rounded-full font-bold text-xs uppercase tracking-widest transition-all text-center shadow-md",
+                        isProCurrent 
+                          ? "bg-zinc-900/60 border border-zinc-800 text-zinc-500 cursor-not-allowed" 
+                          : "bg-purple-600 hover:bg-purple-700 text-white cursor-pointer active:scale-95"
+                      )}
+                    >
+                      {isProCurrent ? "Your current plan" : (isSubscribing === 'pro' ? "Connecting..." : "Upgrade to Pro")}
+                    </button>
+
+                    <hr className="border-purple-900/40" />
+
+                    <div className="space-y-3.5">
+                      {proFeatures.map((feat, i) => {
+                        const Icon = feat.icon;
+                        return (
+                          <div key={i} className="flex items-start gap-3 text-xs text-zinc-200 font-medium">
+                            <Icon className="w-4 h-4 text-purple-400 shrink-0 mt-0.5" />
+                            <span>{feat.text}</span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                </div>
+
               </div>
 
+              {/* Ad Section if triggered by usage block */}
               {reason === 'usage' && (
-                <div className="mt-8 w-full">
+                <div className="mt-12 w-full max-w-4xl p-6 bg-[#121417] border border-dashed border-emerald-500/30 rounded-3xl text-center space-y-3">
+                  <div className="text-emerald-400 font-bold text-xs uppercase tracking-widest">
+                    Short on Credits?
+                  </div>
                   <button 
                     onClick={() => toast.error('Ad integration coming soon. Upgrade to Pro or Plus for higher limits.')}
-                    className="w-full py-4 bg-emerald-50 dark:bg-emerald-950/20 border-2 border-emerald-500 border-dashed rounded-3xl text-emerald-600 dark:text-emerald-400 font-black text-sm uppercase tracking-widest hover:bg-emerald-100 transition-all flex items-center justify-center gap-3"
+                    className="px-6 py-3 bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-500/20 rounded-full text-emerald-400 font-extrabold text-xs uppercase tracking-widest transition-all flex items-center justify-center gap-2 mx-auto active:scale-95"
                   >
                     <ExternalLink className="w-4 h-4" />
                     Watch Short Ad to Continue
                   </button>
-                  <p className="mt-4 text-[10px] text-zinc-400 font-bold uppercase tracking-widest leading-relaxed">
-                    Ads are being verified. For now, please upgrade to bypass all limits.
+                  <p className="text-[10px] text-zinc-500 uppercase tracking-widest">
+                    Ad verification is simulated. Upgrade to immediately bypass all limits.
                   </p>
                 </div>
               )}
 
-              <button 
-                onClick={onClose}
-                className="mt-8 text-xs font-black uppercase tracking-widest text-zinc-400 hover:text-zinc-900 dark:hover:text-white transition-colors"
-              >
-                Maybe later
-              </button>
+              {/* Secure transaction lock statement */}
+              <div className="mt-16 text-zinc-600 text-xs flex items-center gap-1.5 justify-center">
+                <Lock className="w-3.5 h-3.5" />
+                <span>All transactions are secure, encrypted and PCI-compliant.</span>
+              </div>
+
             </div>
-          </motion.div>
-        </div>
-      )}
-    </AnimatePresence>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* Choose Payment Method Modal */}
+      <AnimatePresence>
+        {paymentModalOpen && selectedPlanForUpgrade && (
+          <div className="fixed inset-0 z-[200] flex items-center justify-center p-4 bg-black/85 backdrop-blur-sm">
+            <motion.div
+              initial={{ scale: 0.95, opacity: 0, y: 10 }}
+              animate={{ scale: 1, opacity: 1, y: 0 }}
+              exit={{ scale: 0.95, opacity: 0, y: 10 }}
+              className="bg-[#121417] border border-[#20232A] rounded-3xl w-full max-w-lg p-6 shadow-2xl space-y-6 relative text-left text-white"
+            >
+              <button 
+                onClick={() => setPaymentModalOpen(false)}
+                className="absolute top-4 right-4 p-2 hover:bg-zinc-800 rounded-full transition-colors"
+                title="Close"
+              >
+                <X className="w-5 h-5 text-zinc-400 hover:text-white" />
+              </button>
+
+              <div className="space-y-1.5 pr-8">
+                <h3 className="text-xl font-bold tracking-tight text-white">
+                  Choose Payment Method
+                </h3>
+                <p className="text-xs text-zinc-500">
+                  Select how you would like to complete your subscription.
+                </p>
+              </div>
+
+              {/* Price context summary */}
+              <div className="p-4 rounded-2xl bg-zinc-950/60 border border-[#20232A] flex justify-between items-center text-xs font-bold">
+                <div className="flex items-center gap-2">
+                  <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+                  <span className="text-zinc-400 uppercase tracking-wider">Plan Summary</span>
+                </div>
+                <div className="text-zinc-200 uppercase">
+                  {selectedPlanForUpgrade} Plan — {getPlanPrice(selectedPlanForUpgrade as PlanId, region).currency === 'USD' ? '$' : '₦'}
+                  {selectedPlanForUpgrade === 'plus' ? plusPrice : proPrice}/{billingPeriod === 'monthly' ? 'month' : 'year'}
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 gap-4">
+                {/* PayPal Card */}
+                <div 
+                  onClick={() => executeCheckout(selectedPlanForUpgrade, 'paypal')}
+                  className="p-5 rounded-2xl border-2 border-[#20232A] hover:border-blue-500/60 bg-zinc-950/40 hover:bg-blue-950/5 cursor-pointer transition-all flex flex-col justify-between gap-4 group"
+                >
+                  <div className="flex justify-between items-start">
+                    <div className="flex items-center gap-3">
+                      <div className="w-10 h-10 rounded-xl bg-blue-500/10 flex items-center justify-center group-hover:bg-blue-500/20 transition-colors">
+                        <CreditCard className="w-5 h-5 text-blue-500" />
+                      </div>
+                      <div>
+                        <h4 className="font-bold text-sm text-white flex items-center gap-1.5">
+                          PayPal
+                          <span className="text-[10px] font-bold text-blue-500 px-1.5 py-0.5 bg-blue-500/10 rounded">Popular</span>
+                        </h4>
+                        <p className="text-xs text-zinc-500 mt-0.5">Available Worldwide</p>
+                      </div>
+                    </div>
+                    <span className="text-[10px] font-black uppercase bg-emerald-500/15 text-emerald-400 px-2.5 py-0.5 rounded-full border border-emerald-500/20">
+                      Available
+                    </span>
+                  </div>
+                  <button 
+                    onClick={(e) => { e.stopPropagation(); executeCheckout(selectedPlanForUpgrade, 'paypal'); }}
+                    className="w-full py-2.5 bg-white text-black hover:bg-zinc-200 rounded-xl text-xs font-bold uppercase tracking-wider transition-all flex items-center justify-center gap-2 group-hover:scale-[1.01]"
+                  >
+                    Continue with PayPal
+                    <ArrowUpRight className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+
+                {/* Paystack Card */}
+                <div 
+                  onClick={() => {
+                    toast.info("Paystack integration is coming soon. For now, you can subscribe securely using PayPal.");
+                  }}
+                  className="p-5 rounded-2xl border-2 border-dashed border-[#20232A] bg-zinc-950/20 cursor-pointer opacity-80 hover:opacity-100 transition-all flex flex-col justify-between gap-4 group relative"
+                >
+                  <div className="flex justify-between items-start">
+                    <div className="flex items-center gap-3">
+                      <div className="w-10 h-10 rounded-xl bg-zinc-900 flex items-center justify-center">
+                        <CreditCard className="w-5 h-5 text-zinc-500" />
+                      </div>
+                      <div>
+                        <h4 className="font-bold text-sm text-zinc-400 flex items-center gap-1.5">
+                          Paystack
+                          <span className="text-[10px] font-black bg-zinc-800 text-zinc-500 px-1.5 py-0.5 rounded uppercase">Soon</span>
+                        </h4>
+                        <p className="text-xs text-zinc-500 mt-0.5">Fast payments for Nigeria</p>
+                      </div>
+                    </div>
+                    <span className="text-[10px] font-black uppercase bg-amber-500/15 text-amber-400 px-2.5 py-0.5 rounded-full border border-amber-500/20">
+                      Coming Soon
+                    </span>
+                  </div>
+                  <button 
+                    disabled
+                    className="w-full py-2.5 bg-zinc-800 text-zinc-500 rounded-xl text-xs font-bold uppercase tracking-wider transition-all flex items-center justify-center gap-2 cursor-not-allowed"
+                  >
+                    Coming Soon
+                  </button>
+                </div>
+              </div>
+
+              <div className="text-[10px] text-zinc-500 text-center flex items-center justify-center gap-1.5">
+                <Lock className="w-3 h-3" />
+                <span>All transactions are secure and encrypted.</span>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+    </>
   );
 };

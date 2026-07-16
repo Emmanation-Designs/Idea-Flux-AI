@@ -105,6 +105,7 @@ export const Settings = (props: {
     onClose,
     onUpdateProfile,
     onShowLegal,
+    onUpgrade,
     isDarkMode,
     onToggleTheme,
     imageSpeed = 'quality',
@@ -535,17 +536,12 @@ export const Settings = (props: {
               )}
 
               {activeSection === 'billing' && (
-                <div className="space-y-6">
-                  <div className="space-y-2">
-                    <h3 className="text-xl font-black tracking-tight">Billing & SaaS Workspace</h3>
-                    <p className="text-sm text-zinc-500">Manage your active dynamic subscription model, view billing limits, and track SaaS resource usage.</p>
-                  </div>
-                  <BillingCenter 
-                    profile={profile} 
-                    onUpdateProfile={onUpdateProfile} 
-                    onClose={onClose} 
-                  />
-                </div>
+                <BillingCenter 
+                  profile={profile} 
+                  onUpdateProfile={onUpdateProfile} 
+                  onClose={onClose} 
+                  onUpgrade={onUpgrade}
+                />
               )}
 
               {activeSection === 'display' && (
