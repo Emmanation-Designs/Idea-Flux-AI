@@ -92,14 +92,14 @@ export const WelcomeScreen: React.FC<WelcomeScreenProps> = ({
   };
 
   return (
-    <div className="flex-1 flex flex-col items-center justify-end pb-6 sm:justify-center p-4 md:p-8 w-full max-w-md sm:max-w-3xl mx-auto overflow-hidden animate-fade-in">
+    <div className="flex-1 flex flex-col items-center justify-center py-6 sm:py-12 p-4 md:p-8 w-full max-w-3xl mx-auto animate-fade-in">
       
       {/* Container that dynamically swaps layout order on mobile vs desktop */}
-      <div className="w-full flex flex-col gap-6 md:gap-7 max-w-sm sm:max-w-2xl relative z-30">
+      <div className="w-full flex flex-col gap-6 md:gap-7 max-w-2xl relative z-30">
         
         {isTemporaryChat ? (
           <div className="text-center mb-2 animate-fade-in">
-            <h1 className="text-3xl md:text-4xl font-semibold tracking-tight text-zinc-900 dark:text-zinc-50 mb-3 font-sans">
+            <h1 className="text-2xl sm:text-3xl md:text-4xl font-semibold tracking-tight text-zinc-900 dark:text-zinc-50 mb-3 font-sans">
               Temporary Chat
             </h1>
             <p className="text-xs md:text-sm text-zinc-500 dark:text-zinc-400 leading-relaxed max-w-xl mx-auto font-normal">
@@ -107,8 +107,8 @@ export const WelcomeScreen: React.FC<WelcomeScreenProps> = ({
             </p>
           </div>
         ) : (
-          /* Desktop Title Header (Hidden on Mobile) */
-          <h1 className="hidden sm:block text-3xl md:text-4xl font-semibold tracking-tight text-center text-zinc-900 dark:text-zinc-50 mb-2 font-sans">
+          /* Title Header (Visible on both Mobile and Desktop with responsive size) */
+          <h1 className="text-2xl sm:text-3xl md:text-4xl font-semibold tracking-tight text-center text-zinc-900 dark:text-zinc-50 mb-1 sm:mb-2 font-sans">
             Where should we begin?
           </h1>
         )}
@@ -119,34 +119,34 @@ export const WelcomeScreen: React.FC<WelcomeScreenProps> = ({
           {/* Card 1: Create an image */}
           <button
             onClick={() => handleActionClick('image')}
-            className="flex items-center gap-3 text-left text-zinc-500 dark:text-zinc-400 hover:text-zinc-800 dark:hover:text-zinc-100 hover:bg-zinc-100/50 dark:hover:bg-zinc-800/40 border border-transparent hover:border-zinc-200/20 dark:hover:border-zinc-800/20 px-3.5 py-2.5 rounded-2xl transition-all duration-200 select-none group w-full"
+            className="flex items-center gap-3 text-left text-zinc-600 dark:text-zinc-300 hover:text-zinc-900 dark:hover:text-zinc-100 hover:bg-zinc-100/50 dark:hover:bg-zinc-800/40 border border-transparent hover:border-zinc-200/20 dark:hover:border-zinc-800/20 px-3.5 py-2.5 rounded-2xl transition-all duration-200 select-none group w-full"
           >
             <div className="w-5 h-5 flex items-center justify-center shrink-0">
-              <ImageIcon className="w-4.5 h-4.5 text-zinc-400 dark:text-zinc-500 group-hover:text-zinc-800 dark:group-hover:text-zinc-200 transition-colors" />
+              <ImageIcon className="w-5 h-5 text-zinc-400 dark:text-zinc-500 group-hover:text-zinc-800 dark:group-hover:text-zinc-200 transition-colors" />
             </div>
-            <span className="text-xs sm:text-sm font-medium tracking-tight">Create an image</span>
+            <span className="text-sm sm:text-base font-semibold tracking-tight">Create an image</span>
           </button>
 
           {/* Card 2: Write or edit */}
           <button
             onClick={() => handleActionClick('write')}
-            className="flex items-center gap-3 text-left text-zinc-500 dark:text-zinc-400 hover:text-zinc-800 dark:hover:text-zinc-100 hover:bg-zinc-100/50 dark:hover:bg-zinc-800/40 border border-transparent hover:border-zinc-200/20 dark:hover:border-zinc-800/20 px-3.5 py-2.5 rounded-2xl transition-all duration-200 select-none group w-full"
+            className="flex items-center gap-3 text-left text-zinc-600 dark:text-zinc-300 hover:text-zinc-900 dark:hover:text-zinc-100 hover:bg-zinc-100/50 dark:hover:bg-zinc-800/40 border border-transparent hover:border-zinc-200/20 dark:hover:border-zinc-800/20 px-3.5 py-2.5 rounded-2xl transition-all duration-200 select-none group w-full"
           >
             <div className="w-5 h-5 flex items-center justify-center shrink-0">
-              <Edit3 className="w-4.5 h-4.5 text-zinc-400 dark:text-zinc-500 group-hover:text-zinc-800 dark:group-hover:text-zinc-200 transition-colors" />
+              <Edit3 className="w-5 h-5 text-zinc-400 dark:text-zinc-500 group-hover:text-zinc-800 dark:group-hover:text-zinc-200 transition-colors" />
             </div>
-            <span className="text-xs sm:text-sm font-medium tracking-tight">Write or edit</span>
+            <span className="text-sm sm:text-base font-semibold tracking-tight">Write or edit</span>
           </button>
 
           {/* Card 3: Look something up */}
           <button
             onClick={() => handleActionClick('search')}
-            className="flex items-center gap-3 text-left text-zinc-500 dark:text-zinc-400 hover:text-zinc-800 dark:hover:text-zinc-100 hover:bg-zinc-100/50 dark:hover:bg-zinc-800/40 border border-transparent hover:border-zinc-200/20 dark:hover:border-zinc-800/20 px-3.5 py-2.5 rounded-2xl transition-all duration-200 select-none group w-full"
+            className="flex items-center gap-3 text-left text-zinc-600 dark:text-zinc-300 hover:text-zinc-900 dark:hover:text-zinc-100 hover:bg-zinc-100/50 dark:hover:bg-zinc-800/40 border border-transparent hover:border-zinc-200/20 dark:hover:border-zinc-800/20 px-3.5 py-2.5 rounded-2xl transition-all duration-200 select-none group w-full"
           >
             <div className="w-5 h-5 flex items-center justify-center shrink-0">
-              <Globe className="w-4.5 h-4.5 text-zinc-400 dark:text-zinc-500 group-hover:text-zinc-800 dark:group-hover:text-zinc-200 transition-colors" />
+              <Globe className="w-5 h-5 text-zinc-400 dark:text-zinc-500 group-hover:text-zinc-800 dark:group-hover:text-zinc-200 transition-colors" />
             </div>
-            <span className="text-xs sm:text-sm font-medium tracking-tight">Look something up</span>
+            <span className="text-sm sm:text-base font-semibold tracking-tight">Look something up</span>
           </button>
         </div>
 
@@ -191,7 +191,7 @@ export const WelcomeScreen: React.FC<WelcomeScreenProps> = ({
           </AnimatePresence>
 
           {/* Fully compliant styled pill matching images exactly */}
-          <div className="bg-zinc-100 dark:bg-[#1E1F22] border border-zinc-200/40 dark:border-zinc-800/60 rounded-[24px] sm:rounded-[32px] shadow-lg focus-within:ring-2 focus-within:ring-zinc-900/5 dark:focus-within:ring-white/5 dark:focus-within:border-zinc-700 transition-all flex flex-col sm:flex-row sm:items-center px-3 py-2.5 sm:px-4 sm:py-2 min-h-[96px] sm:min-h-[60px] relative overflow-visible">
+          <div className="bg-zinc-100 dark:bg-[#1E1F22] border border-zinc-200/40 dark:border-zinc-800/60 rounded-[24px] sm:rounded-[32px] shadow-lg focus-within:ring-2 focus-within:ring-zinc-900/5 dark:focus-within:ring-white/5 dark:focus-within:border-zinc-700 transition-all flex flex-col sm:flex-row sm:items-center px-3 py-2.5 sm:px-4 sm:py-2 min-h-[48px] sm:min-h-[60px] relative overflow-visible">
             
             {/* Input Row: Plus, Tag Pill, and Textarea */}
             <div className="flex-1 flex items-center gap-1.5 sm:gap-2 w-full min-w-0">
@@ -229,7 +229,7 @@ export const WelcomeScreen: React.FC<WelcomeScreenProps> = ({
                 onChange={(e) => handleInputChange(e.target.value)}
                 onKeyDown={handleKeyDown}
                 placeholder={activeTag ? "" : "Ask anything"}
-                className="flex-1 bg-transparent border-none outline-none focus:ring-0 resize-none px-1.5 py-1.5 sm:py-2 text-sm md:text-base text-zinc-900 dark:text-zinc-50 placeholder:text-zinc-400 dark:placeholder:text-zinc-500 font-normal max-h-[120px] sm:max-h-[140px] leading-relaxed min-w-0"
+                className="flex-1 bg-transparent border-none outline-none focus:ring-0 resize-none px-1.5 py-1.5 sm:py-2 text-base text-zinc-900 dark:text-zinc-50 placeholder:text-zinc-400 dark:placeholder:text-zinc-500 font-normal max-h-[120px] sm:max-h-[140px] leading-relaxed min-w-0"
               />
             </div>
 

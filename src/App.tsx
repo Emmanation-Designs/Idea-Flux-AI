@@ -2324,7 +2324,7 @@ export default function App() {
                         m.role === 'user' ? "max-w-[85%] md:max-w-[75%] items-end" : "w-full"
                       )}>
                         <div className={cn(
-                          "w-full text-sm md:text-base transition-all duration-200",
+                          "w-full text-[15px] sm:text-base transition-all duration-200",
                           m.role === 'user' 
                             ? "bg-emerald-500/10 dark:bg-emerald-900/20 border border-emerald-500/20 dark:border-emerald-800/30 rounded-2xl md:rounded-[1.75rem] px-5 py-3.5 shadow-sm text-zinc-900 dark:text-zinc-50"
                             : "bg-transparent text-zinc-900 dark:text-zinc-100 border-none shadow-none px-0 py-1"
@@ -2332,8 +2332,8 @@ export default function App() {
                           <div className={cn(
                             "prose dark:prose-invert max-w-none leading-relaxed prose-headings:font-normal prose-strong:font-normal prose-th:font-normal",
                             m.role === 'user' 
-                              ? "font-normal text-zinc-800 dark:text-zinc-200 text-sm md:text-base md:leading-normal tracking-tight" 
-                              : "prose-sm md:prose-base text-zinc-750 dark:text-zinc-300"
+                              ? "font-normal text-zinc-800 dark:text-zinc-200 text-[15px] sm:text-base md:leading-normal tracking-tight" 
+                              : "prose-base text-[15px] md:text-base text-zinc-750 dark:text-zinc-300"
                           )}>
                             <ReactMarkdown 
                               remarkPlugins={[remarkMath, ...(loadedRemarkGfm ? [loadedRemarkGfm] : [])]}
@@ -2641,7 +2641,7 @@ export default function App() {
                   )}
                 </AnimatePresence>
 
-                <div className="flex flex-col sm:flex-row sm:items-center p-3 sm:py-2 sm:pl-3 sm:pr-2.5 min-h-[96px] sm:min-h-[60px] relative">
+                <div className="flex flex-col sm:flex-row sm:items-center p-3 sm:py-2 sm:pl-3 sm:pr-2.5 min-h-[48px] sm:min-h-[60px] relative">
                   <input 
                     type="file"
                     ref={fileInputRef}
@@ -2698,7 +2698,7 @@ export default function App() {
                           : (selectedAttachment ? `Ask about this ${selectedAttachment.type}...` : "Message Trelvix AI...")
                         )
                       }
-                      className="flex-1 bg-transparent border-none outline-none focus:ring-0 resize-none px-1.5 py-1.5 sm:py-2 text-sm md:text-base text-zinc-900 dark:text-zinc-50 placeholder:text-zinc-400 dark:placeholder:text-zinc-500 font-normal max-h-[120px] sm:max-h-[140px] leading-relaxed min-w-0"
+                      className="flex-1 bg-transparent border-none outline-none focus:ring-0 resize-none px-1.5 py-1.5 sm:py-2 text-base text-zinc-900 dark:text-zinc-50 placeholder:text-zinc-400 dark:placeholder:text-zinc-500 font-normal max-h-[120px] sm:max-h-[140px] leading-relaxed min-w-0"
                     />
                   </div>
                   
