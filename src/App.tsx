@@ -37,8 +37,7 @@ import {
   ZoomOut,
   RotateCcw,
   ArrowUp,
-  HelpCircle,
-  Mic
+  HelpCircle
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Toaster, toast } from 'sonner';
@@ -2175,7 +2174,7 @@ export default function App() {
         {/* Content Area */}
         <div className={cn(
           "flex-1 flex flex-col min-h-0",
-          (activeView === 'chat' || activeView === 'history') ? "overflow-y-auto overscroll-y-contain" : "overflow-hidden"
+          (activeView === 'chat' && (messages.length > 0 || streamingMessage)) || activeView === 'history' ? "overflow-y-auto overscroll-y-contain" : "overflow-hidden"
         )}>
           {activeView === 'apps' ? (
             <div className="flex-1 flex flex-col overflow-hidden">
@@ -2713,7 +2712,7 @@ export default function App() {
                       <Plus className="w-5 h-5 font-bold" />
                     </button>
 
-                    {/* Right container containing select, mic, and send button */}
+                    {/* Right container containing select and send button */}
                     <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
                       <ModelSelector 
                         selectedModelId={selectedModelId} 
@@ -2722,15 +2721,6 @@ export default function App() {
                         onUpgradeClick={() => setShowUpgradeModal(true)}
                         variant="compact"
                       />
-
-                      {/* Microphone Button */}
-                      <button
-                        type="button"
-                        className="p-2 text-zinc-500 hover:text-zinc-800 dark:text-zinc-400 dark:hover:text-zinc-200 rounded-full hover:bg-zinc-200/50 dark:hover:bg-zinc-800/50 transition-colors shrink-0"
-                        title="Voice input"
-                      >
-                        <Mic className="w-4 h-4" />
-                      </button>
 
                       {/* Send Button */}
                       <button 

@@ -82,7 +82,7 @@ export default function ModelSelector({
       {isOpen && (
         <div
           id="model-selector-dropdown"
-          className="absolute bottom-full right-0 mb-2 w-72 rounded-2xl bg-white dark:bg-[#1E1F22] border border-zinc-200 dark:border-zinc-800/80 shadow-xl ring-1 ring-black/5 focus:outline-none z-50 overflow-hidden"
+          className="absolute bottom-full right-[-42px] sm:right-0 mb-2 w-72 max-w-[calc(100vw-32px)] rounded-2xl bg-white dark:bg-[#1E1F22] border border-zinc-200 dark:border-zinc-800/80 shadow-xl ring-1 ring-black/5 focus:outline-none z-50 overflow-hidden"
         >
           <div className="p-1.5">
             {/* Header style matching the image */}

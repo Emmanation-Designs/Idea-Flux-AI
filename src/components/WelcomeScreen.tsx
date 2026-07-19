@@ -4,7 +4,6 @@ import {
   Image as ImageIcon, 
   FileText, 
   Globe, 
-  Mic, 
   ArrowUp,
   X,
   Film,
@@ -92,66 +91,69 @@ export const WelcomeScreen: React.FC<WelcomeScreenProps> = ({
   };
 
   return (
-    <div className="flex-1 flex flex-col items-center justify-center py-6 sm:py-12 p-4 md:p-8 w-full max-w-3xl mx-auto animate-fade-in">
+    <div className="flex-1 flex flex-col items-center justify-between p-4 sm:p-6 md:p-8 w-full max-w-3xl mx-auto animate-fade-in min-h-0 h-full">
       
       {/* Container that dynamically swaps layout order on mobile vs desktop */}
-      <div className="w-full flex flex-col gap-6 md:gap-7 max-w-2xl relative z-30">
+      <div className="w-full flex-1 flex flex-col justify-between gap-6 md:gap-7 max-w-2xl relative z-30 min-h-0">
         
-        {isTemporaryChat ? (
-          <div className="text-center mb-2 animate-fade-in">
-            <h1 className="text-2xl sm:text-3xl md:text-4xl font-semibold tracking-tight text-zinc-900 dark:text-zinc-50 mb-3 font-sans">
-              Temporary Chat
+        {/* Scrollable Top Section */}
+        <div className="flex-1 w-full flex flex-col justify-center gap-4 sm:gap-6 overflow-y-auto scrollbar-hide py-2 min-h-0">
+          {isTemporaryChat ? (
+            <div className="text-center mb-2 animate-fade-in shrink-0">
+              <h1 className="text-2xl sm:text-3xl md:text-4xl font-semibold tracking-tight text-zinc-900 dark:text-zinc-50 mb-3 font-sans">
+                Temporary Chat
+              </h1>
+              <p className="text-xs md:text-sm text-zinc-500 dark:text-zinc-400 leading-relaxed max-w-xl mx-auto font-normal">
+                This chat won't appear in history or be used to train our models. For safety purposes, we may keep a copy of this chat for up to 30 days.
+              </p>
+            </div>
+          ) : (
+            /* Title Header (Visible on both Mobile and Desktop with responsive size) */
+            <h1 className="text-2xl sm:text-3xl md:text-4xl font-semibold tracking-tight text-center text-zinc-900 dark:text-zinc-50 mb-1 sm:mb-2 font-sans shrink-0">
+              Where should we begin?
             </h1>
-            <p className="text-xs md:text-sm text-zinc-500 dark:text-zinc-400 leading-relaxed max-w-xl mx-auto font-normal">
-              This chat won't appear in history or be used to train our models. For safety purposes, we may keep a copy of this chat for up to 30 days.
-            </p>
+          )}
+
+          {/* Quick Actions List (Stacked vertically, left-aligned, matching style perfectly) - ABOVE prompt bar */}
+          <div className="w-full flex flex-col gap-1 pl-1 shrink-0">
+            
+            {/* Card 1: Create an image */}
+            <button
+              onClick={() => handleActionClick('image')}
+              className="flex items-center gap-3 text-left text-zinc-600 dark:text-zinc-300 hover:text-zinc-900 dark:hover:text-zinc-100 hover:bg-zinc-100/50 dark:hover:bg-zinc-800/40 border border-transparent hover:border-zinc-200/20 dark:hover:border-zinc-800/20 px-3.5 py-2.5 rounded-2xl transition-all duration-200 select-none group w-full"
+            >
+              <div className="w-5 h-5 flex items-center justify-center shrink-0">
+                <ImageIcon className="w-5 h-5 text-zinc-400 dark:text-zinc-500 group-hover:text-zinc-800 dark:group-hover:text-zinc-200 transition-colors" />
+              </div>
+              <span className="text-sm sm:text-base font-semibold tracking-tight">Create an image</span>
+            </button>
+
+            {/* Card 2: Write or edit */}
+            <button
+              onClick={() => handleActionClick('write')}
+              className="flex items-center gap-3 text-left text-zinc-600 dark:text-zinc-300 hover:text-zinc-900 dark:hover:text-zinc-100 hover:bg-zinc-100/50 dark:hover:bg-zinc-800/40 border border-transparent hover:border-zinc-200/20 dark:hover:border-zinc-800/20 px-3.5 py-2.5 rounded-2xl transition-all duration-200 select-none group w-full"
+            >
+              <div className="w-5 h-5 flex items-center justify-center shrink-0">
+                <Edit3 className="w-5 h-5 text-zinc-400 dark:text-zinc-500 group-hover:text-zinc-800 dark:group-hover:text-zinc-200 transition-colors" />
+              </div>
+              <span className="text-sm sm:text-base font-semibold tracking-tight">Write or edit</span>
+            </button>
+
+            {/* Card 3: Look something up */}
+            <button
+              onClick={() => handleActionClick('search')}
+              className="flex items-center gap-3 text-left text-zinc-600 dark:text-zinc-300 hover:text-zinc-900 dark:hover:text-zinc-100 hover:bg-zinc-100/50 dark:hover:bg-zinc-800/40 border border-transparent hover:border-zinc-200/20 dark:hover:border-zinc-800/20 px-3.5 py-2.5 rounded-2xl transition-all duration-200 select-none group w-full"
+            >
+              <div className="w-5 h-5 flex items-center justify-center shrink-0">
+                <Globe className="w-5 h-5 text-zinc-400 dark:text-zinc-500 group-hover:text-zinc-800 dark:group-hover:text-zinc-200 transition-colors" />
+              </div>
+              <span className="text-sm sm:text-base font-semibold tracking-tight">Look something up</span>
+            </button>
           </div>
-        ) : (
-          /* Title Header (Visible on both Mobile and Desktop with responsive size) */
-          <h1 className="text-2xl sm:text-3xl md:text-4xl font-semibold tracking-tight text-center text-zinc-900 dark:text-zinc-50 mb-1 sm:mb-2 font-sans">
-            Where should we begin?
-          </h1>
-        )}
-
-        {/* Quick Actions List (Stacked vertically, left-aligned, matching style perfectly) - ABOVE prompt bar */}
-        <div className="w-full flex flex-col gap-1 pl-1">
-          
-          {/* Card 1: Create an image */}
-          <button
-            onClick={() => handleActionClick('image')}
-            className="flex items-center gap-3 text-left text-zinc-600 dark:text-zinc-300 hover:text-zinc-900 dark:hover:text-zinc-100 hover:bg-zinc-100/50 dark:hover:bg-zinc-800/40 border border-transparent hover:border-zinc-200/20 dark:hover:border-zinc-800/20 px-3.5 py-2.5 rounded-2xl transition-all duration-200 select-none group w-full"
-          >
-            <div className="w-5 h-5 flex items-center justify-center shrink-0">
-              <ImageIcon className="w-5 h-5 text-zinc-400 dark:text-zinc-500 group-hover:text-zinc-800 dark:group-hover:text-zinc-200 transition-colors" />
-            </div>
-            <span className="text-sm sm:text-base font-semibold tracking-tight">Create an image</span>
-          </button>
-
-          {/* Card 2: Write or edit */}
-          <button
-            onClick={() => handleActionClick('write')}
-            className="flex items-center gap-3 text-left text-zinc-600 dark:text-zinc-300 hover:text-zinc-900 dark:hover:text-zinc-100 hover:bg-zinc-100/50 dark:hover:bg-zinc-800/40 border border-transparent hover:border-zinc-200/20 dark:hover:border-zinc-800/20 px-3.5 py-2.5 rounded-2xl transition-all duration-200 select-none group w-full"
-          >
-            <div className="w-5 h-5 flex items-center justify-center shrink-0">
-              <Edit3 className="w-5 h-5 text-zinc-400 dark:text-zinc-500 group-hover:text-zinc-800 dark:group-hover:text-zinc-200 transition-colors" />
-            </div>
-            <span className="text-sm sm:text-base font-semibold tracking-tight">Write or edit</span>
-          </button>
-
-          {/* Card 3: Look something up */}
-          <button
-            onClick={() => handleActionClick('search')}
-            className="flex items-center gap-3 text-left text-zinc-600 dark:text-zinc-300 hover:text-zinc-900 dark:hover:text-zinc-100 hover:bg-zinc-100/50 dark:hover:bg-zinc-800/40 border border-transparent hover:border-zinc-200/20 dark:hover:border-zinc-800/20 px-3.5 py-2.5 rounded-2xl transition-all duration-200 select-none group w-full"
-          >
-            <div className="w-5 h-5 flex items-center justify-center shrink-0">
-              <Globe className="w-5 h-5 text-zinc-400 dark:text-zinc-500 group-hover:text-zinc-800 dark:group-hover:text-zinc-200 transition-colors" />
-            </div>
-            <span className="text-sm sm:text-base font-semibold tracking-tight">Look something up</span>
-          </button>
         </div>
 
         {/* Prompt Input Bar (Desktop or Mobile) */}
-        <div className="w-full">
+        <div className="w-full shrink-0 mt-auto">
           {/* Attachment preview inside the input container frame */}
           <AnimatePresence>
             {selectedAttachment && (
@@ -245,7 +247,7 @@ export const WelcomeScreen: React.FC<WelcomeScreenProps> = ({
                 <Plus className="w-5 h-5 font-bold" />
               </button>
 
-              {/* Right container containing select, mic, and the brand green action button */}
+              {/* Right container containing select, and the brand green action button */}
               <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
                 <ModelSelector 
                   selectedModelId={selectedModelId} 
@@ -254,15 +256,6 @@ export const WelcomeScreen: React.FC<WelcomeScreenProps> = ({
                   onUpgradeClick={onUpgradeClick}
                   variant="compact"
                 />
-
-                {/* Microphone Button */}
-                <button
-                  type="button"
-                  className="p-2 text-zinc-500 hover:text-zinc-800 dark:text-zinc-400 dark:hover:text-zinc-200 rounded-full hover:bg-zinc-200/50 dark:hover:bg-zinc-800/50 transition-colors shrink-0"
-                  title="Voice input"
-                >
-                  <Mic className="w-4 h-4" />
-                </button>
 
                 {/* Action Button: Brand Green Send button */}
                 <button 
@@ -287,7 +280,7 @@ export const WelcomeScreen: React.FC<WelcomeScreenProps> = ({
       </div>
       
       {isTemporaryChat && (
-        <div className="mt-8 text-[10px] sm:text-xs text-zinc-400 dark:text-zinc-600 font-normal tracking-wide text-center">
+        <div className="mt-4 text-[10px] sm:text-xs text-zinc-400 dark:text-zinc-600 font-normal tracking-wide text-center shrink-0">
           For safety, we may keep a copy of this chat for up to 30 days.
         </div>
       )}
