@@ -77,6 +77,8 @@ CREATE TABLE IF NOT EXISTS public.user_usage_tracking (
     document_ai_today INT DEFAULT 0 NOT NULL CHECK (document_ai_today >= 0),
     pdf_today INT DEFAULT 0 NOT NULL CHECK (pdf_today >= 0),
     ocr_today INT DEFAULT 0 NOT NULL CHECK (ocr_today >= 0),
+    daily_ai_capacity_used INT DEFAULT 0 NOT NULL CHECK (daily_ai_capacity_used >= 0),
+    last_capacity_reset TIMESTAMPTZ DEFAULT NOW() NOT NULL,
     tts_characters_used_monthly INT DEFAULT 0 NOT NULL CHECK (tts_characters_used_monthly >= 0),
     last_daily_reset TIMESTAMPTZ DEFAULT NOW() NOT NULL,
     last_monthly_reset TIMESTAMPTZ DEFAULT NOW() NOT NULL,
@@ -84,6 +86,10 @@ CREATE TABLE IF NOT EXISTS public.user_usage_tracking (
     created_at TIMESTAMPTZ DEFAULT NOW() NOT NULL,
     updated_at TIMESTAMPTZ DEFAULT NOW() NOT NULL
 );
+
+-- Ensure columns exist if table was already created
+ALTER TABLE public.user_usage_tracking ADD COLUMN IF NOT EXISTS daily_ai_capacity_used INT DEFAULT 0 NOT NULL CHECK (daily_ai_capacity_used >= 0);
+ALTER TABLE public.user_usage_tracking ADD COLUMN IF NOT EXISTS last_capacity_reset TIMESTAMPTZ DEFAULT NOW() NOT NULL;
 
 COMMENT ON TABLE public.user_usage_tracking IS 'Tracks user active usage counts, resettable lazily on demand.';
 

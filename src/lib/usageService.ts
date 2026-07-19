@@ -21,10 +21,58 @@ export interface UserUsage {
   document_ai_today: number;
   pdf_today: number;
   ocr_today: number;
+  daily_ai_capacity_used: number;
+  last_capacity_reset: string;
   tts_characters_used_monthly: number;
   last_daily_reset: string;
   last_monthly_reset: string;
   rewarded_bonus: Record<string, number>;
+}
+
+export type CentralizedFeature = 
+  | 'chat_simple'
+  | 'chat_reasoning'
+  | 'image_analysis'
+  | 'ocr'
+  | 'document_ai'
+  | 'pdf'
+  | 'image_edit'
+  | 'image_generation'
+  | 'tts';
+
+/**
+ * Internal configurable warning threshold.
+ * Currently set to 75% of daily AI Capacity.
+ */
+export const CAPACITY_WARNING_THRESHOLD = 0.75;
+
+/**
+ * Resolves the internal credit cost for a feature.
+ */
+export function getFeatureCost(feature: string): number {
+  switch (feature) {
+    case 'chat_simple':
+    case 'chat':
+      return 1;
+    case 'chat_reasoning':
+      return 3;
+    case 'chat_maximum':
+      return 8;
+    case 'image_analysis':
+      return 3;
+    case 'ocr':
+      return 3;
+    case 'document_ai':
+      return 5;
+    case 'pdf':
+      return 6;
+    case 'image_edit':
+      return 8;
+    case 'image_generation':
+      return 10;
+    default:
+      return 1;
+  }
 }
 
 /**
@@ -34,12 +82,12 @@ export async function getPlanLimits(supabaseClient: any, plan: 'free' | 'plus' |
   const catalogLimits = getCatalogPlanLimits(plan as PlanId);
   return {
     chat_limit: catalogLimits.chat === 'unlimited' ? 999999999 : catalogLimits.chat,
-    image_generation_limit: catalogLimits.image_generation,
-    image_edit_limit: catalogLimits.image_edit,
-    image_analysis_limit: catalogLimits.image_analysis,
-    document_ai_limit: catalogLimits.document_ai,
-    pdf_limit: catalogLimits.pdf,
-    ocr_limit: catalogLimits.ocr,
+    image_generation_limit: catalogLimits.image_generation === 'unlimited' ? 999999999 : catalogLimits.image_generation,
+    image_edit_limit: catalogLimits.image_edit === 'unlimited' ? 999999999 : catalogLimits.image_edit,
+    image_analysis_limit: catalogLimits.image_analysis === 'unlimited' ? 999999999 : catalogLimits.image_analysis,
+    document_ai_limit: catalogLimits.document_ai === 'unlimited' ? 999999999 : catalogLimits.document_ai,
+    pdf_limit: catalogLimits.pdf === 'unlimited' ? 999999999 : catalogLimits.pdf,
+    ocr_limit: catalogLimits.ocr === 'unlimited' ? 999999999 : catalogLimits.ocr,
     tts_monthly_limit: catalogLimits.tts,
     tts_max_chars: catalogLimits.tts_max_chars,
   };
@@ -60,7 +108,11 @@ export async function getUserUsage(supabaseClient: any, userId: string): Promise
     // If not found, create a new tracking record for the user
     const { data: newData, error: insertError } = await supabaseClient
       .from('user_usage_tracking')
-      .insert({ user_id: userId })
+      .insert({ 
+        user_id: userId,
+        daily_ai_capacity_used: 0,
+        last_capacity_reset: new Date().toISOString()
+      })
       .select()
       .single();
 
@@ -74,6 +126,8 @@ export async function getUserUsage(supabaseClient: any, userId: string): Promise
         document_ai_today: 0,
         pdf_today: 0,
         ocr_today: 0,
+        daily_ai_capacity_used: 0,
+        last_capacity_reset: new Date().toISOString(),
         tts_characters_used_monthly: 0,
         last_daily_reset: new Date().toISOString(),
         last_monthly_reset: new Date().toISOString(),
@@ -88,12 +142,12 @@ export async function getUserUsage(supabaseClient: any, userId: string): Promise
   const now = new Date();
   const updateFields: any = {};
 
-  // 1. Daily reset (calendar day change in UTC)
-  const lastDailyDate = new Date(data.last_daily_reset);
+  // 1. Daily Reset (calendar day change in UTC)
+  const lastResetDate = new Date(data.last_capacity_reset || data.last_daily_reset);
   const isDifferentDay = 
-    lastDailyDate.getUTCFullYear() !== now.getUTCFullYear() ||
-    lastDailyDate.getUTCMonth() !== now.getUTCMonth() ||
-    lastDailyDate.getUTCDate() !== now.getUTCDate();
+    lastResetDate.getUTCFullYear() !== now.getUTCFullYear() ||
+    lastResetDate.getUTCMonth() !== now.getUTCMonth() ||
+    lastResetDate.getUTCDate() !== now.getUTCDate();
 
   if (isDifferentDay) {
     updateFields.chat_today = 0;
@@ -103,12 +157,14 @@ export async function getUserUsage(supabaseClient: any, userId: string): Promise
     updateFields.document_ai_today = 0;
     updateFields.pdf_today = 0;
     updateFields.ocr_today = 0;
+    updateFields.daily_ai_capacity_used = 0;
     updateFields.rewarded_bonus = {};
     updateFields.last_daily_reset = now.toISOString();
+    updateFields.last_capacity_reset = now.toISOString();
     needsUpdate = true;
   }
 
-  // 2. Monthly reset (30 days since last reset)
+  // 2. Monthly reset (30 days since last reset for TTS)
   const lastMonthlyDate = new Date(data.last_monthly_reset);
   const oneMonthLater = new Date(lastMonthlyDate);
   oneMonthLater.setUTCMonth(oneMonthLater.getUTCMonth() + 1);
@@ -135,14 +191,16 @@ export async function getUserUsage(supabaseClient: any, userId: string): Promise
   }
 
   return {
-    chat_today: data.chat_today,
-    image_generation_today: data.image_generation_today,
-    image_edit_today: data.image_edit_today,
-    image_analysis_today: data.image_analysis_today,
-    document_ai_today: data.document_ai_today,
-    pdf_today: data.pdf_today,
-    ocr_today: data.ocr_today,
-    tts_characters_used_monthly: data.tts_characters_used_monthly,
+    chat_today: data.chat_today ?? 0,
+    image_generation_today: data.image_generation_today ?? 0,
+    image_edit_today: data.image_edit_today ?? 0,
+    image_analysis_today: data.image_analysis_today ?? 0,
+    document_ai_today: data.document_ai_today ?? 0,
+    pdf_today: data.pdf_today ?? 0,
+    ocr_today: data.ocr_today ?? 0,
+    daily_ai_capacity_used: data.daily_ai_capacity_used ?? 0,
+    last_capacity_reset: data.last_capacity_reset || data.last_daily_reset,
+    tts_characters_used_monthly: data.tts_characters_used_monthly ?? 0,
     last_daily_reset: data.last_daily_reset,
     last_monthly_reset: data.last_monthly_reset,
     rewarded_bonus: typeof data.rewarded_bonus === 'string' ? JSON.parse(data.rewarded_bonus) : (data.rewarded_bonus || {}),
@@ -162,7 +220,7 @@ export interface CheckResult {
 export async function checkLimit(
   supabaseClient: any,
   userId: string,
-  feature: 'chat' | 'image_generation' | 'image_edit' | 'image_analysis' | 'document_ai' | 'pdf' | 'ocr' | 'tts',
+  feature: string,
   incrementAmount: number = 1
 ): Promise<CheckResult> {
   const subscription = await getSubscription(supabaseClient, userId);
@@ -178,16 +236,6 @@ export async function checkLimit(
     // Check max character per generation limit
     if (incrementAmount > maxChars) {
       const reason = `Requested text of ${incrementAmount} characters exceeds the single-generation maximum of ${maxChars} characters on the ${plan.toUpperCase()} plan.`;
-      
-      console.log(`[Usage]
-Plan: ${plan.toUpperCase()}
-Feature: tts
-Limit: ${maxChars} (Single-Gen)
-Used: ${incrementAmount}
-Remaining: 0
-Decision: DENY
-Reason: Single-generation limit exceeded`.trim());
-
       return {
         allowed: false,
         reason,
@@ -198,16 +246,6 @@ Reason: Single-generation limit exceeded`.trim());
 
     if (current + incrementAmount > limit) {
       const reason = `Monthly speech characters allowance exhausted. Generation requires ${incrementAmount} characters, but only ${limit - current} characters are remaining on your ${plan.toUpperCase()} plan.`;
-      
-      console.log(`[Usage]
-Plan: ${plan.toUpperCase()}
-Feature: tts
-Limit: ${limit}/month
-Used: ${current}
-Remaining: ${limit - current}
-Decision: DENY
-Reason: Monthly limit reached`.trim());
-
       return {
         allowed: false,
         reason,
@@ -215,66 +253,50 @@ Reason: Monthly limit reached`.trim());
         limit,
       };
     }
-
-    console.log(`[Usage]
-Plan: ${plan.toUpperCase()}
-Feature: tts
-Limit: ${limit}/month
-Used: ${current + incrementAmount}
-Remaining: ${limit - (current + incrementAmount)}
-Decision: ALLOW`.trim());
 
     return { allowed: true, current, limit };
   } else {
-    const usageKey = `${feature}_today` as keyof UserUsage;
-    const current = (usage[usageKey] as number) || 0;
-    const catalogLimit = catalogLimits[feature];
+    // RESOLVE cost
+    const cost = getFeatureCost(feature);
 
-    if (catalogLimit === 'unlimited') {
-      console.log(`[Usage]
-Plan: ${plan.toUpperCase()}
-Feature: ${feature}
-Limit: unlimited
-Used: ${current}
-Remaining: unlimited
-Decision: ALLOW`.trim());
+    // DAILY CAPACITY
+    let totalCapacity = 100;
+    if (plan === 'plus') totalCapacity = 2000;
+    if (plan === 'pro') totalCapacity = 10000;
 
-      return { allowed: true, current, limit: Infinity };
-    }
+    const used = usage.daily_ai_capacity_used ?? 0;
+    const bonus = usage.rewarded_bonus?.ai_capacity ?? 0;
+    const limit = totalCapacity + bonus;
 
-    const baseLimit = catalogLimit as number;
-    const bonus = usage.rewarded_bonus[feature] || 0;
-    const limit = baseLimit + bonus;
-
-    if (current + incrementAmount > limit) {
-      const reason = `Daily generation threshold (${limit} requests) reached on your ${plan.toUpperCase()} subscription tier.`;
+    if (used + cost > limit) {
+      const reason = `Your daily AI capacity of ${limit} credits has been exhausted. Please upgrade your plan for more daily capacity.`;
 
       console.log(`[Usage]
 Plan: ${plan.toUpperCase()}
-Feature: ${feature}
-Limit: ${limit}/day
-Used: ${current}
-Remaining: ${limit - current}
+Feature: ${feature} (Cost: ${cost})
+Capacity Limit: ${limit}
+Used: ${used}
+Remaining: ${limit - used}
 Decision: DENY
-Reason: Daily limit reached`.trim());
+Reason: Daily AI capacity exhausted`.trim());
 
       return {
         allowed: false,
         reason,
-        current,
+        current: used,
         limit,
       };
     }
 
     console.log(`[Usage]
 Plan: ${plan.toUpperCase()}
-Feature: ${feature}
-Limit: ${limit}/day
-Used: ${current + incrementAmount}
-Remaining: ${limit - (current + incrementAmount)}
+Feature: ${feature} (Cost: ${cost})
+Capacity Limit: ${limit}
+Used: ${used + cost}
+Remaining: ${limit - (used + cost)}
 Decision: ALLOW`.trim());
 
-    return { allowed: true, current, limit };
+    return { allowed: true, current: used, limit };
   }
 }
 
@@ -284,36 +306,128 @@ Decision: ALLOW`.trim());
 export async function incrementUsage(
   supabaseClient: any,
   userId: string,
-  feature: 'chat' | 'image_generation' | 'image_edit' | 'image_analysis' | 'document_ai' | 'pdf' | 'ocr' | 'tts',
+  feature: string,
   amount: number = 1
 ): Promise<void> {
   // Ensure lazy reset check is applied
   await getUserUsage(supabaseClient, userId);
 
-  const usageKey = feature === 'tts' ? 'tts_characters_used_monthly' : `${feature}_today`;
+  if (feature === 'tts') {
+    const usageKey = 'tts_characters_used_monthly';
+    const { error } = await supabaseClient.rpc('increment_usage_field', {
+      user_uuid: userId,
+      field_name: usageKey,
+      increment_by: amount
+    });
+
+    if (error) {
+      console.warn(`[UsageService] increment_usage_field RPC failed for TTS, falling back to read-write update:`, error.message);
+      const { data: current, error: getErr } = await supabaseClient
+        .from('user_usage_tracking')
+        .select(usageKey)
+        .eq('user_id', userId)
+        .single();
+
+      if (!getErr && current) {
+        const currentVal = current[usageKey] || 0;
+        await supabaseClient
+          .from('user_usage_tracking')
+          .update({ [usageKey]: currentVal + amount })
+          .eq('user_id', userId);
+      }
+    }
+  } else {
+    // Centralized AI Capacity increment
+    const cost = getFeatureCost(feature);
+    await consumeCapacity(supabaseClient, userId, cost);
+
+    // Increment historical fields for backward compatibility
+    try {
+      let legacyField = '';
+      if (feature === 'chat_simple' || feature === 'chat_reasoning' || feature === 'chat') {
+        legacyField = 'chat_today';
+      } else {
+        legacyField = `${feature}_today`;
+      }
+
+      await supabaseClient.rpc('increment_usage_field', {
+        user_uuid: userId,
+        field_name: legacyField,
+        increment_by: 1
+      });
+    } catch (compatErr: any) {
+      console.warn(`[UsageService] Failed to increment legacy historical field:`, compatErr.message);
+    }
+  }
+}
+
+/**
+ * Retrieves the remaining AI Capacity for a user.
+ */
+export async function getRemainingCapacity(supabaseClient: any, userId: string): Promise<number> {
+  const subscription = await getSubscription(supabaseClient, userId);
+  const plan = (subscription.current_plan || 'free').toLowerCase();
   
-  // Call atomic PostgreSQL function
+  let totalCapacity = 100;
+  if (plan === 'plus') totalCapacity = 2000;
+  if (plan === 'pro') totalCapacity = 10000;
+
+  const usage = await getUserUsage(supabaseClient, userId);
+  const used = usage.daily_ai_capacity_used ?? 0;
+  const bonus = usage.rewarded_bonus?.ai_capacity ?? 0;
+
+  return Math.max(0, (totalCapacity + bonus) - used);
+}
+
+/**
+ * Consumes AI Capacity for a user.
+ */
+export async function consumeCapacity(supabaseClient: any, userId: string, cost: number): Promise<void> {
+  await getUserUsage(supabaseClient, userId);
+
   const { error } = await supabaseClient.rpc('increment_usage_field', {
     user_uuid: userId,
-    field_name: usageKey,
-    increment_by: amount
+    field_name: 'daily_ai_capacity_used',
+    increment_by: cost
   });
 
   if (error) {
-    console.warn(`[UsageService] increment_usage_field RPC failed, falling back to read-write update:`, error.message);
+    console.warn(`[UsageService] increment_usage_field RPC failed for daily_ai_capacity_used, falling back to read-write update:`, error.message);
     const { data: current, error: getErr } = await supabaseClient
       .from('user_usage_tracking')
-      .select(usageKey)
+      .select('daily_ai_capacity_used')
       .eq('user_id', userId)
       .single();
 
     if (!getErr && current) {
-      const currentVal = current[usageKey] || 0;
+      const currentVal = current.daily_ai_capacity_used || 0;
       await supabaseClient
         .from('user_usage_tracking')
-        .update({ [usageKey]: currentVal + amount })
+        .update({ daily_ai_capacity_used: currentVal + cost })
         .eq('user_id', userId);
     }
+  }
+}
+
+/**
+ * Adds extra daily capacity (e.g. from rewarded ads).
+ */
+export async function addDailyCapacity(supabaseClient: any, userId: string, amount: number): Promise<void> {
+  const usage = await getUserUsage(supabaseClient, userId);
+  const currentBonus = usage.rewarded_bonus || {};
+  const newBonus = {
+    ...currentBonus,
+    ai_capacity: (currentBonus.ai_capacity || 0) + amount,
+  };
+
+  const { error } = await supabaseClient
+    .from('user_usage_tracking')
+    .update({ rewarded_bonus: newBonus })
+    .eq('user_id', userId);
+
+  if (error) {
+    console.error(`[UsageService] Failed to add daily capacity bonus for ${userId}:`, error.message);
+    throw new Error(`Failed to add daily capacity bonus: ${error.message}`);
   }
 }
 

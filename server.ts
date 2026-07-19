@@ -5,10 +5,13 @@ import dotenv from "dotenv";
 import { createClient } from "@supabase/supabase-js";
 import fs from "fs";
 import crypto from "crypto";
+import { getModel, canUseModel, getDefaultModel, getAvailableModels, MODEL_MAP, INTERNAL_TO_API_MAP } from "./src/ai/modelCatalog.js";
+import { routeRequest } from "./src/ai/router.js";
+import { priorityQueue } from "./src/ai/priorityQueue.js";
 
 // Import Vite types only for type checking
 import type { ViteDevServer } from "vite";
-import { checkLimit, incrementUsage, getUserUsage, getPlanLimits } from "./src/lib/usageService.js";
+import { checkLimit, incrementUsage, getUserUsage, getPlanLimits, getRemainingCapacity, CAPACITY_WARNING_THRESHOLD } from "./src/lib/usageService.js";
 import { getSubscription, updateSubscription } from "./src/lib/subscriptionService.js";
 import { getPaymentAdapter } from "./src/lib/paymentService.js";
 import { getPlan, getPaymentConfiguration } from "./src/subscription/catalog.js";
@@ -154,7 +157,33 @@ app.get("/api/subscription/usage", async (req, res) => {
     const profile = await getSubscription(supabase, user.id);
     const usage = await getUserUsage(supabase, user.id);
     const limits = await getPlanLimits(supabase, profile.current_plan || 'free');
-    res.json({ usage, limits, profile });
+
+    const remaining = await getRemainingCapacity(supabase, user.id);
+    const plan = (profile.current_plan || 'free').toLowerCase();
+
+    let totalCapacity = 100;
+    if (plan === 'plus') totalCapacity = 2000;
+    if (plan === 'pro') totalCapacity = 10000;
+
+    const used = usage.daily_ai_capacity_used ?? 0;
+    const bonus = usage.rewarded_bonus?.ai_capacity ?? 0;
+    const limit = totalCapacity + bonus;
+
+    const nearingLimit = (used / limit) >= CAPACITY_WARNING_THRESHOLD;
+    const limitReached = used >= limit;
+
+    const capacity_status = nearingLimit ? "AI usage running low" : "AI usage available";
+
+    res.json({
+      usage,
+      limits,
+      profile,
+      capacity_status,
+      nearingLimit,
+      limitReached,
+      tts_used: usage.tts_characters_used_monthly,
+      tts_limit: limits.tts_monthly_limit
+    });
   } catch (error: any) {
     console.error("[Subscription Usage API Error]:", error);
     res.status(error.status || 500).json({ error: error.error || error.message || "Failed to fetch usage info" });
@@ -228,6 +257,31 @@ app.all("/api/proxy-image", async (req, res) => {
 
 app.post("/api/generate", async (req, res) => {
   return handleGenerate(req, res);
+});
+
+app.get("/api/models", async (req, res) => {
+  try {
+    let userId: string | null = null;
+    try {
+      const user = await authenticateUser(req);
+      userId = user.id;
+    } catch (authErr) {
+      // Auth token might be missing/invalid during anonymous page visits or setup
+    }
+
+    let plan = 'free';
+    if (userId) {
+      const supabase = getSupabaseAdminClient();
+      const subscription = await getSubscription(supabase, userId);
+      plan = subscription.current_plan || 'free';
+    }
+
+    const availableModels = getAvailableModels(plan as any);
+    res.json({ models: availableModels });
+  } catch (error: any) {
+    console.error("[API Models Error]:", error);
+    res.status(500).json({ error: error.message || "Failed to retrieve models" });
+  }
 });
 
 // --- Provider-Agnostic Payment Integration ---
@@ -863,7 +917,8 @@ async function appendReplyToConversation(
   replyMessage: any, 
   userId?: string, 
   conversationType?: string, 
-  previousMessages?: any[]
+  previousMessages?: any[],
+  isTemporary?: boolean
 ) {
   if (!conversationId) return;
   try {
@@ -893,7 +948,7 @@ async function appendReplyToConversation(
           titleText = titleText.slice(0, 48) + '...';
         }
 
-        const newConv = {
+        const newConv: any = {
           id: conversationId,
           user_id: targetUserId,
           title: titleText,
@@ -903,9 +958,26 @@ async function appendReplyToConversation(
           updated_at: new Date().toISOString()
         };
 
-        const { error: insertErr } = await supabase
-          .from('conversations')
-          .insert(newConv);
+        let insertErr;
+        if (isTemporary) {
+          const { error } = await supabase
+            .from('conversations')
+            .insert({ ...newConv, is_temporary: true });
+          if (error && error.message.includes('is_temporary')) {
+            console.warn("[Server DB] Database lacks is_temporary column, retrying fallback insert...");
+            const { error: fallbackErr } = await supabase
+              .from('conversations')
+              .insert(newConv);
+            insertErr = fallbackErr;
+          } else {
+            insertErr = error;
+          }
+        } else {
+          const { error } = await supabase
+            .from('conversations')
+            .insert(newConv);
+          insertErr = error;
+        }
 
         if (insertErr) {
           console.warn(`[Server DB] Could not insert fallback conversation: ${insertErr.message}`);
@@ -945,8 +1017,56 @@ async function appendReplyToConversation(
   }
 }
 
+function formatMessagesForGemini(openAiMessages: any[]) {
+  const systemMessage = openAiMessages.find(m => m.role === 'system');
+  const systemInstruction = systemMessage ? systemMessage.content : undefined;
+
+  const contents = openAiMessages
+    .filter(m => m.role !== 'system')
+    .map(m => {
+      let role = m.role;
+      if (role === 'assistant') {
+        role = 'model';
+      } else if (role !== 'user' && role !== 'model') {
+        role = 'user';
+      }
+      
+      let parts: any[] = [];
+      if (typeof m.content === 'string') {
+        parts.push({ text: m.content });
+      } else if (Array.isArray(m.content)) {
+        m.content.forEach((part: any) => {
+          if (part.type === 'text') {
+            parts.push({ text: part.text });
+          } else if (part.type === 'image_url') {
+            const url = part.image_url?.url;
+            if (url && url.startsWith('data:')) {
+              const matches = url.match(/^data:([^;]+);base64,(.+)$/);
+              if (matches) {
+                parts.push({
+                  inlineData: {
+                    mimeType: matches[1],
+                    data: matches[2]
+                  }
+                });
+              }
+            }
+          }
+        });
+      }
+      
+      if (parts.length === 0) {
+        parts.push({ text: "" });
+      }
+      
+      return { role, parts };
+    });
+
+  return { contents, systemInstruction };
+}
+
 async function handleGenerate(req: express.Request, res: express.Response) {
-  const { type, prompt, messages = [], ready_to_copy = false, personality = "creative", model = "trelvix-mini" } = req.body;
+  const { type, prompt, messages = [], ready_to_copy = false, personality = "creative", model = "gpt-5-nano", autoMode = true, prevModelId } = req.body;
 
   const needsWebSearch = (text: string) => {
     const searchKeywords = [
@@ -981,6 +1101,20 @@ async function handleGenerate(req: express.Request, res: express.Response) {
 
     const openai = new OpenAI({ apiKey });
 
+    // Early model resolution & backward compatibility mapping
+    let requestedModelId = model || 'thinking';
+    if (requestedModelId === 'trelvix-mini' || requestedModelId === 'gpt-5-nano') {
+      requestedModelId = 'thinking';
+    } else if (requestedModelId === 'trelvix-ultra' || requestedModelId === 'gpt-5' || requestedModelId === 'gpt-5-mini') {
+      requestedModelId = 'extendedThinking';
+    } else if (requestedModelId === 'trelvix-visual' || requestedModelId === 'o4-mini' || requestedModelId === 'o3' || requestedModelId === 'gemini-pro' || requestedModelId === 'gemini-flash') {
+      requestedModelId = 'maximumThinking';
+    }
+
+    if (requestedModelId !== 'thinking' && requestedModelId !== 'extendedThinking' && requestedModelId !== 'maximumThinking') {
+      requestedModelId = 'thinking';
+    }
+
     // 0. Intelligence Controller: Determine the best engine based on intent
     const lastMessageContent = (messages[messages.length - 1]?.content || prompt || "").trim();
     
@@ -990,7 +1124,7 @@ async function handleGenerate(req: express.Request, res: express.Response) {
     // Stricter image intent detection: must start with or specifically request an image, or edit an uploaded image
     const lowerLast = lastMessageContent.toLowerCase();
     const fileHasImage = (messages || []).some((m: any) => m.image_url && m.image_url.startsWith("data:image"));
-    const isImageIntent = (type === "image" || model === "trelvix-visual" || 
+    const isImageIntent = (type === "image" || requestedModelId === "extendedThinking" || 
                           (lowerLast.startsWith("generate image") || 
                            lowerLast.startsWith("create image") || 
                            lowerLast.startsWith("draw") || 
@@ -1028,8 +1162,21 @@ async function handleGenerate(req: express.Request, res: express.Response) {
       console.error(`[Subscription Validation Error in handleGenerate] Failed for user ${userId}:`, syncErr.message || syncErr);
     }
 
+    // --- Retrieve active subscription & route intelligently using Phase 3 Smart AI Router ---
+    const subscription = await getSubscription(supabase, userId);
+    const userPlan = (subscription.current_plan || 'free') as 'free' | 'plus' | 'pro';
+
+    const routeDecision = routeRequest(prompt || '', messages, userPlan, requestedModelId, autoMode !== false, prevModelId);
+    let activeModelObj = getModel(routeDecision.selectedModelId) || getDefaultModel(userPlan);
+
+    // Strictly resolve actual API model from centralized configuration maps
+    const internalModelId = MODEL_MAP[activeModelObj.id as keyof typeof MODEL_MAP] || MODEL_MAP.thinking;
+    const realModel = INTERNAL_TO_API_MAP[internalModelId] || "gpt-4o-mini";
+    const currentBranding = activeModelObj.displayName;
+    const modelProvider = activeModelObj.provider;
+
     // Dynamically map intent to centralized usage tracking feature
-    let feature: 'chat' | 'image_generation' | 'image_edit' | 'image_analysis' | 'document_ai' | 'pdf' | 'ocr' = 'chat';
+    let feature: string = 'chat_simple';
 
     if (isImageIntent) {
       if (fileHasImage) {
@@ -1052,7 +1199,13 @@ async function handleGenerate(req: express.Request, res: express.Response) {
         feature = 'document_ai';
       }
     } else {
-      feature = 'chat';
+      if (activeModelObj.id === 'maximumThinking') {
+        feature = 'chat_maximum';
+      } else if (activeModelObj.id === 'extendedThinking') {
+        feature = 'chat_reasoning';
+      } else {
+        feature = 'chat_simple';
+      }
     }
 
     console.log(`[Limit Engine] Checking usage limit for user:${userId} on feature:${feature}`);
@@ -1060,7 +1213,7 @@ async function handleGenerate(req: express.Request, res: express.Response) {
       const limitResult = await checkLimit(supabase, userId, feature, 1);
       if (!limitResult.allowed) {
         console.warn(`[Limit Engine] Limit check REJECTED for user:${userId} on feature:${feature}. Reason: ${limitResult.reason}`);
-        return res.status(429).json({ error: limitResult.reason });
+        return res.status(429).json({ error: limitResult.reason, limitReached: true });
       }
       console.log(`[Limit Engine] Limit check PASSED for user:${userId} on feature:${feature}`);
     } catch (limitErr: any) {
@@ -1070,23 +1223,7 @@ async function handleGenerate(req: express.Request, res: express.Response) {
 
     const searchRequired = needsWebSearch(lastMessageContent) && !isImageIntent;
 
-    // Strict Tiered Selection Logic (Prioritizing Client Request + Server Detection)
-    let realModel = "gpt-4o-mini";
-    let currentBranding = "Standard Intelligence";
-
-    if (isImageIntent || model === "trelvix-visual") {
-      realModel = "gpt-4o"; 
-      currentBranding = "Visual Engine";
-    } else if (model === "trelvix-ultra" || isDocRequest) {
-      // Force gpt-4o for all document/resume/PDF compile requests to ensure correct JSON outputs
-      realModel = "gpt-4o"; 
-      currentBranding = "Ultra Intelligence";
-    } else if (searchRequired) {
-      realModel = "gpt-4o-mini";
-      currentBranding = "Standard Intelligence";
-    }
-
-    console.log(`[Intelligence Controller] Intent: ${type}, Search: ${searchRequired}, Selection: ${currentBranding}`);
+    console.log(`[Intelligence Controller] Resolved Model: ${activeModelObj.id} (API Name: ${realModel}, Provider: ${modelProvider}) for Plan: ${userPlan}, Intent: ${type}, Search: ${searchRequired}`);
 
     // Helper for Tavily Search
     const searchWeb = async (query: string) => {
@@ -1430,7 +1567,7 @@ To make it look like an edit or variation of the input image:
                 content: "Here is your generated image:",
                 image_url: imageData ? `db:${imageData.id}` : base64Image,
                 filename: `trelvix-${Date.now()}.png`,
-                model: model || 'trelvix-visual',
+                model: activeModelObj.id,
                 created_at: new Date().toISOString()
               };
 
@@ -1439,7 +1576,8 @@ To make it look like an edit or variation of the input image:
                 assistantMessage,
                 req.body.userId,
                 type || 'image',
-                messages
+                messages,
+                req.body.is_temporary
               );
             } catch (e) {
               console.error("[Server Image Save Error]:", e);
@@ -1489,7 +1627,7 @@ To make it look like an edit or variation of the input image:
       academic: "Cold, hard facts. Precise and lethal logic."
     };
 
-    const isUltra = realModel === "gpt-4o";
+    const isUltra = activeModelObj.id === 'extendedThinking' || activeModelObj.id === 'maximumThinking';
     let systemInstruction = `You are Trelvix AI. ${attributionRules} 
     Persona: ${personalityPrompts[personality as keyof typeof personalityPrompts] || personalityPrompts.creative}
     
@@ -1604,7 +1742,7 @@ Because you are integrated with our custom frontend compiler, YOU CAN and MUST c
     }
 
     // --- Grounding Logic ---
-    if (isUltra && (searchRequired || model === "trelvix-ultra")) {
+    if (isUltra && (searchRequired || requestedModelId === "extendedThinking")) {
       const queryToSearch = lastMessageContent;
       console.log(`[Generate] Action: Scaling to Ultra Grounding for: ${queryToSearch.substring(0, 50)}...`);
       const searchData = await searchWeb(queryToSearch);
@@ -1621,58 +1759,90 @@ Because you are integrated with our custom frontend compiler, YOU CAN and MUST c
       openAiMessages.splice(1, 0, groundingBlock);
     }
 
-    console.log(`[Generate] Final Grounded Stream starting... Model: ${currentBranding}`);
-    const stream = await openai.chat.completions.create({
-      model: realModel, 
-      messages: openAiMessages,
-      stream: true,
-      temperature: 0.7,
-      max_tokens: 4000,
+    const abortController = new AbortController();
+    const jobId = Math.random().toString(36).substring(2, 15);
+
+    req.on('close', () => {
+      console.log(`[Request Close] Client closed request connection for jobId: ${jobId}`);
+      abortController.abort();
+      priorityQueue.cancelJob(jobId);
     });
 
-    res.setHeader("Content-Type", "text/plain; charset=utf-8");
-    res.setHeader("Transfer-Encoding", "chunked");
-    res.setHeader("Cache-Control", "no-cache");
-    res.setHeader("Connection", "keep-alive");
+    const queueResult = await priorityQueue.enqueue(
+      userId,
+      userPlan,
+      activeModelObj.id,
+      async () => {
+        console.log(`[Generate] Final Grounded Stream starting... Model: ${currentBranding}`);
+        let stream: any;
+        console.log(`[OpenAI Generator] Calling chat.completions.create with model: ${realModel}`);
+        stream = await openai.chat.completions.create({
+          model: realModel, 
+          messages: openAiMessages,
+          stream: true,
+          temperature: 0.7,
+          max_tokens: 4000,
+        }, { signal: abortController.signal });
 
-    let accumulatedText = "";
-    for await (const chunk of stream) {
-      const content = chunk.choices[0]?.delta?.content || "";
-      if (content) {
-        accumulatedText += content;
-        if (!res.writableEnded) {
-          res.write(content);
+        res.setHeader("Content-Type", "text/plain; charset=utf-8");
+        res.setHeader("Transfer-Encoding", "chunked");
+        res.setHeader("Cache-Control", "no-cache");
+        res.setHeader("Connection", "keep-alive");
+
+        let accumulatedText = "";
+        for await (const chunk of stream) {
+          if (abortController.signal.aborted) {
+            throw new Error("Aborted by client");
+          }
+          let content = chunk.choices?.[0]?.delta?.content || "";
+          
+          if (content) {
+            accumulatedText += content;
+            if (!res.writableEnded) {
+              res.write(content);
+            }
+          }
         }
+        
+        console.log(`[Generate] Grounded stream completed successfully`);
+
+        // Increment usage count atomically
+        try {
+          await incrementUsage(supabase, userId, feature, 1);
+          console.log(`[Limit Engine] Atomic usage increment complete for user:${userId} on feature:${feature}`);
+        } catch (incErr: any) {
+          console.error(`[Limit Engine] Failed to increment usage for user:${userId}:`, incErr.message);
+        }
+
+        res.end();
+
+        if (req.body.conversationId) {
+          const assistantMessage = {
+            id: crypto.randomUUID(),
+            role: 'assistant',
+            content: accumulatedText,
+            model: activeModelObj.id,
+            created_at: new Date().toISOString()
+          };
+          appendReplyToConversation(
+            req.body.conversationId,
+            assistantMessage,
+            req.body.userId,
+            type || 'chat',
+            messages,
+            req.body.is_temporary
+          ).catch(console.error);
+        }
+      },
+      abortController,
+      jobId
+    );
+
+    if (!queueResult.success) {
+      console.warn(`[Generate] Job rejected/failed by queue: ${queueResult.error}`);
+      if (!res.headersSent) {
+        return res.status(429).json({ error: queueResult.error });
       }
-    }
-    
-    console.log(`[Generate] Grounded stream completed successfully`);
-
-    // Increment usage count atomically
-    try {
-      await incrementUsage(supabase, userId, feature, 1);
-      console.log(`[Limit Engine] Atomic usage increment complete for user:${userId} on feature:${feature}`);
-    } catch (incErr: any) {
-      console.error(`[Limit Engine] Failed to increment usage for user:${userId}:`, incErr.message);
-    }
-
-    res.end();
-
-    if (req.body.conversationId) {
-      const assistantMessage = {
-        id: crypto.randomUUID(),
-        role: 'assistant',
-        content: accumulatedText,
-        model: model,
-        created_at: new Date().toISOString()
-      };
-      appendReplyToConversation(
-        req.body.conversationId,
-        assistantMessage,
-        req.body.userId,
-        type || 'chat',
-        messages
-      ).catch(console.error);
     }
   } catch (error: any) {
     console.error("[Generate] Internal Error:", error);

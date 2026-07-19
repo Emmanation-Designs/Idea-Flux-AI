@@ -12,6 +12,7 @@ import {
   ChevronRight,
   ChevronDown,
   User,
+  AlertCircle,
   ExternalLink,
   Copy,
   ThumbsUp,
@@ -33,7 +34,9 @@ import {
   Loader2,
   ZoomIn,
   ZoomOut,
-  RotateCcw
+  RotateCcw,
+  ArrowUp,
+  HelpCircle
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Toaster, toast } from 'sonner';
@@ -42,6 +45,9 @@ import remarkMath from 'remark-math';
 import rehypeKatex from 'rehype-katex';
 import { clsx, type ClassValue } from 'clsx';
 import { SplashScreen } from './components/SplashScreen';
+import ModelSelector from './components/ModelSelector';
+import { QueueStatusLoader } from './components/QueueStatusLoader';
+import { getModel, canUseModel, getDefaultModel } from './ai/modelCatalog';
 
 const supportsLookbehind = (() => {
   try {
@@ -204,8 +210,8 @@ import { AppsView } from './components/AppsView';
 import { TextToSpeechView } from './components/TextToSpeechView';
 
 const PLAN_LIMITS = {
-  free: { messages: 15, analysis: 5, images: 5 },
-  pro: { messages: 100, analysis: Infinity, images: 20 },
+  free: { messages: Infinity, analysis: Infinity, images: Infinity },
+  pro: { messages: Infinity, analysis: Infinity, images: Infinity },
   plus: { messages: Infinity, analysis: Infinity, images: Infinity }
 };
 
@@ -227,9 +233,141 @@ export default function App() {
   const [profile, setProfile] = useState<Profile | null>(null);
   const [conversations, setConversations] = useState<any[]>([]);
   const [currentConversation, setCurrentConversation] = useState<any | null>(null);
+  const [selectedModelId, setSelectedModelId] = useState<string>(() => {
+    return localStorage.getItem('selected_model_default') || 'thinking';
+  });
+  const [autoMode, setAutoMode] = useState<boolean>(() => {
+    const saved = localStorage.getItem('auto_mode_preference');
+    return saved !== null ? saved === 'true' : false;
+  });
   const [messages, setMessages] = useState<Message[]>([]);
+  const [isTemporaryChat, setIsTemporaryChat] = useState<boolean>(false);
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+
+  const [capacityInfo, setCapacityInfo] = useState<{
+    nearingLimit: boolean;
+    limitReached: boolean;
+    resetTime?: string;
+  } | null>(null);
+
+  const [timeRemaining, setTimeRemaining] = useState<number>(0);
+
+  const fetchCapacityStatus = async () => {
+    if (!user) return;
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      const response = await fetch('/api/subscription/usage', {
+        headers: {
+          'Authorization': `Bearer ${session?.access_token || ''}`
+        }
+      });
+      if (response.ok) {
+        const data = await response.json();
+        setCapacityInfo({
+          nearingLimit: data.nearingLimit,
+          limitReached: data.limitReached,
+          resetTime: data.usage?.last_capacity_reset || data.usage?.last_daily_reset
+        });
+      }
+    } catch (err) {
+      console.error("[Capacity Check] Failed to fetch usage/capacity details:", err);
+    }
+  };
+
+  const formatTimeRemaining = (ms: number) => {
+    if (ms <= 0) return "00h 00m 00s";
+    const totalSeconds = Math.floor(ms / 1000);
+    const hours = Math.floor(totalSeconds / 3600);
+    const minutes = Math.floor((totalSeconds % 3600) / 60);
+    const seconds = totalSeconds % 60;
+    return `${hours}h ${minutes}m ${seconds}s`;
+  };
+
+  // Live countdown timer for the limit reached screen
+  useEffect(() => {
+    if (!capacityInfo?.limitReached) return;
+
+    const updateTimer = () => {
+      const now = new Date();
+      // UTC Midnight of next day
+      const nextReset = new Date(Date.UTC(
+        now.getUTCFullYear(),
+        now.getUTCMonth(),
+        now.getUTCDate() + 1,
+        0, 0, 0, 0
+      ));
+      const diff = nextReset.getTime() - now.getTime();
+      if (diff <= 0) {
+        setTimeRemaining(0);
+        // Automatically unlock usage on the frontend
+        setCapacityInfo(prev => prev ? { ...prev, limitReached: false, nearingLimit: false } : null);
+        // Sync fresh status from backend
+        fetchCapacityStatus();
+      } else {
+        setTimeRemaining(diff);
+      }
+    };
+
+    updateTimer();
+    const interval = setInterval(updateTimer, 1000);
+    return () => clearInterval(interval);
+  }, [capacityInfo?.limitReached]);
+
+  // Warning toast when nearing limits
+  useEffect(() => {
+    if (capacityInfo?.nearingLimit && !capacityInfo?.limitReached) {
+      const currentReset = capacityInfo.resetTime || new Date().toISOString().split('T')[0];
+      const warnedReset = localStorage.getItem('limit_warning_shown_reset');
+      if (warnedReset !== currentReset) {
+        toast("You're nearing today's AI usage limit.", {
+          description: "Upgrade for higher daily limits or continue when your usage resets.",
+          duration: 6000,
+          id: "usage-warning",
+        });
+        localStorage.setItem('limit_warning_shown_reset', currentReset);
+      }
+    }
+  }, [capacityInfo]);
+
+  // Synchronize model preference per user when user or profile is loaded
+  useEffect(() => {
+    if (user) {
+      const saved = localStorage.getItem(`selected_model_${user.id}`);
+      if (saved) {
+        setSelectedModelId(saved);
+      } else {
+        const userPlan = profile?.plan || 'free';
+        const def = getDefaultModel(userPlan);
+        setSelectedModelId(def.id);
+      }
+    }
+  }, [user, profile?.plan]);
+
+  // Handle explicit model selection and save to localStorage
+  const handleSelectModel = (modelId: string) => {
+    setSelectedModelId(modelId);
+    setAutoMode(false);
+    localStorage.setItem('auto_mode_preference', 'false');
+    if (user) {
+      localStorage.setItem(`selected_model_${user.id}`, modelId);
+      localStorage.setItem('selected_model_default', modelId);
+    }
+  };
+
+  const handleToggleAutoMode = (val: boolean) => {
+    setAutoMode(val);
+    localStorage.setItem('auto_mode_preference', String(val));
+  };
+
+  // Prevent users from using premium models if their plan is downgraded or changed
+  useEffect(() => {
+    const userPlan = profile?.plan || 'free';
+    if (selectedModelId && !canUseModel(selectedModelId, userPlan)) {
+      const def = getDefaultModel(userPlan);
+      setSelectedModelId(def.id);
+    }
+  }, [profile?.plan, selectedModelId]);
   const [showSettings, setShowSettings] = useState(false);
   const [showContextForm, setShowContextForm] = useState<ConversationType | null>(null);
   const [showLegal, setShowLegal] = useState<'about' | 'privacy' | 'terms' | null>(null);
@@ -662,11 +800,13 @@ export default function App() {
     if (user) {
       fetchProfile();
       fetchConversations();
+      fetchCapacityStatus();
     } else {
       setProfile(null);
       setConversations([]);
       setCurrentConversation(null);
       setMessages([]);
+      setCapacityInfo(null);
     }
   }, [user]);
 
@@ -802,13 +942,15 @@ export default function App() {
 
       if (error) throw error;
       
-      // Filter out duplicates by ID and ensure every conversation has an ID
-      const uniqueConversations = (data || []).reduce((acc: any[], curr: any) => {
-        if (curr.id && !acc.find(c => c.id === curr.id)) {
-          acc.push(curr);
-        }
-        return acc;
-      }, []);
+      // Filter out duplicates by ID, filter out temporary chats, and ensure every conversation has an ID
+      const uniqueConversations = (data || [])
+        .filter((c: any) => !c.is_temporary)
+        .reduce((acc: any[], curr: any) => {
+          if (curr.id && !acc.find(c => c.id === curr.id)) {
+            acc.push(curr);
+          }
+          return acc;
+        }, []);
       
       setConversations(uniqueConversations);
 
@@ -922,6 +1064,7 @@ export default function App() {
     const conv = conversations.find(c => c.id === id);
     if (conv) {
       setCurrentConversation(conv);
+      setIsTemporaryChat(!!conv.is_temporary);
       
       // Filter out duplicate messages by ID and ensure every message has a unique ID
       const uniqueMessages = (conv.messages || []).reduce((acc: any[], curr: any, idx: number) => {
@@ -1002,9 +1145,10 @@ export default function App() {
       return conversationLockRef.current;
     }
 
-    const newConversation = {
+    const isTemp = isTemporaryChat;
+    const newConversation: any = {
       user_id: user.id,
-      title: title || 'New Chat',
+      title: title || (isTemp ? 'Temporary Chat' : 'New Chat'),
       type: type,
       messages: [],
       metadata: metadata,
@@ -1015,11 +1159,38 @@ export default function App() {
     const creationPromise = (async () => {
       setIsLoading(true);
       try {
-        const { data, error } = await supabase
-          .from('conversations')
-          .insert(newConversation)
-          .select()
-          .single();
+        let data = null;
+        let error = null;
+
+        if (isTemp) {
+          const { data: tempRes, error: tempErr } = await supabase
+            .from('conversations')
+            .insert({ ...newConversation, is_temporary: true })
+            .select()
+            .single();
+
+          if (tempErr && tempErr.message && tempErr.message.includes('is_temporary')) {
+            console.warn("[Chat] Database lacks is_temporary column, retrying fallback insert...");
+            const { data: fallbackRes, error: fallbackErr } = await supabase
+              .from('conversations')
+              .insert(newConversation)
+              .select()
+              .single();
+            data = fallbackRes;
+            error = fallbackErr;
+          } else {
+            data = tempRes;
+            error = tempErr;
+          }
+        } else {
+          const { data: normalRes, error: normalErr } = await supabase
+            .from('conversations')
+            .insert(newConversation)
+            .select()
+            .single();
+          data = normalRes;
+          error = normalErr;
+        }
 
         if (error) {
           console.error("Supabase insert error:", error);
@@ -1031,6 +1202,7 @@ export default function App() {
         console.log("[Chat] Conversation created:", data.id);
         setCurrentConversation(data);
         setConversations(prev => {
+          if (isTemp || data.is_temporary) return prev; // Do NOT add temporary conversations to the sidebar history list!
           if (prev.some(c => c.id === data.id)) return prev;
           return [data, ...prev];
         });
@@ -1098,6 +1270,14 @@ export default function App() {
   };
 
   const sendMessage = async (content: string, convOverride?: any) => {
+    if (capacityInfo?.limitReached) {
+      toast.error("You've reached today's AI usage limit.", {
+        description: "Your usage resets in " + formatTimeRemaining(timeRemaining),
+        id: "usage-error-limit"
+      });
+      return;
+    }
+
     let conv = convOverride || currentConversation;
     const trimmed = content.trim();
 
@@ -1231,11 +1411,11 @@ export default function App() {
                            (lowerInput.includes("?") && (lowerInput.includes("who") || lowerInput.includes("how much") || lowerInput.includes("is there") || lowerInput.includes("what happened"))) ||
                            (lowerInput.includes("2024") || lowerInput.includes("2025") || lowerInput.includes("2026"));
       
-      let activeModel = 'trelvix-mini';
-      if (isImageIntent) activeModel = 'trelvix-visual';
-      else if (isSearchIntent) activeModel = 'trelvix-ultra';
+      const activeModel = selectedModelId;
+      const assistantMessages = updatedMessages.filter(m => m.role === 'assistant');
+      const prevModelId = assistantMessages.length > 0 ? assistantMessages[assistantMessages.length - 1].model : undefined;
 
-      console.log(`%c[Model Used] ${activeModel}`, 'color: #3b82f6; font-weight: bold; background: #eff6ff; padding: 2px 4px; border-radius: 4px;');
+      console.log(`%c[Model Used] ${activeModel} (Auto Mode: ${autoMode})`, 'color: #3b82f6; font-weight: bold; background: #eff6ff; padding: 2px 4px; border-radius: 4px;');
       console.log(`[Chat] Sending to /api/generate as type: ${isImageIntent ? 'image' : (conv.type || 'chat')}`);
       
       const response = await fetch('/api/generate', {
@@ -1244,17 +1424,21 @@ export default function App() {
         body: JSON.stringify({
           type: isImageIntent ? 'image' : (conv.type || 'chat'),
           model: activeModel,
+          autoMode: autoMode,
+          prevModelId: prevModelId,
           prompt: content,
           messages: updatedMessages.map(m => ({
             role: m.role,
             content: m.content,
-            image_url: m.image_url
+            image_url: m.image_url,
+            model: m.model
           })),
           ready_to_copy: conv.metadata?.ready_to_copy || false,
           personality: profile?.personality || 'creative',
           conversationId: conv.id,
           userId: user?.id,
-          image_speed: imageSpeed
+          image_speed: imageSpeed,
+          is_temporary: isTemporaryChat || !!conv.is_temporary
         }),
         signal: controller.signal
       });
@@ -1312,6 +1496,7 @@ export default function App() {
         
         setIsLoading(false);
         setIsGeneratingImage(false);
+        fetchCapacityStatus();
         return;
       }
 
@@ -1351,6 +1536,7 @@ export default function App() {
       }
 
       setIsLoading(false);
+      fetchCapacityStatus();
     } catch (error: any) {
       clearTimeout(timeoutId);
       setIsGeneratingImage(false);
@@ -1373,6 +1559,7 @@ export default function App() {
       toast.error(error.message || 'Connection failed. Please try again.');
       
       setIsLoading(false);
+      fetchCapacityStatus();
     }
   };
 
@@ -1788,7 +1975,7 @@ export default function App() {
   return (
     <div 
       style={{ height: viewportHeight }}
-      className={cn("fixed inset-0 w-full flex bg-white dark:bg-zinc-950 text-zinc-900 dark:text-zinc-100 font-sans overflow-hidden", isDarkMode && "dark")}
+      className={cn("fixed inset-0 w-full flex bg-white dark:bg-black text-zinc-900 dark:text-zinc-100 font-sans overflow-hidden", isDarkMode && "dark")}
     >
       <AnimatePresence>
         {isSplashing && (
@@ -1833,45 +2020,193 @@ export default function App() {
       <main className="flex-1 flex flex-col relative overflow-hidden">
         {/* Only show standard header for chat */}
         {activeView === 'chat' && (
-          <header className="h-16 flex items-center justify-between px-4 border-b border-zinc-200 dark:border-zinc-800 bg-white/80 dark:bg-zinc-950/80 backdrop-blur-md sticky top-0 z-30">
-            <div className="flex items-center gap-2 md:gap-3">
-              {!isSidebarOpen && (
-                <button onClick={() => setIsSidebarOpen(true)} className="p-2 hover:bg-zinc-100 dark:hover:bg-zinc-900 rounded-lg">
-                  <Menu className="w-5 h-5" />
-                </button>
-              )}
-              {!isSidebarOpen && (messages.length > 0 || streamingMessage) && (
-                <TrelvixLogo className="w-6 h-6" glow={false} />
-              )}
-              <h1 className="font-bold text-lg hidden md:block">
-                {currentConversation 
-                  ? (currentConversation.title.split(' ').slice(0, 2).join(' ') + (currentConversation.title.split(' ').length > 2 ? '...' : '')) 
-                  : 'Trelvix AI'}
-              </h1>
-              <h1 className="font-bold text-sm md:hidden block max-w-[150px] truncate">
-                {currentConversation 
-                  ? (currentConversation.title.split(' ').slice(0, 2).join(' ') + (currentConversation.title.split(' ').length > 2 ? '...' : '')) 
-                  : 'Trelvix AI'}
-              </h1>
-            </div>
+          <header className={cn(
+            "h-16 flex items-center justify-between px-4 transition-all duration-300 sticky top-0 z-30",
+            (messages.length === 0 && !streamingMessage)
+              ? "border-b border-transparent bg-transparent"
+              : "border-b border-zinc-200 dark:border-zinc-800 bg-white/80 dark:bg-black/80 backdrop-blur-md"
+          )}>
+            {messages.length === 0 && !streamingMessage ? (
+              <>
+                {/* Mobile empty chat header matching Image 2 */}
+                <div className="flex sm:hidden w-full items-center justify-between">
+                  {!isSidebarOpen && (
+                    <button 
+                      onClick={() => setIsSidebarOpen(true)} 
+                      className="w-9 h-9 flex items-center justify-center bg-zinc-100 dark:bg-zinc-900 rounded-full hover:opacity-85 transition-all"
+                    >
+                      <Menu className="w-5 h-5 text-zinc-600 dark:text-zinc-300" />
+                    </button>
+                  )}
+                  <button 
+                    onClick={() => setShowUpgradeModal(true)}
+                    className="flex items-center gap-1 px-4 py-1.5 bg-[#1E1F22] border border-zinc-800/80 rounded-full text-xs font-bold text-white transition-all hover:bg-zinc-800 shadow-sm"
+                  >
+                    <span className="text-purple-400 text-xs font-black">✦</span>
+                    <span>Get Plus</span>
+                  </button>
+                  <button 
+                    onClick={handleNewChat}
+                    className="w-9 h-9 flex items-center justify-center bg-zinc-100 dark:bg-zinc-900 rounded-full hover:opacity-85 transition-all"
+                  >
+                    <svg className="w-4.5 h-4.5 text-zinc-600 dark:text-zinc-300" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                      <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+                    </svg>
+                  </button>
+                </div>
 
-            <div className="flex items-center gap-2">
-              <button 
-                onClick={() => setActiveView('history')}
-                className="px-3 py-1.5 rounded-xl text-xs font-semibold transition-all hover:bg-zinc-100 dark:hover:bg-zinc-900 text-zinc-500"
-              >
-                History
-              </button>
-              {messages.length > 0 && (
-                <button 
-                  onClick={handleDownload}
-                  className="p-2 hover:bg-zinc-100 dark:hover:bg-zinc-900 rounded-lg transition-colors"
-                  title="Download conversation"
-                >
-                  <Download className="w-5 h-5" />
-                </button>
-              )}
-            </div>
+                {/* Desktop empty chat header matching Image 1 */}
+                <div className="hidden sm:flex w-full items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    {!isSidebarOpen && (
+                      <button onClick={() => setIsSidebarOpen(true)} className="p-2 hover:bg-zinc-100 dark:hover:bg-zinc-900 rounded-lg">
+                        <Menu className="w-5 h-5" />
+                      </button>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-3">
+                    {profile?.plan === 'free' && (
+                      <button 
+                        onClick={() => setShowUpgradeModal(true)}
+                        className="flex items-center gap-1.5 px-3 py-1.5 bg-[#19C37D] hover:bg-[#15a86b] text-white rounded-full text-xs font-bold transition-all shadow-xs shrink-0"
+                      >
+                        <Sparkles className="w-3.5 h-3.5" />
+                        Upgrade
+                      </button>
+                    )}
+
+                    <button 
+                      onClick={() => {
+                        const newState = !isTemporaryChat;
+                        setIsTemporaryChat(newState);
+                        handleNewChat();
+                        if (newState) {
+                          toast.success("Temporary chat is ON", {
+                            description: "Messages from this chat won't be saved to history.",
+                            duration: 4000
+                          });
+                        } else {
+                          toast("Temporary chat is OFF", {
+                            duration: 2000
+                          });
+                        }
+                      }}
+                      className={cn(
+                        "flex items-center gap-1.5 px-4 py-1.5 rounded-full text-xs font-semibold transition-all shrink-0 border",
+                        isTemporaryChat 
+                          ? "bg-purple-500/15 border-purple-500/40 text-purple-600 dark:text-purple-300"
+                          : "bg-zinc-100 dark:bg-[#1E1F22] border-zinc-200 dark:border-zinc-800 text-zinc-700 dark:text-zinc-300 hover:bg-zinc-200 dark:hover:bg-zinc-800"
+                      )}
+                      title="Turn on temporary chat to avoid saving to history"
+                    >
+                      <div className={cn(
+                        "w-1.5 h-1.5 rounded-full animate-pulse",
+                        isTemporaryChat ? "bg-purple-500" : "bg-zinc-400 dark:bg-zinc-500"
+                      )} />
+                      <span>
+                        {isTemporaryChat ? "Temporary Chat: ON" : "Turn on temporary chat"}
+                      </span>
+                    </button>
+
+                    <button 
+                      onClick={() => setShowSettings(true)}
+                      className="w-9 h-9 rounded-full border-2 border-dashed border-zinc-400 dark:border-zinc-700/60 flex items-center justify-center text-zinc-500 dark:text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-800/40 transition-colors"
+                      title="Open settings"
+                    >
+                      <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                        <circle cx="12" cy="12" r="3" />
+                        <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
+                      </svg>
+                    </button>
+                  </div>
+                </div>
+              </>
+            ) : (
+              <>
+                <div className="flex items-center gap-2 md:gap-3">
+                  {!isSidebarOpen && (
+                    <button onClick={() => setIsSidebarOpen(true)} className="p-2 hover:bg-zinc-100 dark:hover:bg-zinc-900 rounded-lg">
+                      <Menu className="w-5 h-5" />
+                    </button>
+                  )}
+                  {!isSidebarOpen && (messages.length > 0 || streamingMessage) && (
+                    <TrelvixLogo className="w-6 h-6" glow={false} />
+                  )}
+                  <h1 className="font-bold text-lg hidden md:block mr-2">
+                    {currentConversation 
+                      ? (currentConversation.title.split(' ').slice(0, 2).join(' ') + (currentConversation.title.split(' ').length > 2 ? '...' : '')) 
+                      : 'Trelvix AI'}
+                  </h1>
+                  <h1 className="font-bold text-sm md:hidden block max-w-[120px] truncate mr-1">
+                    {currentConversation 
+                      ? (currentConversation.title.split(' ').slice(0, 2).join(' ') + (currentConversation.title.split(' ').length > 2 ? '...' : '')) 
+                      : 'Trelvix AI'}
+                  </h1>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  {profile?.plan === 'free' && (
+                    <button 
+                      onClick={() => setShowUpgradeModal(true)}
+                      className="hidden sm:flex items-center gap-1.5 px-3 py-1.5 bg-[#19C37D] hover:bg-[#15a86b] text-white rounded-full text-xs font-bold transition-all shadow-xs shrink-0"
+                    >
+                      <Sparkles className="w-3.5 h-3.5" />
+                      Upgrade
+                    </button>
+                  )}
+                  
+                  <button 
+                    onClick={() => {
+                      const newState = !isTemporaryChat;
+                      setIsTemporaryChat(newState);
+                      handleNewChat(); // Always clear active messages when switching temporary chat mode to ensure safety
+                      if (newState) {
+                        toast.success("Temporary chat is ON", {
+                          description: "Messages from this chat won't be saved to history.",
+                          duration: 4000
+                        });
+                      } else {
+                        toast("Temporary chat is OFF", {
+                          duration: 2000
+                        });
+                      }
+                    }}
+                    className={cn(
+                      "flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold transition-all shrink-0 border",
+                      isTemporaryChat 
+                        ? "bg-purple-500/10 dark:bg-purple-500/25 border-purple-500/35 dark:border-purple-500/50 text-purple-600 dark:text-purple-300"
+                        : "bg-transparent border-zinc-200 dark:border-zinc-800 text-zinc-500 dark:text-zinc-400 hover:bg-zinc-50 dark:hover:bg-zinc-900"
+                    )}
+                    title={isTemporaryChat ? "Click to turn off temporary chat" : "Turn on temporary chat to avoid saving to history"}
+                  >
+                    <div className={cn(
+                      "w-1.5 h-1.5 rounded-full animate-pulse",
+                      isTemporaryChat ? "bg-purple-500" : "bg-zinc-400 dark:bg-zinc-500"
+                    )} />
+                    <span className="hidden sm:inline">
+                      {isTemporaryChat ? "Temporary Chat: ON" : "Temporary Chat"}
+                    </span>
+                    <span className="sm:hidden">Temp</span>
+                  </button>
+
+                  <button 
+                    onClick={() => setActiveView('history')}
+                    className="px-3 py-1.5 rounded-xl text-xs font-semibold transition-all hover:bg-zinc-100 dark:hover:bg-zinc-900 text-zinc-500"
+                  >
+                    History
+                  </button>
+                  {messages.length > 0 && (
+                    <button 
+                      onClick={handleDownload}
+                      className="p-2 hover:bg-zinc-100 dark:hover:bg-zinc-900 rounded-lg transition-colors"
+                      title="Download conversation"
+                    >
+                      <Download className="w-5 h-5" />
+                    </button>
+                  )}
+                </div>
+              </>
+            )}
           </header>
         )}
 
@@ -1993,7 +2328,20 @@ export default function App() {
           ) : (
             <>
               {messages.length === 0 && !streamingMessage ? (
-                <WelcomeScreen />
+                <WelcomeScreen 
+                  input={input}
+                  setInput={setInput}
+                  sendMessage={sendMessage}
+                  selectedModelId={selectedModelId}
+                  onSelectModel={handleSelectModel}
+                  userPlan={profile?.plan || 'free'}
+                  onUpgradeClick={() => setShowUpgradeModal(true)}
+                  onUploadClick={() => fileInputRef.current?.click()}
+                  selectedAttachment={selectedAttachment}
+                  clearAttachment={clearAttachment}
+                  isLoading={isLoading}
+                  textareaRef={textareaRef}
+                />
               ) : (
                 <div className="max-w-3xl mx-auto w-full px-4 py-8 md:py-12 space-y-10 pb-36">
                   {messages.map((m, index) => (
@@ -2256,16 +2604,7 @@ export default function App() {
                             </div>
                           </motion.div>
                         ) : (
-                          <div className="flex items-center gap-3 py-2 px-1">
-                            <div className="flex gap-1 items-center">
-                              <span className="w-1.5 h-1.5 bg-zinc-400 dark:bg-zinc-500 rounded-full animate-bounce" />
-                              <span className="w-1.5 h-1.5 bg-zinc-400 dark:bg-zinc-500 rounded-full animate-bounce [animation-delay:0.2s]" />
-                              <span className="w-1.5 h-1.5 bg-zinc-400 dark:bg-zinc-500 rounded-full animate-bounce [animation-delay:0.4s]" />
-                            </div>
-                            <p className="text-xs font-bold text-zinc-400 dark:text-zinc-500 uppercase tracking-widest">
-                              fetching response
-                            </p>
-                          </div>
+                          <QueueStatusLoader userPlan={profile?.plan || 'free'} />
                         )}
                       </div>
                     </div>
@@ -2279,10 +2618,35 @@ export default function App() {
         </div>
 
         {/* Input Area */}
-        {activeView === 'chat' && (
-          <div className="relative p-3 pb-4 sm:p-6 md:p-8 bg-white dark:bg-zinc-950 border-t border-zinc-100 dark:border-zinc-900/50">
+        {activeView === 'chat' && (messages.length > 0 || streamingMessage) && (
+          <div className="relative p-3 pb-4 sm:p-6 md:p-8 bg-white dark:bg-black border-t border-zinc-100 dark:border-zinc-900/50">
             <div className="max-w-4xl mx-auto space-y-2 md:space-y-6">
-              <div className="bg-zinc-50 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-700/80 rounded-[2rem] md:rounded-[2.5rem] shadow-xl md:shadow-2xl focus-within:ring-2 focus-within:ring-zinc-900/5 dark:focus-within:ring-white/15 dark:focus-within:border-zinc-500 transition-all relative z-20 overflow-hidden shadow-zinc-500/5 dark:shadow-black/60">
+              {capacityInfo?.limitReached ? (
+                <div className="w-full flex flex-col items-center justify-center py-8 px-6 border border-zinc-200/60 dark:border-zinc-800/80 rounded-[2rem] md:rounded-[2.5rem] bg-zinc-50/50 dark:bg-zinc-900/30 text-center select-none animate-fade-in backdrop-blur-sm shadow-sm">
+                  <div className="p-3 bg-red-100 dark:bg-red-950/30 text-red-600 dark:text-red-400 rounded-full mb-3 shadow-inner">
+                    <AlertCircle className="w-6 h-6 animate-pulse" />
+                  </div>
+                  <h3 className="text-base font-bold text-zinc-900 dark:text-zinc-50">
+                    You've reached today's AI usage limit
+                  </h3>
+                  <p className="text-sm text-zinc-500 dark:text-zinc-400 mt-1">
+                    Your usage resets in
+                  </p>
+                  <div className="text-xl font-mono font-black text-zinc-800 dark:text-zinc-100 mt-2 tracking-widest bg-zinc-100 dark:bg-zinc-800/50 px-4 py-1.5 rounded-xl border border-zinc-200/50 dark:border-zinc-700/30 shadow-inner">
+                    {formatTimeRemaining(timeRemaining)}
+                  </div>
+                  <button 
+                    onClick={() => {
+                      setUpgradeReason('usage');
+                      setShowUpgradeModal(true);
+                    }}
+                    className="mt-5 px-5 py-2.5 bg-zinc-900 dark:bg-white text-white dark:text-zinc-900 text-xs md:text-sm font-bold uppercase tracking-widest rounded-full hover:opacity-90 active:scale-95 transition-all shadow-md animate-bounce"
+                  >
+                    Upgrade Plan for higher limits
+                  </button>
+                </div>
+              ) : (
+                <div className="bg-zinc-50 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-700/80 rounded-[2rem] md:rounded-[2.5rem] shadow-xl md:shadow-2xl focus-within:ring-2 focus-within:ring-zinc-900/5 dark:focus-within:ring-white/15 dark:focus-within:border-zinc-500 transition-all relative z-20 overflow-visible shadow-zinc-500/5 dark:shadow-black/60">
                 <AnimatePresence>
                   {selectedAttachment && (
                     <motion.div 
@@ -2322,9 +2686,10 @@ export default function App() {
                   <div className="flex-shrink-0">
                     <button 
                       onClick={() => fileInputRef.current?.click()}
-                      className="p-3 md:p-4 text-zinc-400 dark:text-zinc-300 hover:text-zinc-900 dark:hover:text-white hover:bg-white dark:hover:bg-zinc-800 transition-all rounded-2xl md:rounded-3xl"
+                      className="p-3 md:p-4 text-zinc-400 dark:text-zinc-300 hover:text-zinc-900 dark:hover:text-white hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-all rounded-full flex items-center justify-center"
+                      title="Upload file or attachment"
                     >
-                      <Paperclip className="w-4 h-4 md:w-5 md:h-5" />
+                      <Plus className="w-5 h-5 text-zinc-500 dark:text-zinc-400" />
                     </button>
                   </div>
  
@@ -2345,26 +2710,38 @@ export default function App() {
                           ? "Daily limit reached. Click to upgrade." 
                           : (selectedAttachment ? `Ask about this ${selectedAttachment.type}...` : "Message Trelvix AI...")
                       }
-                      className="w-full bg-transparent border-none rounded-none px-4 md:px-6 py-4 md:py-5 pr-14 md:pr-28 focus:ring-0 outline-none resize-none transition-all min-h-[56px] md:min-h-[64px] max-h-[200px] text-sm md:text-base font-normal text-zinc-900 dark:text-zinc-50 placeholder:text-zinc-400 dark:placeholder:text-zinc-300"
+                      className="w-full bg-transparent border-none rounded-none px-4 md:px-6 py-4 md:py-5 pr-28 sm:pr-32 md:pr-40 focus:ring-0 outline-none resize-none transition-all min-h-[56px] md:min-h-[64px] max-h-[200px] text-sm md:text-base font-normal text-zinc-900 dark:text-zinc-50 placeholder:text-zinc-400 dark:placeholder:text-zinc-300"
                     />
                     
-                    <div className="absolute right-0 flex items-center gap-1 md:gap-2 mr-2">
+                    <div className="absolute right-0 flex items-center gap-1 md:gap-1.5 mr-2 z-30 pointer-events-auto">
+                      <ModelSelector 
+                        selectedModelId={selectedModelId} 
+                        userPlan={profile?.plan || 'free'} 
+                        onSelectModel={handleSelectModel}
+                        onUpgradeClick={() => setShowUpgradeModal(true)}
+                        variant="compact"
+                      />
+
                       <button 
                         onClick={() => sendMessage(input)}
                         disabled={(!input.trim() && !selectedAttachment) || isLoading}
                         className={cn(
-                          "p-3 md:p-3.5 rounded-full transition-all shadow-xl flex items-center justify-center transform active:scale-95 flex-shrink-0",
+                          "p-2.5 md:p-3 rounded-full transition-all shadow-md flex items-center justify-center transform active:scale-95 shrink-0",
                           input.trim() || selectedAttachment
-                            ? "bg-zinc-900 dark:bg-white text-white dark:text-zinc-900" 
-                            : "text-zinc-300 dark:text-zinc-500 cursor-not-allowed border border-zinc-200 dark:border-zinc-700/80"
+                            ? "bg-zinc-900 dark:bg-white text-white dark:text-zinc-900 hover:opacity-90 shadow-zinc-950/10 dark:shadow-white/5" 
+                            : "text-zinc-300 dark:text-zinc-500 cursor-not-allowed border border-zinc-200 dark:border-zinc-800"
                         )}
+                        title="Send message"
                       >
-                        <Send className="w-5 h-5" />
+                        <ArrowUp className="w-4 h-4 md:w-4.5 md:h-4.5" />
                       </button>
                     </div>
                   </div>
                 </div>
               </div>
+            )}
+
+
 
               <div className="flex items-center justify-center py-1">
                 <p className="text-[8px] md:text-[10px] font-black uppercase tracking-[0.15em] md:tracking-[0.2em] opacity-20 text-center">

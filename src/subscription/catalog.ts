@@ -24,12 +24,12 @@ export interface PlanLimits {
   chat: 'unlimited' | number;
   tts: number;
   tts_max_chars: number;
-  image_generation: number;
-  image_edit: number;
-  image_analysis: number;
-  ocr: number;
-  document_ai: number;
-  pdf: number;
+  image_generation: 'unlimited' | number;
+  image_edit: 'unlimited' | number;
+  image_analysis: 'unlimited' | number;
+  ocr: 'unlimited' | number;
+  document_ai: 'unlimited' | number;
+  pdf: 'unlimited' | number;
   ads: 'enabled' | 'disabled';
 }
 
@@ -96,15 +96,15 @@ export const SUBSCRIPTION_CATALOG: Record<PlanId, PlanCatalogEntry> = {
       international: { currency: 'USD', price: 0 },
     },
     limits: {
-      chat: 'unlimited',
+      chat: 25,
       tts: 10000,
       tts_max_chars: 2000,
       image_generation: 5,
       image_edit: 3,
-      image_analysis: 20,
-      ocr: 20,
-      document_ai: 20,
-      pdf: 10,
+      image_analysis: 10,
+      ocr: 5,
+      document_ai: 5,
+      pdf: 3,
       ads: 'enabled',
     },
     features: {
@@ -149,14 +149,14 @@ export const SUBSCRIPTION_CATALOG: Record<PlanId, PlanCatalogEntry> = {
     },
     limits: {
       chat: 'unlimited',
-      tts: 250000,
+      tts: 10000,
       tts_max_chars: 20000,
-      image_generation: 100,
-      image_edit: 100,
-      image_analysis: 300,
-      ocr: 300,
-      document_ai: 300,
-      pdf: 100,
+      image_generation: 'unlimited',
+      image_edit: 'unlimited',
+      image_analysis: 'unlimited',
+      ocr: 'unlimited',
+      document_ai: 'unlimited',
+      pdf: 'unlimited',
       ads: 'disabled',
     },
     features: {
@@ -201,14 +201,14 @@ export const SUBSCRIPTION_CATALOG: Record<PlanId, PlanCatalogEntry> = {
     },
     limits: {
       chat: 'unlimited',
-      tts: 1000000,
+      tts: 10000,
       tts_max_chars: 100000,
-      image_generation: 5000,
-      image_edit: 5000,
-      image_analysis: 5000,
-      ocr: 5000,
-      document_ai: 5000,
-      pdf: 5000,
+      image_generation: 'unlimited',
+      image_edit: 'unlimited',
+      image_analysis: 'unlimited',
+      ocr: 'unlimited',
+      document_ai: 'unlimited',
+      pdf: 'unlimited',
       ads: 'disabled',
     },
     features: {

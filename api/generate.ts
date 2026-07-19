@@ -37,7 +37,8 @@ async function appendReplyToConversation(
   replyMessage: any, 
   userId?: string, 
   conversationType?: string, 
-  previousMessages?: any[]
+  previousMessages?: any[],
+  isTemporary?: boolean
 ) {
   if (!conversationId) return;
   try {
@@ -66,7 +67,7 @@ async function appendReplyToConversation(
           titleText = titleText.slice(0, 48) + '...';
         }
 
-        const newConv = {
+        const newConv: any = {
           id: conversationId,
           user_id: userId,
           title: titleText,
@@ -76,9 +77,26 @@ async function appendReplyToConversation(
           updated_at: new Date().toISOString()
         };
 
-        const { error: insertErr } = await supabase
-          .from('conversations')
-          .insert(newConv);
+        let insertErr;
+        if (isTemporary) {
+          const { error } = await supabase
+            .from('conversations')
+            .insert({ ...newConv, is_temporary: true });
+          if (error && error.message.includes('is_temporary')) {
+            console.warn("[API DB] Database lacks is_temporary column, retrying fallback insert...");
+            const { error: fallbackErr } = await supabase
+              .from('conversations')
+              .insert(newConv);
+            insertErr = fallbackErr;
+          } else {
+            insertErr = error;
+          }
+        } else {
+          const { error } = await supabase
+            .from('conversations')
+            .insert(newConv);
+          insertErr = error;
+        }
 
         if (insertErr) {
           console.error(`[API DB] Error inserting conversation on fallback:`, insertErr);
@@ -410,7 +428,8 @@ export default async function handler(req: any, res: any) {
                 assistantMessage,
                 req.body.userId,
                 type || 'image',
-                messages
+                messages,
+                req.body.is_temporary
               );
           } catch (e) {
             console.error("[API Image Save Error]:", e);
@@ -606,7 +625,8 @@ Because you are integrated with our custom frontend compiler, YOU CAN and MUST c
         assistantMessage,
         req.body.userId,
         type || 'chat',
-        messages
+        messages,
+        req.body.is_temporary
       ).catch(console.error);
     }
   } catch (error: any) {

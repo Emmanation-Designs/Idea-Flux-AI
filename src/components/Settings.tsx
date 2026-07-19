@@ -188,7 +188,7 @@ export const Settings = (props: {
         'Unlimited chat messages',
         `${limits.image_generation} image generations / day`,
         `${limits.image_edit} image edits / day`,
-        'Premium AI Models & priority speed',
+        'Extended Thinking & priority speed',
         'No advertisement banner'
       ];
     } else if (planId === 'pro') {
@@ -196,7 +196,7 @@ export const Settings = (props: {
         'Unlimited chat messages',
         `${limits.image_generation} image generations / day`,
         `${limits.image_edit} image edits / day`,
-        'Elite AI Models & maximum speed',
+        'Maximum Thinking & maximum speed',
         'Full Document & PDF suite access',
         'Dedicated priority queue'
       ];
