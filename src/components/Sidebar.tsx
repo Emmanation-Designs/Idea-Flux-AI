@@ -19,7 +19,6 @@ import { motion, AnimatePresence } from 'motion/react';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 import type { Profile } from '../types';
-import { TrelvixLogo } from './TrelvixLogo';
 
 function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
@@ -84,9 +83,8 @@ export const Sidebar = ({
       <div className="p-6 flex items-center justify-between mb-2">
         <h2 
           onClick={() => handleAction(onNewChat)}
-          className="font-black text-xs uppercase tracking-[0.2em] flex items-center gap-2 cursor-pointer transition-opacity text-zinc-900 dark:text-white"
+          className="font-black text-xs uppercase tracking-[0.2em] cursor-pointer transition-opacity text-zinc-900 dark:text-white"
         >
-          <TrelvixLogo className="w-5 h-5" glow={false} />
           Trelvix AI
         </h2>
         <button onClick={() => setIsOpen(false)} className="p-1 hover:bg-zinc-200 dark:hover:bg-zinc-800 rounded-md lg:hidden text-zinc-400">
@@ -135,19 +133,6 @@ export const Sidebar = ({
           >
             <ImageIcon className="w-4 h-4" />
             Images
-          </button>
-
-          <button 
-            onClick={() => handleAction(onOpenTTS)}
-            className={cn(
-              "w-full flex items-center gap-3 px-4 py-2.5 text-sm font-medium rounded-xl transition-all",
-              activeView === 'tts' 
-                ? "bg-zinc-200 dark:bg-zinc-800 text-zinc-900 dark:text-zinc-100 shadow-sm" 
-                : "text-zinc-500 hover:bg-zinc-100 dark:hover:bg-zinc-900"
-            )}
-          >
-            <Volume2 className="w-4 h-4" />
-            Text to Speech
           </button>
 
           <button 

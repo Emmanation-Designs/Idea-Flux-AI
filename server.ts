@@ -1066,7 +1066,39 @@ function formatMessagesForGemini(openAiMessages: any[]) {
 }
 
 async function handleGenerate(req: express.Request, res: express.Response) {
-  const { type, prompt, messages = [], ready_to_copy = false, personality = "creative", model = "gpt-5-nano", autoMode = true, prevModelId } = req.body;
+  let { type, prompt, messages = [], ready_to_copy = false, personality = "creative", model = "gpt-5-nano", autoMode = true, prevModelId, webSearch = false } = req.body;
+
+  let activeTagBackend: string | null = null;
+  if (prompt && typeof prompt === 'string') {
+    if (prompt.startsWith('@Image')) {
+      activeTagBackend = '@Image';
+      prompt = prompt.slice('@Image'.length).trim();
+    } else if (prompt.startsWith('@Write')) {
+      activeTagBackend = '@Write';
+      prompt = prompt.slice('@Write'.length).trim();
+    } else if (prompt.startsWith('@WebSearch')) {
+      activeTagBackend = '@WebSearch';
+      prompt = prompt.slice('@WebSearch'.length).trim();
+    }
+  }
+
+  messages = messages.map((m: any) => {
+    if (m && m.content && typeof m.content === 'string') {
+      let mContent = m.content;
+      if (mContent.startsWith('@Image')) {
+        activeTagBackend = activeTagBackend || '@Image';
+        mContent = mContent.slice('@Image'.length).trim();
+      } else if (mContent.startsWith('@Write')) {
+        activeTagBackend = activeTagBackend || '@Write';
+        mContent = mContent.slice('@Write'.length).trim();
+      } else if (mContent.startsWith('@WebSearch')) {
+        activeTagBackend = activeTagBackend || '@WebSearch';
+        mContent = mContent.slice('@WebSearch'.length).trim();
+      }
+      return { ...m, content: mContent };
+    }
+    return m;
+  });
 
   const needsWebSearch = (text: string) => {
     const searchKeywords = [
@@ -1124,7 +1156,7 @@ async function handleGenerate(req: express.Request, res: express.Response) {
     // Stricter image intent detection: must start with or specifically request an image, or edit an uploaded image
     const lowerLast = lastMessageContent.toLowerCase();
     const fileHasImage = (messages || []).some((m: any) => m.image_url && m.image_url.startsWith("data:image"));
-    const isImageIntent = (type === "image" || requestedModelId === "extendedThinking" || 
+    const isImageIntent = (type === "image" || activeTagBackend === "@Image" || requestedModelId === "extendedThinking" || 
                           (lowerLast.startsWith("generate image") || 
                            lowerLast.startsWith("create image") || 
                            lowerLast.startsWith("draw") || 
@@ -1221,7 +1253,7 @@ async function handleGenerate(req: express.Request, res: express.Response) {
       // Fallback: allow to prevent downtime if table is missing during setup
     }
 
-    const searchRequired = needsWebSearch(lastMessageContent) && !isImageIntent;
+    const searchRequired = (webSearch || activeTagBackend === "@WebSearch" || needsWebSearch(lastMessageContent)) && !isImageIntent;
 
     console.log(`[Intelligence Controller] Resolved Model: ${activeModelObj.id} (API Name: ${realModel}, Provider: ${modelProvider}) for Plan: ${userPlan}, Intent: ${type}, Search: ${searchRequired}`);
 

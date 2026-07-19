@@ -21,6 +21,7 @@ import {
   MessageSquare,
   Image as ImageIcon,
   Edit2,
+  Edit3,
   Trash2,
   Globe,
   Maximize2,
@@ -36,7 +37,8 @@ import {
   ZoomOut,
   RotateCcw,
   ArrowUp,
-  HelpCircle
+  HelpCircle,
+  Mic
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Toaster, toast } from 'sonner';
@@ -102,7 +104,6 @@ const preprocessMath = (content: string): string => {
 
 // --- Components ---
 import { Sidebar } from './components/Sidebar';
-import { TrelvixLogo } from './components/TrelvixLogo';
 
 const ImageWithLoader = ({ src, alt, className, onClick, skipWatermark = false }: { src: string, alt: string, className?: string, onClick?: (e: React.MouseEvent) => void, skipWatermark?: boolean }) => {
   const [isLoaded, setIsLoaded] = useState(false);
@@ -242,7 +243,31 @@ export default function App() {
   });
   const [messages, setMessages] = useState<Message[]>([]);
   const [isTemporaryChat, setIsTemporaryChat] = useState<boolean>(false);
+  const [showTempChatIntro, setShowTempChatIntro] = useState<boolean>(false);
   const [input, setInput] = useState('');
+  const [activeTag, setActiveTag] = useState<string | null>(null);
+
+  const handleInputChange = (value: string) => {
+    let text = value;
+    let detectedTag = activeTag;
+    
+    if (text.startsWith('@Image ')) {
+      detectedTag = '@Image';
+      text = text.slice('@Image '.length);
+    } else if (text.startsWith('@Write ')) {
+      detectedTag = '@Write';
+      text = text.slice('@Write '.length);
+    } else if (text.startsWith('@WebSearch ')) {
+      detectedTag = '@WebSearch';
+      text = text.slice('@WebSearch '.length);
+    } else if (text === '@Image' || text === '@Write' || text === '@WebSearch') {
+      detectedTag = text;
+      text = '';
+    }
+    
+    setActiveTag(detectedTag);
+    setInput(text);
+  };
   const [isLoading, setIsLoading] = useState(false);
 
   const [capacityInfo, setCapacityInfo] = useState<{
@@ -1288,10 +1313,25 @@ export default function App() {
       return;
     }
 
+    // Detect and strip routing tags
+    let promptTag: string | null = null;
+    let cleanedContent = content;
+
+    if (content.startsWith('@Image')) {
+      promptTag = '@Image';
+      cleanedContent = content.slice('@Image'.length).trim();
+    } else if (content.startsWith('@Write')) {
+      promptTag = '@Write';
+      cleanedContent = content.slice('@Write'.length).trim();
+    } else if (content.startsWith('@WebSearch')) {
+      promptTag = '@WebSearch';
+      cleanedContent = content.slice('@WebSearch'.length).trim();
+    }
+
     const userMessage: Message = {
       id: safeUUID(),
       role: 'user',
-      content,
+      content: cleanedContent,
       image_url: selectedAttachment?.type === 'image' ? selectedAttachment.preview : undefined,
       attachment_name: selectedAttachment?.file.name,
       attachment_type: selectedAttachment?.type,
@@ -1299,18 +1339,19 @@ export default function App() {
     };
 
     // Smart Image Intent Detection
-    const lowerContent = content.toLowerCase();
+    const lowerContent = cleanedContent.toLowerCase();
     const hasImageUpload = (selectedAttachment?.type === 'image') || messages.some((m: any) => m.image_url);
     const docExclusionFilter = /\b(pdf|docx|xlsx|word|excel|spreadsheet|csv|document|resume|report|cv|curriculum\s*vitae|invoice|presentation|budget|letter|email|cover\s*letter|essay|article|post|text|contract|agreement|outline|syllabus|proposal|workbook|chart|table|schema|blueprint|database)\b/i;
     const isImageIntent = 
-      ((conv?.type === 'image') ||
+      promptTag === '@Image' ||
+      (((conv?.type === 'image') ||
        ((/generate|create|make|draw|design|show me|give me|i want|produce|paint|illustrate|visualize|render/i.test(lowerContent)) && 
         (/image|picture|photo|logo|flyer|poster|illustration|drawing|sketch|graphic|art|realistic|scene|portrait|landscape/i.test(lowerContent))) ||
        /\b(logo|flyer|poster|art|sketch|drawing)\b/i.test(lowerContent) ||
        /image of|picture of|photo of|generate an image|create an image|make an image|generate a picture|create a picture/i.test(lowerContent) ||
        /^realistic |^photorealistic /i.test(lowerContent) ||
        (hasImageUpload && /edit|modify|change|more professional|add text|similar style|re-create|recreate/i.test(lowerContent))) &&
-      !docExclusionFilter.test(lowerContent);
+      !docExclusionFilter.test(lowerContent));
 
     const isAnalysisIntent = !!selectedAttachment;
 
@@ -1351,14 +1392,15 @@ export default function App() {
     // INSTANT FEEDBACK AND CLEAR INPUTS IMMEDIATELY
     const updatedMessages = [...messages, userMessage];
     setMessages(updatedMessages);
-    const lastInput = content;
+    const lastInput = cleanedContent;
     setInput('');
+    setActiveTag(null);
     const currentAttachment = selectedAttachment; 
     clearAttachment(); 
     setIsLoading(true);
     if (isImageIntent) {
       setIsGeneratingImage(true);
-      setCurrentImagePrompt(content);
+      setCurrentImagePrompt(cleanedContent);
     } else {
       setIsGeneratingImage(false);
       setCurrentImagePrompt('');
@@ -1383,10 +1425,10 @@ export default function App() {
       if (!conv) {
         console.log("[Chat] Lazily creating new conversation in background...");
         const type = currentAttachment ? 'general' : (isImageIntent ? 'image' : 'script');
-        const rawTitle = content.trim() || (isImageIntent ? 'Image Generation' : (currentAttachment ? 'File Analysis' : 'New Chat'));
+        const rawTitle = cleanedContent.trim() || (isImageIntent ? 'Image Generation' : (currentAttachment ? 'File Analysis' : 'New Chat'));
         const title = rawTitle.length > 50 ? rawTitle.slice(0, 47) + '...' : rawTitle;
         
-        const newConv = await startConversation(type, title, content, {}, false);
+        const newConv = await startConversation(type, title, cleanedContent, {}, false);
         if (!newConv) {
           throw new Error("Failed to set up secure conversation channel. Please check your network connection.");
         }
@@ -1397,7 +1439,7 @@ export default function App() {
       await updateConversationMessages(conv.id, updatedMessages);
       setConversations(prev => prev.map(c => c.id === conv.id ? { ...c, messages: updatedMessages, updated_at: new Date().toISOString() } : c));
 
-      const lowerInput = content.toLowerCase();
+      const lowerInput = cleanedContent.toLowerCase();
       const searchKeywords = [
         "news", "weather", "price", "today", "latest", "current", "2024", "2025", "2026",
         "politics", "who is", "what happened", "stock", "dollar", "usd", "ngn", "naira",
@@ -1407,7 +1449,7 @@ export default function App() {
         "election", "winner of", "standings in", "scheduled for", "rate in", "worth in",
         "who won", "yesterday", "tonight", "who is currently", "latest on"
       ];
-      const isSearchIntent = searchKeywords.some(k => lowerInput.includes(k)) || 
+      const isSearchIntent = promptTag === '@WebSearch' || searchKeywords.some(k => lowerInput.includes(k)) || 
                            (lowerInput.includes("?") && (lowerInput.includes("who") || lowerInput.includes("how much") || lowerInput.includes("is there") || lowerInput.includes("what happened"))) ||
                            (lowerInput.includes("2024") || lowerInput.includes("2025") || lowerInput.includes("2026"));
       
@@ -1426,7 +1468,7 @@ export default function App() {
           model: activeModel,
           autoMode: autoMode,
           prevModelId: prevModelId,
-          prompt: content,
+          prompt: cleanedContent,
           messages: updatedMessages.map(m => ({
             role: m.role,
             content: m.content,
@@ -1438,7 +1480,8 @@ export default function App() {
           conversationId: conv.id,
           userId: user?.id,
           image_speed: imageSpeed,
-          is_temporary: isTemporaryChat || !!conv.is_temporary
+          is_temporary: isTemporaryChat || !!conv.is_temporary,
+          webSearch: promptTag === '@WebSearch'
         }),
         signal: controller.signal
       });
@@ -2026,187 +2069,106 @@ export default function App() {
               ? "border-b border-transparent bg-transparent"
               : "border-b border-zinc-200 dark:border-zinc-800 bg-white/80 dark:bg-black/80 backdrop-blur-md"
           )}>
-            {messages.length === 0 && !streamingMessage ? (
-              <>
-                {/* Mobile empty chat header matching Image 2 */}
-                <div className="flex sm:hidden w-full items-center justify-between">
-                  {!isSidebarOpen && (
-                    <button 
-                      onClick={() => setIsSidebarOpen(true)} 
-                      className="w-9 h-9 flex items-center justify-center bg-zinc-100 dark:bg-zinc-900 rounded-full hover:opacity-85 transition-all"
-                    >
-                      <Menu className="w-5 h-5 text-zinc-600 dark:text-zinc-300" />
-                    </button>
-                  )}
+            {/* Left Header Section */}
+            <div className="flex items-center gap-2 md:gap-3">
+              {!isSidebarOpen && (
+                <>
+                  {/* Desktop Menu toggle */}
                   <button 
-                    onClick={() => setShowUpgradeModal(true)}
-                    className="flex items-center gap-1 px-4 py-1.5 bg-[#1E1F22] border border-zinc-800/80 rounded-full text-xs font-bold text-white transition-all hover:bg-zinc-800 shadow-sm"
+                    onClick={() => setIsSidebarOpen(true)} 
+                    className="hidden sm:flex p-2 hover:bg-zinc-100 dark:hover:bg-zinc-900 rounded-lg text-zinc-600 dark:text-zinc-300 transition-colors"
                   >
-                    <span className="text-purple-400 text-xs font-black">✦</span>
-                    <span>Get Plus</span>
+                    <Menu className="w-5 h-5" />
                   </button>
+                  {/* Mobile Menu toggle matching Image 2 exactly (black/dark circle, 2 lines) */}
                   <button 
-                    onClick={handleNewChat}
-                    className="w-9 h-9 flex items-center justify-center bg-zinc-100 dark:bg-zinc-900 rounded-full hover:opacity-85 transition-all"
+                    onClick={() => setIsSidebarOpen(true)} 
+                    className="flex sm:hidden w-10 h-10 items-center justify-center bg-[#1E1F22] rounded-full hover:opacity-85 transition-all text-white shrink-0"
                   >
-                    <svg className="w-4.5 h-4.5 text-zinc-600 dark:text-zinc-300" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-                      <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+                    <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                      <line x1="4" y1="8" x2="20" y2="8" />
+                      <line x1="4" y1="16" x2="20" y2="16" />
                     </svg>
                   </button>
-                </div>
+                </>
+              )}
+              
+              {/* Upgrade/Get Plus on Left Side next to menu button, matching Image 1 exactly! */}
+              {profile?.plan === 'free' && (
+                <>
+                  {/* Desktop Upgrade */}
+                  <button 
+                    onClick={() => setShowUpgradeModal(true)}
+                    className="hidden sm:flex items-center gap-1.5 px-4 py-1.5 bg-[#1E1F22] border border-zinc-800 rounded-full text-xs font-bold text-white transition-all hover:bg-zinc-800 shadow-sm shrink-0 ml-1"
+                  >
+                    <span className="text-[#19C37D] text-sm font-black">✦</span>
+                    <span className="text-zinc-200">Upgrade</span>
+                  </button>
+                  {/* Mobile Get Plus */}
+                  <button 
+                    onClick={() => setShowUpgradeModal(true)}
+                    className="flex sm:hidden items-center gap-1.5 px-4.5 py-1.5 bg-[#1E1F22] border border-zinc-800/85 rounded-full text-xs font-bold text-white transition-all hover:bg-zinc-800 shadow-xs shrink-0 ml-1.5"
+                  >
+                    <span className="text-[#19C37D] text-xs font-black">✦</span>
+                    <span className="text-zinc-200">Get Plus</span>
+                  </button>
+                </>
+              )}
 
-                {/* Desktop empty chat header matching Image 1 */}
-                <div className="hidden sm:flex w-full items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    {!isSidebarOpen && (
-                      <button onClick={() => setIsSidebarOpen(true)} className="p-2 hover:bg-zinc-100 dark:hover:bg-zinc-900 rounded-lg">
-                        <Menu className="w-5 h-5" />
-                      </button>
-                    )}
-                  </div>
-                  <div className="flex items-center gap-3">
-                    {profile?.plan === 'free' && (
-                      <button 
-                        onClick={() => setShowUpgradeModal(true)}
-                        className="flex items-center gap-1.5 px-3 py-1.5 bg-[#19C37D] hover:bg-[#15a86b] text-white rounded-full text-xs font-bold transition-all shadow-xs shrink-0"
-                      >
-                        <Sparkles className="w-3.5 h-3.5" />
-                        Upgrade
-                      </button>
-                    )}
-
-                    <button 
-                      onClick={() => {
-                        const newState = !isTemporaryChat;
-                        setIsTemporaryChat(newState);
-                        handleNewChat();
-                        if (newState) {
-                          toast.success("Temporary chat is ON", {
-                            description: "Messages from this chat won't be saved to history.",
-                            duration: 4000
-                          });
-                        } else {
-                          toast("Temporary chat is OFF", {
-                            duration: 2000
-                          });
-                        }
-                      }}
-                      className={cn(
-                        "flex items-center gap-1.5 px-4 py-1.5 rounded-full text-xs font-semibold transition-all shrink-0 border",
-                        isTemporaryChat 
-                          ? "bg-purple-500/15 border-purple-500/40 text-purple-600 dark:text-purple-300"
-                          : "bg-zinc-100 dark:bg-[#1E1F22] border-zinc-200 dark:border-zinc-800 text-zinc-700 dark:text-zinc-300 hover:bg-zinc-200 dark:hover:bg-zinc-800"
-                      )}
-                      title="Turn on temporary chat to avoid saving to history"
-                    >
-                      <div className={cn(
-                        "w-1.5 h-1.5 rounded-full animate-pulse",
-                        isTemporaryChat ? "bg-purple-500" : "bg-zinc-400 dark:bg-zinc-500"
-                      )} />
-                      <span>
-                        {isTemporaryChat ? "Temporary Chat: ON" : "Turn on temporary chat"}
-                      </span>
-                    </button>
-
-                    <button 
-                      onClick={() => setShowSettings(true)}
-                      className="w-9 h-9 rounded-full border-2 border-dashed border-zinc-400 dark:border-zinc-700/60 flex items-center justify-center text-zinc-500 dark:text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-800/40 transition-colors"
-                      title="Open settings"
-                    >
-                      <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-                        <circle cx="12" cy="12" r="3" />
-                        <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
-                      </svg>
-                    </button>
-                  </div>
-                </div>
-              </>
-            ) : (
-              <>
-                <div className="flex items-center gap-2 md:gap-3">
-                  {!isSidebarOpen && (
-                    <button onClick={() => setIsSidebarOpen(true)} className="p-2 hover:bg-zinc-100 dark:hover:bg-zinc-900 rounded-lg">
-                      <Menu className="w-5 h-5" />
-                    </button>
-                  )}
-                  {!isSidebarOpen && (messages.length > 0 || streamingMessage) && (
-                    <TrelvixLogo className="w-6 h-6" glow={false} />
-                  )}
-                  <h1 className="font-bold text-lg hidden md:block mr-2">
+              {messages.length > 0 && (
+                <>
+                  <h1 className="font-bold text-base hidden md:block mr-2 text-zinc-800 dark:text-zinc-100">
                     {currentConversation 
                       ? (currentConversation.title.split(' ').slice(0, 2).join(' ') + (currentConversation.title.split(' ').length > 2 ? '...' : '')) 
                       : 'Trelvix AI'}
                   </h1>
-                  <h1 className="font-bold text-sm md:hidden block max-w-[120px] truncate mr-1">
+                  <h1 className="font-bold text-sm md:hidden block max-w-[120px] truncate mr-1 text-zinc-800 dark:text-zinc-100">
                     {currentConversation 
                       ? (currentConversation.title.split(' ').slice(0, 2).join(' ') + (currentConversation.title.split(' ').length > 2 ? '...' : '')) 
                       : 'Trelvix AI'}
                   </h1>
-                </div>
+                </>
+              )}
+            </div>
 
-                <div className="flex items-center gap-2">
-                  {profile?.plan === 'free' && (
-                    <button 
-                      onClick={() => setShowUpgradeModal(true)}
-                      className="hidden sm:flex items-center gap-1.5 px-3 py-1.5 bg-[#19C37D] hover:bg-[#15a86b] text-white rounded-full text-xs font-bold transition-all shadow-xs shrink-0"
-                    >
-                      <Sparkles className="w-3.5 h-3.5" />
-                      Upgrade
-                    </button>
-                  )}
-                  
-                  <button 
-                    onClick={() => {
-                      const newState = !isTemporaryChat;
-                      setIsTemporaryChat(newState);
-                      handleNewChat(); // Always clear active messages when switching temporary chat mode to ensure safety
-                      if (newState) {
-                        toast.success("Temporary chat is ON", {
-                          description: "Messages from this chat won't be saved to history.",
-                          duration: 4000
-                        });
-                      } else {
-                        toast("Temporary chat is OFF", {
-                          duration: 2000
-                        });
-                      }
-                    }}
-                    className={cn(
-                      "flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold transition-all shrink-0 border",
-                      isTemporaryChat 
-                        ? "bg-purple-500/10 dark:bg-purple-500/25 border-purple-500/35 dark:border-purple-500/50 text-purple-600 dark:text-purple-300"
-                        : "bg-transparent border-zinc-200 dark:border-zinc-800 text-zinc-500 dark:text-zinc-400 hover:bg-zinc-50 dark:hover:bg-zinc-900"
-                    )}
-                    title={isTemporaryChat ? "Click to turn off temporary chat" : "Turn on temporary chat to avoid saving to history"}
-                  >
-                    <div className={cn(
-                      "w-1.5 h-1.5 rounded-full animate-pulse",
-                      isTemporaryChat ? "bg-purple-500" : "bg-zinc-400 dark:bg-zinc-500"
-                    )} />
-                    <span className="hidden sm:inline">
-                      {isTemporaryChat ? "Temporary Chat: ON" : "Temporary Chat"}
-                    </span>
-                    <span className="sm:hidden">Temp</span>
-                  </button>
+            {/* Right Header Section (Matches Image 1 and 2, replacing blue/purple accents with brand green) */}
+            <div className="flex items-center gap-2 sm:gap-3">
+              
+              {/* Temporary Chat Circular Dashed Button */}
+              <button 
+                onClick={() => {
+                  if (isTemporaryChat) {
+                    setIsTemporaryChat(false);
+                    handleNewChat();
+                    toast("Temporary chat is OFF", { duration: 2000 });
+                  } else {
+                    setShowTempChatIntro(true);
+                  }
+                }}
+                className={cn(
+                  "w-9 h-9 sm:w-10 sm:h-10 flex items-center justify-center rounded-full transition-all shrink-0",
+                  isTemporaryChat 
+                    ? "bg-[#19C37D]/15 border border-[#19C37D]/35 text-[#19C37D]" 
+                    : "bg-[#1E1F22] sm:bg-zinc-100 dark:sm:bg-[#1E1F22] text-zinc-300 sm:text-zinc-500 sm:dark:text-zinc-400 hover:bg-zinc-200 dark:hover:bg-zinc-800"
+                )}
+                title={isTemporaryChat ? "Click to turn off temporary chat" : "Turn on temporary chat to avoid saving to history"}
+              >
+                <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeDasharray="3 2">
+                  <path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z" />
+                </svg>
+              </button>
 
-                  <button 
-                    onClick={() => setActiveView('history')}
-                    className="px-3 py-1.5 rounded-xl text-xs font-semibold transition-all hover:bg-zinc-100 dark:hover:bg-zinc-900 text-zinc-500"
-                  >
-                    History
-                  </button>
-                  {messages.length > 0 && (
-                    <button 
-                      onClick={handleDownload}
-                      className="p-2 hover:bg-zinc-100 dark:hover:bg-zinc-900 rounded-lg transition-colors"
-                      title="Download conversation"
-                    >
-                      <Download className="w-5 h-5" />
-                    </button>
-                  )}
-                </div>
-              </>
-            )}
+              {/* Download Conversation option (only shown if there are active messages) */}
+              {messages.length > 0 && (
+                <button 
+                  onClick={handleDownload}
+                  className="p-2 hover:bg-zinc-100 dark:hover:bg-zinc-900 rounded-lg transition-colors text-zinc-500 dark:text-zinc-400"
+                  title="Download conversation"
+                >
+                  <Download className="w-5 h-5" />
+                </button>
+              )}
+            </div>
           </header>
         )}
 
@@ -2341,6 +2303,10 @@ export default function App() {
                   clearAttachment={clearAttachment}
                   isLoading={isLoading}
                   textareaRef={textareaRef}
+                  isTemporaryChat={isTemporaryChat}
+                  activeTag={activeTag}
+                  setActiveTag={setActiveTag}
+                  handleInputChange={handleInputChange}
                 />
               ) : (
                 <div className="max-w-3xl mx-auto w-full px-4 py-8 md:py-12 space-y-10 pb-36">
@@ -2646,14 +2612,14 @@ export default function App() {
                   </button>
                 </div>
               ) : (
-                <div className="bg-zinc-50 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-700/80 rounded-[2rem] md:rounded-[2.5rem] shadow-xl md:shadow-2xl focus-within:ring-2 focus-within:ring-zinc-900/5 dark:focus-within:ring-white/15 dark:focus-within:border-zinc-500 transition-all relative z-20 overflow-visible shadow-zinc-500/5 dark:shadow-black/60">
+                <div className="bg-zinc-100 dark:bg-[#1E1F22] border border-zinc-200/40 dark:border-zinc-800/60 rounded-[24px] sm:rounded-[32px] shadow-lg focus-within:ring-2 focus-within:ring-zinc-900/5 dark:focus-within:ring-white/5 transition-all relative z-20 overflow-visible">
                 <AnimatePresence>
                   {selectedAttachment && (
                     <motion.div 
                       initial={{ opacity: 0, height: 0 }}
                       animate={{ opacity: 1, height: 'auto' }}
                       exit={{ opacity: 0, height: 0 }}
-                      className="border-b border-zinc-200 dark:border-zinc-800 bg-zinc-100/50 dark:bg-zinc-800/30 p-2 md:p-4"
+                      className="border-b border-zinc-200/40 dark:border-zinc-800/60 bg-zinc-100/50 dark:bg-zinc-800/30 p-2 md:p-4"
                     >
                       <div className="relative group/preview w-24 h-20 md:w-32 md:h-24 rounded-xl md:rounded-2xl overflow-hidden bg-white dark:bg-zinc-800 flex items-center justify-center border border-zinc-200 dark:border-zinc-700 shadow-sm">
                         {selectedAttachment.type === 'image' ? (
@@ -2675,7 +2641,7 @@ export default function App() {
                   )}
                 </AnimatePresence>
 
-                <div className="relative flex items-center px-1 md:px-2">
+                <div className="flex flex-col sm:flex-row sm:items-center p-3 sm:py-2 sm:pl-3 sm:pr-2.5 min-h-[96px] sm:min-h-[60px] relative">
                   <input 
                     type="file"
                     ref={fileInputRef}
@@ -2683,37 +2649,72 @@ export default function App() {
                     className="hidden"
                   />
                   
-                  <div className="flex-shrink-0">
+                  {/* Input Row: Plus, Tag Pill, and Textarea */}
+                  <div className="flex-1 flex items-center gap-1.5 sm:gap-2 w-full min-w-0">
+                    {/* Left Plus button (visible on desktop only) */}
                     <button 
                       onClick={() => fileInputRef.current?.click()}
-                      className="p-3 md:p-4 text-zinc-400 dark:text-zinc-300 hover:text-zinc-900 dark:hover:text-white hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-all rounded-full flex items-center justify-center"
+                      className="hidden sm:flex p-2 text-zinc-500 hover:text-zinc-800 dark:text-zinc-400 dark:hover:text-zinc-200 rounded-full hover:bg-zinc-200/50 dark:hover:bg-zinc-800/50 transition-colors shrink-0"
                       title="Upload file or attachment"
                     >
-                      <Plus className="w-5 h-5 text-zinc-500 dark:text-zinc-400" />
+                      <Plus className="w-5 h-5 font-bold" />
                     </button>
-                  </div>
+
+                    {activeTag && (
+                      <div className="flex items-center gap-1 bg-zinc-200 dark:bg-zinc-800 border border-zinc-300/40 dark:border-zinc-700/40 text-zinc-800 dark:text-zinc-200 px-2.5 py-1 rounded-full text-xs font-semibold select-none shrink-0 animate-fade-in">
+                        {activeTag === '@Image' && <ImageIcon className="w-3.5 h-3.5 text-zinc-500 dark:text-zinc-400" />}
+                        {activeTag === '@Write' && <Edit3 className="w-3.5 h-3.5 text-zinc-500 dark:text-zinc-400" />}
+                        {activeTag === '@WebSearch' && <Globe className="w-3.5 h-3.5 text-zinc-500 dark:text-zinc-400" />}
+                        <span>{activeTag}</span>
+                        <button 
+                          type="button"
+                          onClick={() => setActiveTag(null)}
+                          className="p-0.5 hover:bg-zinc-300 dark:hover:bg-zinc-700 rounded-full transition-colors ml-0.5"
+                        >
+                          <X className="w-3 h-3 text-zinc-500 dark:text-zinc-400" />
+                        </button>
+                      </div>
+                    )}
  
-                  <div className="flex-1 relative flex items-center">
+                    {/* Textarea */}
                     <textarea
                       ref={textareaRef}
                       rows={1}
                       value={input}
-                      onChange={(e) => setInput(e.target.value)}
+                      onChange={(e) => handleInputChange(e.target.value)}
                       onKeyDown={(e) => {
-                        if (e.key === 'Enter' && !e.shiftKey) {
+                        if (e.key === 'Backspace' && textareaRef.current && textareaRef.current.selectionStart === 0 && textareaRef.current.selectionEnd === 0 && activeTag) {
                           e.preventDefault();
-                          sendMessage(input);
+                          setActiveTag(null);
+                        } else if (e.key === 'Enter' && !e.shiftKey) {
+                          e.preventDefault();
+                          sendMessage(activeTag ? `${activeTag} ${input}` : input);
                         }
                       }}
                       placeholder={ 
+                        activeTag ? "" : (
                         profile && profile.messages_used_today >= (PLAN_LIMITS[profile.plan as keyof typeof PLAN_LIMITS] || PLAN_LIMITS.free).messages
                           ? "Daily limit reached. Click to upgrade." 
                           : (selectedAttachment ? `Ask about this ${selectedAttachment.type}...` : "Message Trelvix AI...")
+                        )
                       }
-                      className="w-full bg-transparent border-none rounded-none px-4 md:px-6 py-4 md:py-5 pr-28 sm:pr-32 md:pr-40 focus:ring-0 outline-none resize-none transition-all min-h-[56px] md:min-h-[64px] max-h-[200px] text-sm md:text-base font-normal text-zinc-900 dark:text-zinc-50 placeholder:text-zinc-400 dark:placeholder:text-zinc-300"
+                      className="flex-1 bg-transparent border-none outline-none focus:ring-0 resize-none px-1.5 py-1.5 sm:py-2 text-sm md:text-base text-zinc-900 dark:text-zinc-50 placeholder:text-zinc-400 dark:placeholder:text-zinc-500 font-normal max-h-[120px] sm:max-h-[140px] leading-relaxed min-w-0"
                     />
-                    
-                    <div className="absolute right-0 flex items-center gap-1 md:gap-1.5 mr-2 z-30 pointer-events-auto">
+                  </div>
+                  
+                  {/* Controls row: separate bottom row on mobile, inline on desktop */}
+                  <div className="flex items-center justify-between sm:justify-end w-full sm:w-auto px-1 sm:px-0 mt-1.5 sm:mt-0 pt-2 sm:pt-0 border-t border-zinc-200/10 sm:border-t-0 shrink-0 gap-2">
+                    {/* Left Plus button (visible on mobile only) */}
+                    <button 
+                      onClick={() => fileInputRef.current?.click()}
+                      className="flex sm:hidden p-2 text-zinc-500 hover:text-zinc-800 dark:text-zinc-400 dark:hover:text-zinc-200 rounded-full hover:bg-zinc-200/50 dark:hover:bg-zinc-800/50 transition-colors shrink-0"
+                      title="Upload file or attachment"
+                    >
+                      <Plus className="w-5 h-5 font-bold" />
+                    </button>
+
+                    {/* Right container containing select, mic, and send button */}
+                    <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
                       <ModelSelector 
                         selectedModelId={selectedModelId} 
                         userPlan={profile?.plan || 'free'} 
@@ -2722,18 +2723,29 @@ export default function App() {
                         variant="compact"
                       />
 
+                      {/* Microphone Button */}
+                      <button
+                        type="button"
+                        className="p-2 text-zinc-500 hover:text-zinc-800 dark:text-zinc-400 dark:hover:text-zinc-200 rounded-full hover:bg-zinc-200/50 dark:hover:bg-zinc-800/50 transition-colors shrink-0"
+                        title="Voice input"
+                      >
+                        <Mic className="w-4 h-4" />
+                      </button>
+
+                      {/* Send Button */}
                       <button 
-                        onClick={() => sendMessage(input)}
+                        type="button"
+                        onClick={() => sendMessage(activeTag ? `${activeTag} ${input}` : input)}
                         disabled={(!input.trim() && !selectedAttachment) || isLoading}
                         className={cn(
-                          "p-2.5 md:p-3 rounded-full transition-all shadow-md flex items-center justify-center transform active:scale-95 shrink-0",
-                          input.trim() || selectedAttachment
-                            ? "bg-zinc-900 dark:bg-white text-white dark:text-zinc-900 hover:opacity-90 shadow-zinc-950/10 dark:shadow-white/5" 
-                            : "text-zinc-300 dark:text-zinc-500 cursor-not-allowed border border-zinc-200 dark:border-zinc-800"
+                          "w-9 h-9 rounded-full flex items-center justify-center transform active:scale-95 shrink-0 transition-all duration-200",
+                          (input.trim() || selectedAttachment)
+                            ? "bg-[#19C37D] hover:bg-[#15a86b] text-white shadow-md shadow-emerald-500/10" 
+                            : "bg-zinc-200/50 dark:bg-zinc-800/50 text-zinc-400 dark:text-zinc-600 cursor-not-allowed border border-zinc-200/20 dark:border-zinc-800/20"
                         )}
                         title="Send message"
                       >
-                        <ArrowUp className="w-4 h-4 md:w-4.5 md:h-4.5" />
+                        <ArrowUp className="w-4 h-4 stroke-[2.5]" />
                       </button>
                     </div>
                   </div>
@@ -2790,6 +2802,94 @@ export default function App() {
           reason={upgradeReason}
           profile={profile}
         />
+        {showTempChatIntro && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-xs"
+          >
+            <motion.div
+              initial={{ scale: 0.95, opacity: 0, y: 15 }}
+              animate={{ scale: 1, opacity: 1, y: 0 }}
+              exit={{ scale: 0.95, opacity: 0, y: 15 }}
+              transition={{ type: "spring", duration: 0.4 }}
+              className="bg-[#1E1F22] text-zinc-100 border border-zinc-800/80 rounded-3xl max-w-sm md:max-w-md w-full p-6 md:p-8 shadow-2xl relative overflow-hidden"
+            >
+              <h3 className="text-xl font-bold tracking-tight mb-6 text-white select-none">
+                Temporary Chat
+              </h3>
+              
+              <div className="space-y-6 mb-8 select-none">
+                {/* Item 1 */}
+                <div className="flex items-start gap-4">
+                  <div className="mt-1 w-6 h-6 flex items-center justify-center shrink-0 text-zinc-400">
+                    <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeDasharray="3.5 2">
+                      <path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z" />
+                    </svg>
+                  </div>
+                  <div>
+                    <h4 className="font-bold text-sm text-zinc-200">Not in history</h4>
+                    <p className="text-xs text-zinc-400 leading-relaxed mt-1">
+                      Temporary chats won't appear in your history. For safety purposes, we may keep a copy of this chat for up to 30 days.
+                    </p>
+                  </div>
+                </div>
+
+                {/* Item 2 */}
+                <div className="flex items-start gap-4">
+                  <div className="mt-1.5 w-6 h-6 flex items-center justify-center text-zinc-400 font-mono text-xs font-black shrink-0 tracking-tighter select-none">
+                    0\0
+                  </div>
+                  <div>
+                    <h4 className="font-bold text-sm text-zinc-200">No model training</h4>
+                    <p className="text-xs text-zinc-400 leading-relaxed mt-1">
+                      Temporary chats won't be used to improve our models.
+                    </p>
+                  </div>
+                </div>
+
+                {/* Item 3 */}
+                <div className="flex items-start gap-4">
+                  <div className="mt-1 w-6 h-6 flex items-center justify-center shrink-0 text-zinc-400">
+                    <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                      <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                      <polyline points="14 2 14 8 20 8" />
+                    </svg>
+                  </div>
+                  <div>
+                    <h4 className="font-bold text-sm text-zinc-200">Memory off</h4>
+                    <p className="text-xs text-zinc-400 leading-relaxed mt-1">
+                      While in a temporary chat, Trelvix AI won't use or update its memory. Custom instructions will still be followed if you have them enabled.
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              <div className="flex justify-end gap-3 border-t border-zinc-800/40 pt-4">
+                <button 
+                  type="button"
+                  onClick={() => setShowTempChatIntro(false)}
+                  className="px-4 py-2 text-xs font-bold text-zinc-400 hover:text-white transition-colors"
+                >
+                  Cancel
+                </button>
+                <button 
+                  type="button"
+                  onClick={() => {
+                    setIsTemporaryChat(true);
+                    handleNewChat();
+                    setShowTempChatIntro(false);
+                    toast.success("Temporary chat is ON");
+                  }}
+                  className="px-6 py-2 bg-white hover:bg-zinc-200 text-zinc-950 text-xs font-bold uppercase tracking-widest rounded-full transition-all active:scale-95"
+                >
+                  Continue
+                </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
       </AnimatePresence>
 
       {/* Image Lightbox */}

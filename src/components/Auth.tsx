@@ -9,7 +9,6 @@ import {
   X
 } from 'lucide-react';
 import { openExternalLink, isKodularEnv } from '../utils/nativeCompat';
-import { TrelvixLogo } from './TrelvixLogo';
 import { motion } from 'motion/react';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
@@ -253,10 +252,6 @@ export const Auth = ({ onAuthSuccess, isDarkMode }: { onAuthSuccess: () => void;
             animate={{ opacity: 1, scale: 1 }}
             className="w-full max-w-md bg-zinc-900 border border-zinc-800 rounded-[2.5rem] p-10 md:p-12 shadow-2xl flex flex-col items-center text-center"
           >
-          <div className="w-16 h-16 rounded-2xl bg-zinc-950 flex items-center justify-center border border-zinc-800 mb-6 p-2 shadow-inner animate-pulse">
-            <TrelvixLogo className="w-8 h-8" glow={true} />
-          </div>
-
           <h2 className="text-xl font-black text-white mb-2">Opening Google Chrome...</h2>
           
           <p className="text-sm text-zinc-400 leading-relaxed mb-6 max-w-[280px]">
@@ -341,9 +336,6 @@ export const Auth = ({ onAuthSuccess, isDarkMode }: { onAuthSuccess: () => void;
           className="w-full max-w-md bg-zinc-900 border border-zinc-800 rounded-[2.5rem] p-10 md:p-12 shadow-2xl"
         >
         <div className="flex flex-col items-center mb-10 text-center">
-          <div className="w-20 h-20 rounded-2xl bg-zinc-950 flex items-center justify-center mb-6 shadow-xl border border-zinc-800 p-2">
-            <TrelvixLogo className="w-10 h-10" glow={true} />
-          </div>
           <h1 className="text-3xl font-bold tracking-tight text-white mb-2">Trelvix AI</h1>
           <p className="text-zinc-500 text-sm font-medium leading-relaxed max-w-[240px]">The professional creative engine for high-fidelity content.</p>
         </div>
