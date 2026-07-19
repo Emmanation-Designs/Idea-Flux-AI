@@ -91,13 +91,13 @@ export const WelcomeScreen: React.FC<WelcomeScreenProps> = ({
   };
 
   return (
-    <div className="flex-1 flex flex-col items-center justify-between p-4 sm:p-6 md:p-8 w-full max-w-3xl mx-auto animate-fade-in min-h-0 h-full">
+    <div className="flex-1 flex flex-col items-center justify-end p-4 sm:p-6 md:p-8 w-full max-w-3xl mx-auto animate-fade-in min-h-0 h-full">
       
       {/* Container that dynamically swaps layout order on mobile vs desktop */}
-      <div className="w-full flex-1 flex flex-col justify-between gap-6 md:gap-7 max-w-2xl relative z-30 min-h-0">
+      <div className="w-full flex-1 flex flex-col justify-end gap-3 sm:gap-4 max-w-2xl relative z-30 min-h-0">
         
         {/* Scrollable Top Section */}
-        <div className="flex-1 w-full flex flex-col justify-center gap-4 sm:gap-6 overflow-y-auto scrollbar-hide py-2 min-h-0">
+        <div className="flex-1 w-full flex flex-col justify-end gap-3 sm:gap-4 overflow-y-auto scrollbar-hide py-2 min-h-0">
           {isTemporaryChat ? (
             <div className="text-center mb-2 animate-fade-in shrink-0">
               <h1 className="text-2xl sm:text-3xl md:text-4xl font-semibold tracking-tight text-zinc-900 dark:text-zinc-50 mb-3 font-sans">
@@ -108,8 +108,8 @@ export const WelcomeScreen: React.FC<WelcomeScreenProps> = ({
               </p>
             </div>
           ) : (
-            /* Title Header (Visible on both Mobile and Desktop with responsive size) */
-            <h1 className="text-2xl sm:text-3xl md:text-4xl font-semibold tracking-tight text-center text-zinc-900 dark:text-zinc-50 mb-1 sm:mb-2 font-sans shrink-0">
+            /* Title Header (Hidden on Mobile, Visible on Desktop with responsive size) */
+            <h1 className="hidden sm:block text-2xl sm:text-3xl md:text-4xl font-semibold tracking-tight text-center text-zinc-900 dark:text-zinc-50 mb-1 sm:mb-2 font-sans shrink-0">
               Where should we begin?
             </h1>
           )}
