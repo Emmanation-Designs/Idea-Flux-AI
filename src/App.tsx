@@ -2611,14 +2611,14 @@ export default function App() {
                   </button>
                 </div>
               ) : (
-                <div className="bg-zinc-100 dark:bg-[#1E1F22] border border-zinc-200/40 dark:border-zinc-800/60 rounded-[24px] sm:rounded-[32px] shadow-lg focus-within:ring-2 focus-within:ring-zinc-900/5 dark:focus-within:ring-white/5 transition-all relative z-20 overflow-visible">
+                <div className="bg-zinc-100 dark:bg-[#1E1F22] border border-zinc-200/40 dark:border-zinc-800/60 rounded-full shadow-lg focus-within:ring-2 focus-within:ring-zinc-900/5 dark:focus-within:ring-white/5 transition-all relative z-20 overflow-visible">
                 <AnimatePresence>
                   {selectedAttachment && (
                     <motion.div 
                       initial={{ opacity: 0, height: 0 }}
                       animate={{ opacity: 1, height: 'auto' }}
                       exit={{ opacity: 0, height: 0 }}
-                      className="border-b border-zinc-200/40 dark:border-zinc-800/60 bg-zinc-100/50 dark:bg-zinc-800/30 p-2 md:p-4"
+                      className="border-b border-zinc-200/40 dark:border-zinc-800/60 bg-zinc-100/50 dark:bg-zinc-800/30 p-2 md:p-4 rounded-t-[28px]"
                     >
                       <div className="relative group/preview w-24 h-20 md:w-32 md:h-24 rounded-xl md:rounded-2xl overflow-hidden bg-white dark:bg-zinc-800 flex items-center justify-center border border-zinc-200 dark:border-zinc-700 shadow-sm">
                         {selectedAttachment.type === 'image' ? (
@@ -2640,7 +2640,7 @@ export default function App() {
                   )}
                 </AnimatePresence>
 
-                <div className="flex flex-col sm:flex-row sm:items-center p-3 sm:py-2 sm:pl-3 sm:pr-2.5 min-h-[48px] sm:min-h-[60px] relative">
+                <div className="flex items-center px-2 sm:px-3 py-1.5 min-h-[48px] sm:min-h-[52px] relative overflow-visible">
                   <input 
                     type="file"
                     ref={fileInputRef}
@@ -2648,17 +2648,17 @@ export default function App() {
                     className="hidden"
                   />
                   
-                  {/* Input Row: Plus, Tag Pill, and Textarea */}
-                  <div className="flex-1 flex items-center gap-1.5 sm:gap-2 w-full min-w-0">
-                    {/* Left Plus button (visible on desktop only) */}
-                    <button 
-                      onClick={() => fileInputRef.current?.click()}
-                      className="hidden sm:flex p-2 text-zinc-500 hover:text-zinc-800 dark:text-zinc-400 dark:hover:text-zinc-200 rounded-full hover:bg-zinc-200/50 dark:hover:bg-zinc-800/50 transition-colors shrink-0"
-                      title="Upload file or attachment"
-                    >
-                      <Plus className="w-5 h-5 font-bold" />
-                    </button>
+                  {/* Left Plus button (visible on both mobile and desktop) */}
+                  <button 
+                    onClick={() => fileInputRef.current?.click()}
+                    className="p-2 text-zinc-500 hover:text-zinc-800 dark:text-zinc-400 dark:hover:text-zinc-200 rounded-full hover:bg-zinc-200/50 dark:hover:bg-zinc-800/50 transition-colors shrink-0"
+                    title="Upload file or attachment"
+                  >
+                    <Plus className="w-5 h-5 font-bold" />
+                  </button>
 
+                  {/* Middle Container: Tag Pill and Textarea */}
+                  <div className="flex-1 flex items-center gap-1.5 sm:gap-2 min-w-0">
                     {activeTag && (
                       <div className="flex items-center gap-1 bg-zinc-200 dark:bg-zinc-800 border border-zinc-300/40 dark:border-zinc-700/40 text-zinc-800 dark:text-zinc-200 px-2.5 py-1 rounded-full text-xs font-semibold select-none shrink-0 animate-fade-in">
                         {activeTag === '@Image' && <ImageIcon className="w-3.5 h-3.5 text-zinc-500 dark:text-zinc-400" />}
@@ -2674,7 +2674,7 @@ export default function App() {
                         </button>
                       </div>
                     )}
- 
+
                     {/* Textarea */}
                     <textarea
                       ref={textareaRef}
@@ -2697,47 +2697,35 @@ export default function App() {
                           : (selectedAttachment ? `Ask about this ${selectedAttachment.type}...` : "Message Trelvix AI...")
                         )
                       }
-                      className="flex-1 bg-transparent border-none outline-none focus:ring-0 resize-none px-1.5 py-1.5 sm:py-2 text-base text-zinc-900 dark:text-zinc-50 placeholder:text-zinc-400 dark:placeholder:text-zinc-500 font-normal max-h-[120px] sm:max-h-[140px] leading-relaxed min-w-0"
+                      className="flex-1 bg-transparent border-none outline-none focus:ring-0 resize-none px-1 py-1.5 sm:py-2 text-base text-zinc-900 dark:text-zinc-50 placeholder:text-zinc-400 dark:placeholder:text-zinc-500 font-normal max-h-[120px] leading-relaxed min-w-0"
                     />
                   </div>
-                  
-                  {/* Controls row: separate bottom row on mobile, inline on desktop */}
-                  <div className="flex items-center justify-between sm:justify-end w-full sm:w-auto px-1 sm:px-0 mt-1.5 sm:mt-0 pt-2 sm:pt-0 border-t border-zinc-200/10 sm:border-t-0 shrink-0 gap-2">
-                    {/* Left Plus button (visible on mobile only) */}
+
+                  {/* Right container containing select and send button */}
+                  <div className="flex items-center gap-1 sm:gap-2 shrink-0">
+                    <ModelSelector 
+                      selectedModelId={selectedModelId} 
+                      userPlan={profile?.plan || 'free'} 
+                      onSelectModel={handleSelectModel}
+                      onUpgradeClick={() => setShowUpgradeModal(true)}
+                      variant="compact"
+                    />
+
+                    {/* Send Button */}
                     <button 
-                      onClick={() => fileInputRef.current?.click()}
-                      className="flex sm:hidden p-2 text-zinc-500 hover:text-zinc-800 dark:text-zinc-400 dark:hover:text-zinc-200 rounded-full hover:bg-zinc-200/50 dark:hover:bg-zinc-800/50 transition-colors shrink-0"
-                      title="Upload file or attachment"
+                      type="button"
+                      onClick={() => sendMessage(activeTag ? `${activeTag} ${input}` : input)}
+                      disabled={(!input.trim() && !selectedAttachment) || isLoading}
+                      className={cn(
+                        "w-9 h-9 sm:w-10 sm:h-10 rounded-full flex items-center justify-center transform active:scale-95 shrink-0 transition-all duration-200",
+                        (input.trim() || selectedAttachment)
+                          ? "bg-[#19C37D] hover:bg-[#15a86b] text-white shadow-md shadow-emerald-500/10" 
+                          : "bg-zinc-200/50 dark:bg-zinc-800/50 text-zinc-400 dark:text-zinc-600 cursor-not-allowed border border-zinc-200/20 dark:border-zinc-800/20"
+                      )}
+                      title="Send message"
                     >
-                      <Plus className="w-5 h-5 font-bold" />
+                      <ArrowUp className="w-4 h-4 stroke-[2.5]" />
                     </button>
-
-                    {/* Right container containing select and send button */}
-                    <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
-                      <ModelSelector 
-                        selectedModelId={selectedModelId} 
-                        userPlan={profile?.plan || 'free'} 
-                        onSelectModel={handleSelectModel}
-                        onUpgradeClick={() => setShowUpgradeModal(true)}
-                        variant="compact"
-                      />
-
-                      {/* Send Button */}
-                      <button 
-                        type="button"
-                        onClick={() => sendMessage(activeTag ? `${activeTag} ${input}` : input)}
-                        disabled={(!input.trim() && !selectedAttachment) || isLoading}
-                        className={cn(
-                          "w-9 h-9 rounded-full flex items-center justify-center transform active:scale-95 shrink-0 transition-all duration-200",
-                          (input.trim() || selectedAttachment)
-                            ? "bg-[#19C37D] hover:bg-[#15a86b] text-white shadow-md shadow-emerald-500/10" 
-                            : "bg-zinc-200/50 dark:bg-zinc-800/50 text-zinc-400 dark:text-zinc-600 cursor-not-allowed border border-zinc-200/20 dark:border-zinc-800/20"
-                        )}
-                        title="Send message"
-                      >
-                        <ArrowUp className="w-4 h-4 stroke-[2.5]" />
-                      </button>
-                    </div>
                   </div>
                 </div>
               </div>
