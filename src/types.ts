@@ -23,6 +23,18 @@ export interface Conversation {
   metadata: any;
   created_at: string;
   updated_at: string;
+  project_id?: string | null;
+}
+
+export interface Project {
+  id: string;
+  user_id: string;
+  title: string;
+  description?: string;
+  icon?: string;
+  color?: string;
+  created_at: string;
+  updated_at: string;
 }
 
 export interface Profile {

@@ -181,8 +181,8 @@ export const Auth = ({ onAuthSuccess, isDarkMode }: { onAuthSuccess: () => void;
 
   if (isChromeCallback) {
     return (
-      <div className="h-screen w-screen overflow-y-auto bg-zinc-950 relative">
-        <div className="absolute inset-0 opacity-25 pointer-events-none overflow-hidden">
+      <div className="h-screen w-screen overflow-y-auto bg-white dark:bg-zinc-950 text-zinc-900 dark:text-zinc-100 relative">
+        <div className="absolute inset-0 opacity-10 dark:opacity-25 pointer-events-none overflow-hidden">
           <div className="absolute top-[-10%] left-[-10%] w-[50%] h-[50%] bg-emerald-500 rounded-full blur-[140px]" />
           <div className="absolute bottom-[-10%] right-[-10%] w-[50%] h-[50%] bg-blue-500 rounded-full blur-[140px]" />
         </div>
@@ -191,29 +191,29 @@ export const Auth = ({ onAuthSuccess, isDarkMode }: { onAuthSuccess: () => void;
           <motion.div 
             initial={{ opacity: 0, scale: 0.95 }}
             animate={{ opacity: 1, scale: 1 }}
-            className="w-full max-w-md bg-zinc-900 border border-zinc-850 rounded-[2.5rem] p-10 shadow-2xl flex flex-col text-center"
+            className="w-full max-w-md bg-zinc-50 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-[2.5rem] p-10 shadow-2xl flex flex-col text-center"
           >
-          <div className="w-20 h-20 rounded-3xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 flex items-center justify-center mx-auto mb-6 shadow-glow">
+          <div className="w-20 h-20 rounded-3xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-500 dark:text-emerald-400 flex items-center justify-center mx-auto mb-6 shadow-glow">
             <Check className="w-10 h-10 animate-bounce" />
           </div>
 
-          <h2 className="text-2xl font-black text-white mb-3">Google Login Secured</h2>
-          <p className="text-zinc-400 text-sm mb-6 leading-relaxed">
+          <h2 className="text-2xl font-black text-zinc-900 dark:text-white mb-3">Google Login Secured</h2>
+          <p className="text-zinc-500 dark:text-zinc-400 text-sm mb-6 leading-relaxed">
             Your login has been verified. We are automatically launching Trelvix AI to sync your workspace profile.
           </p>
 
-          <div className="w-full bg-zinc-950/60 border border-zinc-800 rounded-2xl p-5 mb-6 text-left">
-            <label className="block text-[10px] uppercase font-black text-zinc-500 tracking-wider mb-2">
+          <div className="w-full bg-white dark:bg-zinc-950/60 border border-zinc-200 dark:border-zinc-800 rounded-2xl p-5 mb-6 text-left">
+            <label className="block text-[10px] uppercase font-black text-zinc-400 dark:text-zinc-500 tracking-wider mb-2">
               Android APK Package ID (Configurable)
             </label>
             <input 
               type="text"
               value={customPackageId}
               onChange={(e) => setCustomPackageId(e.target.value)}
-              className="w-full bg-zinc-900 border border-zinc-805 text-white rounded-xl px-3 py-2 text-xs font-mono focus:ring-1 focus:ring-emerald-500 outline-none"
+              className="w-full bg-zinc-100 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-805 text-zinc-900 dark:text-white rounded-xl px-3 py-2 text-xs font-mono focus:ring-1 focus:ring-emerald-500 outline-none"
               placeholder="e.g. io.kodular.emmanuelnwaije21.trelvix_ai"
             />
-            <p className="text-[10px] text-zinc-500 mt-1.5 leading-normal">
+            <p className="text-[10px] text-zinc-400 dark:text-zinc-500 mt-1.5 leading-normal">
               Change this if your custom built Kodular App is using a different package scheme.
             </p>
           </div>
@@ -222,17 +222,17 @@ export const Auth = ({ onAuthSuccess, isDarkMode }: { onAuthSuccess: () => void;
             <button
               type="button"
               onClick={handleLaunchApkSync}
-              className="w-full py-4 bg-emerald-500 text-white rounded-xl font-bold text-sm hover:bg-emerald-400 transition-all shadow-lg active:scale-[0.98] flex items-center justify-center gap-2 cursor-pointer"
+              className="w-full py-4 bg-[#19C37D] hover:bg-[#15a86b] text-white rounded-xl font-bold text-sm shadow-lg active:scale-[0.98] flex items-center justify-center gap-2 cursor-pointer"
             >
               <ExternalLink className="w-5 h-5" />
               Sync & Launch Trelvix App
             </button>
 
-            <p className="text-[11px] text-zinc-500 animate-pulse">
+            <p className="text-[11px] text-zinc-400 dark:text-zinc-500 animate-pulse">
               Launching automatically in 1 second...
             </p>
           </div>
-        </motion.div>
+          </motion.div>
         </div>
       </div>
     );
@@ -240,8 +240,8 @@ export const Auth = ({ onAuthSuccess, isDarkMode }: { onAuthSuccess: () => void;
 
   if (showFallback) {
     return (
-      <div className="h-screen w-screen overflow-y-auto bg-zinc-950 relative">
-        <div className="absolute inset-0 opacity-20 pointer-events-none overflow-hidden">
+      <div className="h-screen w-screen overflow-y-auto bg-white dark:bg-zinc-950 text-zinc-900 dark:text-zinc-100 relative">
+        <div className="absolute inset-0 opacity-10 dark:opacity-20 pointer-events-none overflow-hidden">
           <div className="absolute top-[-10%] left-[-10%] w-[40%] h-[40%] bg-emerald-500 rounded-full blur-[120px]" />
           <div className="absolute bottom-[-10%] right-[-10%] w-[40%] h-[40%] bg-blue-500 rounded-full blur-[120px]" />
         </div>
@@ -250,11 +250,11 @@ export const Auth = ({ onAuthSuccess, isDarkMode }: { onAuthSuccess: () => void;
           <motion.div 
             initial={{ opacity: 0, scale: 0.95 }}
             animate={{ opacity: 1, scale: 1 }}
-            className="w-full max-w-md bg-zinc-900 border border-zinc-800 rounded-[2.5rem] p-10 md:p-12 shadow-2xl flex flex-col items-center text-center"
+            className="w-full max-w-md bg-zinc-50 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-[2.5rem] p-10 md:p-12 shadow-2xl flex flex-col items-center text-center"
           >
-          <h2 className="text-xl font-black text-white mb-2">Opening Google Chrome...</h2>
+          <h2 className="text-xl font-black text-zinc-900 dark:text-white mb-2">Opening Google Chrome...</h2>
           
-          <p className="text-sm text-zinc-400 leading-relaxed mb-6 max-w-[280px]">
+          <p className="text-sm text-zinc-500 dark:text-zinc-400 leading-relaxed mb-6 max-w-[280px]">
             To comply with Google safety guidelines, Sign-In runs in external Chrome. You will be redirected back automatically.
           </p>
 
@@ -271,7 +271,7 @@ export const Auth = ({ onAuthSuccess, isDarkMode }: { onAuthSuccess: () => void;
                   toast.success('Launching secure system browser...');
                 }
               }}
-              className="w-full py-4 bg-emerald-500 text-white rounded-xl font-bold text-sm hover:bg-emerald-450 transition-all active:scale-[0.98] flex items-center justify-center gap-2 shadow-lg cursor-pointer"
+              className="w-full py-4 bg-[#19C37D] hover:bg-[#15a86b] text-white rounded-xl font-bold text-sm active:scale-[0.98] flex items-center justify-center gap-2 shadow-lg cursor-pointer"
             >
               <ExternalLink className="w-5 h-5 text-white" />
               Log In inside Chrome
@@ -287,7 +287,7 @@ export const Auth = ({ onAuthSuccess, isDarkMode }: { onAuthSuccess: () => void;
                   window.location.href = chromeIntentUrl;
                 }
               }}
-              className="w-full py-3 bg-zinc-800 text-zinc-300 rounded-xl font-medium text-xs hover:bg-zinc-750 transition-all border border-zinc-700/50 cursor-pointer"
+              className="w-full py-3 bg-white dark:bg-zinc-800 text-zinc-700 dark:text-zinc-300 rounded-xl font-medium text-xs hover:bg-zinc-100 dark:hover:bg-zinc-750 transition-all border border-zinc-200 dark:border-zinc-700/50 cursor-pointer"
             >
               Force Launch Chrome Intent
             </button>
@@ -298,19 +298,19 @@ export const Auth = ({ onAuthSuccess, isDarkMode }: { onAuthSuccess: () => void;
                 toast.info('Enabling manual credentials fallback');
                 setShowFallback(false);
               }}
-              className="w-full py-2.5 text-xs font-semibold text-zinc-500 hover:text-zinc-300 transition-colors"
+              className="w-full py-2.5 text-xs font-semibold text-zinc-400 dark:text-zinc-500 hover:text-zinc-600 dark:hover:text-zinc-300 transition-colors"
             >
               Cancel & Use Email Login
             </button>
           </div>
           
-          <div className="border-t border-zinc-800/60 mt-6 pt-5 w-full">
+          <div className="border-t border-zinc-200 dark:border-zinc-800/60 mt-6 pt-5 w-full">
             <button
               onClick={() => {
                 navigator.clipboard.writeText(googleAuthUrl);
                 toast.success('Manual link copied!');
               }}
-              className="inline-flex items-center gap-1.5 text-[10px] text-zinc-500 hover:text-zinc-300 transition-colors font-medium decoration-dotted underline cursor-pointer"
+              className="inline-flex items-center gap-1.5 text-[10px] text-zinc-400 dark:text-zinc-500 hover:text-zinc-600 dark:hover:text-zinc-300 transition-colors font-medium decoration-dotted underline cursor-pointer"
             >
               <Copy className="w-3 h-3" />
               Stuck? Copy manual redirect URL
@@ -323,8 +323,8 @@ export const Auth = ({ onAuthSuccess, isDarkMode }: { onAuthSuccess: () => void;
   }
 
   return (
-    <div className="h-screen w-screen overflow-y-auto bg-zinc-950 relative">
-      <div className="absolute inset-0 opacity-20 pointer-events-none overflow-hidden">
+    <div className="h-screen w-screen overflow-y-auto bg-white dark:bg-zinc-950 text-zinc-900 dark:text-zinc-100 relative">
+      <div className="absolute inset-0 opacity-10 dark:opacity-20 pointer-events-none overflow-hidden">
         <div className="absolute top-[-10%] left-[-10%] w-[40%] h-[40%] bg-emerald-500 rounded-full blur-[120px]" />
         <div className="absolute bottom-[-10%] right-[-10%] w-[40%] h-[40%] bg-blue-500 rounded-full blur-[120px]" />
       </div>
@@ -333,18 +333,18 @@ export const Auth = ({ onAuthSuccess, isDarkMode }: { onAuthSuccess: () => void;
         <motion.div 
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
-          className="w-full max-w-md bg-zinc-900 border border-zinc-800 rounded-[2.5rem] p-10 md:p-12 shadow-2xl"
+          className="w-full max-w-md bg-zinc-50 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-[2.5rem] p-10 md:p-12 shadow-2xl"
         >
         <div className="flex flex-col items-center mb-10 text-center">
-          <h1 className="text-3xl font-bold tracking-tight text-white mb-2">Trelvix AI</h1>
-          <p className="text-zinc-500 text-sm font-medium leading-relaxed max-w-[240px]">The professional creative engine for high-fidelity content.</p>
+          <h1 className="text-3xl font-bold tracking-tight text-zinc-900 dark:text-white mb-2">Trelvix AI</h1>
+          <p className="text-zinc-500 dark:text-zinc-400 text-sm font-medium leading-relaxed max-w-[240px]">The professional creative engine for high-fidelity content.</p>
         </div>
 
         <div className="space-y-3 mb-8">
           <button 
             type="button"
             onClick={handleGoogleSignIn}
-            className="w-full flex items-center justify-center gap-3 bg-white text-zinc-900 py-3.5 rounded-xl font-bold text-sm hover:bg-zinc-100 transition-all active:scale-[0.98] shadow-lg cursor-pointer"
+            className="w-full flex items-center justify-center gap-3 bg-white dark:bg-zinc-800 text-zinc-900 dark:text-white border border-zinc-200 dark:border-zinc-700 py-3.5 rounded-xl font-bold text-sm hover:bg-zinc-100 dark:hover:bg-zinc-700 transition-all active:scale-[0.98] shadow-lg cursor-pointer"
           >
             <svg className="w-5 h-5" viewBox="0 0 24 24">
               <path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" fill="#4285F4"/>
@@ -355,38 +355,12 @@ export const Auth = ({ onAuthSuccess, isDarkMode }: { onAuthSuccess: () => void;
             Continue with Google
           </button>
 
-          {/* Quick link to trigger Chrome fallback manually if users run into Webview obstacles */}
-          <div className="text-center pt-1.5">
-            <button
-              type="button"
-              onClick={async () => {
-                try {
-                  const { data, error } = await supabase.auth.signInWithOAuth({
-                    provider: 'google',
-                    options: {
-                      redirectTo: window.location.origin,
-                      skipBrowserRedirect: true
-                    }
-                  });
-                  if (error) throw error;
-                  if (data?.url) {
-                    setGoogleAuthUrl(data.url);
-                    setShowFallback(true);
-                  }
-                } catch (e: any) {
-                  toast.error(e.message);
-                }
-              }}
-              className="text-[11px] font-medium text-zinc-500 hover:text-emerald-400 transition-colors underline decoration-dotted underline-offset-4 cursor-pointer"
-            >
-              Google Sign-In Issue on Android APK? Tap here.
-            </button>
-          </div>
+
           
           <div className="flex items-center gap-4 py-2">
-            <div className="flex-1 h-[1px] bg-zinc-800" />
-            <span className="text-[10px] font-bold text-zinc-600 uppercase tracking-widest whitespace-nowrap">or use email</span>
-            <div className="flex-1 h-[1px] bg-zinc-800" />
+            <div className="flex-1 h-[1px] bg-zinc-200 dark:bg-zinc-800" />
+            <span className="text-[10px] font-bold text-zinc-400 dark:text-zinc-600 uppercase tracking-widest whitespace-nowrap">or use email</span>
+            <div className="flex-1 h-[1px] bg-zinc-200 dark:bg-zinc-800" />
           </div>
         </div>
 
@@ -398,7 +372,7 @@ export const Auth = ({ onAuthSuccess, isDarkMode }: { onAuthSuccess: () => void;
               required
               value={email}
               onChange={e => setEmail(e.target.value)}
-              className="w-full bg-zinc-800/40 border border-zinc-700/50 text-white rounded-xl px-4 py-3.5 focus:ring-2 focus:ring-emerald-500/50 outline-none transition-all placeholder:text-zinc-600 shadow-inner"
+              className="w-full bg-white dark:bg-zinc-800/40 border border-zinc-200 dark:border-zinc-700/50 text-zinc-900 dark:text-white rounded-xl px-4 py-3.5 focus:ring-2 focus:ring-[#19C37D]/50 outline-none transition-all placeholder:text-zinc-400 dark:placeholder:text-zinc-600 shadow-inner"
               placeholder="name@example.com"
             />
           </div>
@@ -410,13 +384,13 @@ export const Auth = ({ onAuthSuccess, isDarkMode }: { onAuthSuccess: () => void;
                 required
                 value={password}
                 onChange={e => setPassword(e.target.value)}
-                className="w-full bg-zinc-800/40 border border-zinc-700/50 text-white rounded-xl px-4 py-3.5 focus:ring-2 focus:ring-emerald-500/50 outline-none transition-all pr-12 placeholder:text-zinc-600 shadow-inner"
+                className="w-full bg-white dark:bg-zinc-800/40 border border-zinc-200 dark:border-zinc-700/50 text-zinc-900 dark:text-white rounded-xl px-4 py-3.5 focus:ring-2 focus:ring-[#19C37D]/50 outline-none transition-all pr-12 placeholder:text-zinc-400 dark:placeholder:text-zinc-600 shadow-inner"
                 placeholder="••••••••"
               />
               <button 
                 type="button"
                 onClick={() => setShowPassword(!showPassword)}
-                className="absolute right-4 top-1/2 -translate-y-1/2 text-zinc-600 hover:text-white transition-colors"
+                className="absolute right-4 top-1/2 -translate-y-1/2 text-zinc-400 dark:text-zinc-600 hover:text-zinc-900 dark:hover:text-white transition-colors"
               >
                 {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
               </button>
@@ -426,16 +400,17 @@ export const Auth = ({ onAuthSuccess, isDarkMode }: { onAuthSuccess: () => void;
           <button 
             type="submit"
             disabled={loading}
-            className="w-full py-4 bg-emerald-500 text-white rounded-xl font-bold text-sm hover:bg-emerald-400 transition-all disabled:opacity-50 shadow-lg shadow-emerald-500/10 active:scale-[0.98] mt-2"
+            className="w-full py-4 bg-[#19C37D] hover:bg-[#15a86b] text-white rounded-xl font-bold text-sm transition-all disabled:opacity-50 shadow-lg shadow-emerald-500/10 active:scale-[0.98] mt-2 cursor-pointer"
           >
             {loading ? 'Initializing...' : (isLogin ? 'Sign In' : 'Create Account')}
           </button>
         </form>
 
-        <div className="mt-8 text-center pt-6 border-t border-zinc-800/50">
+        <div className="mt-8 text-center pt-6 border-t border-zinc-200 dark:border-zinc-800/50">
           <button 
+            type="button"
             onClick={() => setIsLogin(!isLogin)}
-            className="text-xs font-medium text-zinc-500 hover:text-white transition-colors"
+            className="text-xs font-medium text-zinc-500 hover:text-zinc-900 dark:hover:text-white transition-colors"
           >
             {isLogin ? "Don't have an account? Sign Up" : 'Already have an account? Sign In'}
           </button>

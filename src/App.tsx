@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
+import { ProjectSettingsModal } from './components/ProjectSettingsModal';
 import { 
   Plus, 
   History as HistoryIcon, 
@@ -37,7 +38,8 @@ import {
   ZoomOut,
   RotateCcw,
   ArrowUp,
-  HelpCircle
+  HelpCircle,
+  Folder
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Toaster, toast } from 'sonner';
@@ -63,7 +65,8 @@ import { supabase } from './lib/supabase';
 import { applyWatermark } from './utils/watermark';
 import { downloadFile, openExternalLink } from './utils/nativeCompat';
 
-import type { Message, ConversationType, Profile } from './types';
+import type { Message, ConversationType, Profile, Project } from './types';
+import { projectService } from './lib/projectService';
 
 const safeUUID = (): string => {
   if (typeof window !== 'undefined' && window.crypto && window.crypto.randomUUID) {
@@ -233,6 +236,7 @@ export default function App() {
   const [profile, setProfile] = useState<Profile | null>(null);
   const [conversations, setConversations] = useState<any[]>([]);
   const [currentConversation, setCurrentConversation] = useState<any | null>(null);
+  const hasLoadedInitialConversation = useRef<boolean>(false);
   const [selectedModelId, setSelectedModelId] = useState<string>(() => {
     return localStorage.getItem('selected_model_default') || 'thinking';
   });
@@ -396,26 +400,7 @@ export default function App() {
   const [showContextForm, setShowContextForm] = useState<ConversationType | null>(null);
   const [showLegal, setShowLegal] = useState<'about' | 'privacy' | 'terms' | null>(null);
 
-  // Sync state with URL path
-  useEffect(() => {
-    const handleLocationChange = () => {
-      const path = window.location.pathname.toLowerCase().replace(/\/$/, "");
-      if (path === '/privacy') {
-        setShowLegal('privacy');
-      } else if (path === '/terms') {
-        setShowLegal('terms');
-      } else if (path === '/about') {
-        setShowLegal('about');
-      } else {
-        setShowLegal(null);
-      }
-    };
-    // Check on mount
-    handleLocationChange();
 
-    window.addEventListener('popstate', handleLocationChange);
-    return () => window.removeEventListener('popstate', handleLocationChange);
-  }, []);
 
   const handleShowLegal = (type: 'about' | 'privacy' | 'terms') => {
     setShowLegal(type);
@@ -446,7 +431,16 @@ export default function App() {
   }, [expandedImage]);
 
   const [streamingMessage, setStreamingMessage] = useState('');
-  const [activeView, setActiveView] = useState<'chat' | 'history' | 'apps' | 'images' | 'settings' | 'tts'>('chat');
+  const [activeView, setActiveView] = useState<'chat' | 'history' | 'apps' | 'images' | 'settings' | 'tts' | 'project'>('chat');
+  const [projects, setProjects] = useState<Project[]>([]);
+  const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
+  const [isLoadingProjects, setIsLoadingProjects] = useState(false);
+  const [showCreateProjectModal, setShowCreateProjectModal] = useState(false);
+  const [showProjectSettingsModal, setShowProjectSettingsModal] = useState(false);
+  const [newProjectName, setNewProjectName] = useState('');
+  const [newProjectDesc, setNewProjectDesc] = useState('');
+  const [conversationToMoveId, setConversationToMoveId] = useState<string | null>(null);
+  const [moveTargetProjectId, setMoveTargetProjectId] = useState<string | null>('none');
   const [imageSpeed, setImageSpeed] = useState<'fast' | 'quality'>(() => {
     return (localStorage.getItem('image_speed') as 'fast' | 'quality') || 'quality';
   });
@@ -529,6 +523,127 @@ export default function App() {
       localStorage.removeItem('last_conversation_id');
     }
   }, [currentConversation?.id]);
+
+  // Sync state with URL path and handle browser Back/Forward navigation
+  useEffect(() => {
+    const handleLocationChange = () => {
+      const path = window.location.pathname;
+      const cleanPath = path.toLowerCase().replace(/\/$/, "");
+      
+      if (cleanPath === '/privacy') {
+        setShowLegal('privacy');
+      } else if (cleanPath === '/terms') {
+        setShowLegal('terms');
+      } else if (cleanPath === '/about') {
+        setShowLegal('about');
+      } else {
+        setShowLegal(null);
+        
+        // Deep-link pattern 1: /project/{projectId}/c/{conversationId}
+        const projWithConvMatch = path.match(/^\/project\/([a-f0-9-]+)\/c\/([a-f0-9-]+)/i);
+        // Deep-link pattern 2: /project/{projectId}
+        const projOnlyMatch = path.match(/^\/project\/([a-f0-9-]+)/i);
+        // Deep-link pattern 3: /c/{conversationId}
+        const cMatch = path.match(/^\/c\/([a-f0-9-]+)/i);
+
+        if (projWithConvMatch) {
+          const projId = projWithConvMatch[1];
+          const urlId = projWithConvMatch[2];
+          setSelectedProjectId(projId);
+          const found = conversations.find(c => c.id === urlId);
+          if (found) {
+            if (currentConversation?.id !== urlId) {
+              setCurrentConversation(found);
+              const uniqueMessages = (found.messages || []).reduce((acc: any[], curr: any, idx: number) => {
+                const messageId = curr.id || `msg-legacy-${idx}`;
+                if (!acc.find(m => m.id === messageId)) {
+                  acc.push({ ...curr, id: messageId });
+                }
+                return acc;
+              }, []);
+              setMessages(uniqueMessages);
+              setStreamingMessage('');
+              setActiveView('chat');
+            }
+          } else {
+            setCurrentConversation(null);
+            setMessages([]);
+            setActiveView('project');
+          }
+        } else if (projOnlyMatch) {
+          const projId = projOnlyMatch[1];
+          setSelectedProjectId(projId);
+          setCurrentConversation(null);
+          setMessages([]);
+          setActiveView('project');
+        } else if (cMatch) {
+          const urlId = cMatch[1];
+          const found = conversations.find(c => c.id === urlId);
+          if (found) {
+            if (currentConversation?.id !== urlId) {
+              setCurrentConversation(found);
+              if (found.project_id) {
+                setSelectedProjectId(found.project_id);
+              }
+              const uniqueMessages = (found.messages || []).reduce((acc: any[], curr: any, idx: number) => {
+                const messageId = curr.id || `msg-legacy-${idx}`;
+                if (!acc.find(m => m.id === messageId)) {
+                  acc.push({ ...curr, id: messageId });
+                }
+                return acc;
+              }, []);
+              setMessages(uniqueMessages);
+              setStreamingMessage('');
+              setActiveView('chat');
+            }
+          } else {
+            if (currentConversation !== null) {
+              setCurrentConversation(null);
+              setMessages([]);
+            }
+          }
+        } else if (path === '/' || path === '') {
+          if (currentConversation !== null) {
+            setCurrentConversation(null);
+            setMessages([]);
+          }
+        }
+      }
+    };
+
+    handleLocationChange();
+
+    window.addEventListener('popstate', handleLocationChange);
+    return () => window.removeEventListener('popstate', handleLocationChange);
+  }, [conversations, currentConversation?.id]);
+
+  // Synchronize browser URL with the active view and conversation ID
+  useEffect(() => {
+    if (activeView === 'project' && selectedProjectId) {
+      const expectedPath = `/project/${selectedProjectId}`;
+      if (window.location.pathname !== expectedPath) {
+        window.history.pushState({}, document.title, expectedPath);
+      }
+    } else if (currentConversation?.id) {
+      const expectedPath = selectedProjectId 
+        ? `/project/${selectedProjectId}/c/${currentConversation.id}` 
+        : `/c/${currentConversation.id}`;
+      if (window.location.pathname !== expectedPath) {
+        if (window.location.pathname === '/' || window.location.pathname === '') {
+          window.history.replaceState({ conversationId: currentConversation.id }, document.title, expectedPath);
+        } else {
+          window.history.pushState({ conversationId: currentConversation.id }, document.title, expectedPath);
+        }
+      }
+    } else {
+      if (activeView === 'chat' && window.location.pathname !== '/' && !selectedProjectId) {
+        const path = window.location.pathname;
+        if (path !== '/privacy' && path !== '/terms' && path !== '/about') {
+          window.history.pushState({}, document.title, '/');
+        }
+      }
+    }
+  }, [currentConversation?.id, activeView, selectedProjectId]);
 
   // Tab-Focus recovery & Background Sync:
   // If the user leaves the tab and comes back, and we were generating an image or loading,
@@ -825,6 +940,7 @@ export default function App() {
       fetchProfile();
       fetchConversations();
       fetchCapacityStatus();
+      fetchProjects();
     } else {
       setProfile(null);
       setConversations([]);
@@ -978,14 +1094,20 @@ export default function App() {
       
       setConversations(uniqueConversations);
 
-      const lastId = localStorage.getItem('last_conversation_id');
-      if (lastId) {
-        const lastConv = uniqueConversations.find((c: any) => c.id === lastId);
-        if (lastConv) {
-          console.log("[Chat] Auto-restoring last active conversation on startup:", lastId);
-          setCurrentConversation(lastConv);
+      // Startup URL parsing and restoration / redirect
+      const path = window.location.pathname;
+      const cMatch = path.match(/^\/c\/([a-f0-9-]+)/i);
+      const urlId = cMatch ? cMatch[1] : null;
+
+      if (urlId) {
+        // Deep link: load conversation from URL
+        const urlConv = uniqueConversations.find((c: any) => c.id === urlId);
+        if (urlConv) {
+          console.log("[Chat] Auto-restoring conversation from deep link:", urlId);
+          setCurrentConversation(urlConv);
+          setSelectedProjectId(urlConv.project_id || null);
           
-          const uniqueMessages = (lastConv.messages || []).reduce((acc: any[], curr: any, idx: number) => {
+          const uniqueMessages = (urlConv.messages || []).reduce((acc: any[], curr: any, idx: number) => {
             const messageId = curr.id || `msg-legacy-${idx}`;
             if (!acc.find(m => m.id === messageId)) {
               acc.push({ ...curr, id: messageId });
@@ -996,8 +1118,48 @@ export default function App() {
           setMessages(uniqueMessages);
           setStreamingMessage('');
           setActiveView('chat');
+        } else {
+          console.warn("[Chat] Conversation from deep link not found or unauthorized:", urlId);
+          setCurrentConversation(null);
+          setMessages([]);
+        }
+      } else if (path === '/' || path === '') {
+        // Root visit: only auto-redirect if we have not loaded the initial conversation yet in this mount
+        if (!hasLoadedInitialConversation.current) {
+          const lastId = localStorage.getItem('last_conversation_id');
+          const lastConv = lastId ? uniqueConversations.find((c: any) => c.id === lastId) : null;
+          const recentConv = lastConv || (uniqueConversations.length > 0 ? uniqueConversations[0] : null);
+
+          if (recentConv) {
+            console.log("[Chat] Root visit: auto-restoring recent conversation:", recentConv.id);
+            setCurrentConversation(recentConv);
+            setSelectedProjectId(recentConv.project_id || null);
+            
+            const uniqueMessages = (recentConv.messages || []).reduce((acc: any[], curr: any, idx: number) => {
+              const messageId = curr.id || `msg-legacy-${idx}`;
+              if (!acc.find(m => m.id === messageId)) {
+                acc.push({ ...curr, id: messageId });
+              }
+              return acc;
+            }, []);
+            
+            setMessages(uniqueMessages);
+            setStreamingMessage('');
+            setActiveView('chat');
+            
+            window.history.replaceState({ conversationId: recentConv.id }, document.title, `/c/${recentConv.id}`);
+          } else {
+            console.log("[Chat] Root visit: no conversations exist. Auto-creating a new one...");
+            const newConv = await startConversation('general', 'New Chat', '', {}, true);
+            if (newConv && newConv.id) {
+              window.history.replaceState({ conversationId: newConv.id }, document.title, `/c/${newConv.id}`);
+            }
+          }
         }
       }
+
+      // Mark that we have finished the initial load sequence
+      hasLoadedInitialConversation.current = true;
 
       // Auto-migrate/heal expiring images in the background after the UI starts rendering to keep chat loading incredibly fast
       setTimeout(() => {
@@ -1056,6 +1218,139 @@ export default function App() {
     }
   };
 
+  const fetchProjects = async () => {
+    if (!user) return;
+    setIsLoadingProjects(true);
+    try {
+      let list = await projectService.listProjects(user.id);
+      
+      // Seed default projects if none exist
+      if (list.length === 0) {
+        console.log('[Projects] Seeding default projects for new user:', user.id);
+        const defaults = [
+          { title: 'Website', description: 'Website development & engineering workspace', icon: 'Globe', color: 'emerald' },
+          { title: 'Business', description: 'Business plans, strategy & operations', icon: 'Briefcase', color: 'blue' },
+          { title: 'School', description: 'Academic research, studies & learning', icon: 'GraduationCap', color: 'purple' },
+          { title: 'Personal', description: 'Personal ideas, organization & thoughts', icon: 'User', color: 'pink' }
+        ];
+        
+        const seededList = [];
+        for (const p of defaults) {
+          try {
+            const created = await projectService.createProject(user.id, p.title, p.description, p.icon, p.color);
+            seededList.push(created);
+          } catch (err) {
+            console.error('[Projects] Error seeding default project:', p.title, err);
+          }
+        }
+        
+        if (seededList.length > 0) {
+          list = seededList;
+        } else {
+          list = await projectService.listProjects(user.id);
+        }
+      }
+      
+      setProjects(list);
+    } catch (err) {
+      console.error('[Projects] Error fetching projects:', err);
+    } finally {
+      setIsLoadingProjects(false);
+    }
+  };
+
+  const handleCreateProject = async () => {
+    if (!user || !newProjectName.trim()) return;
+    try {
+      const created = await projectService.createProject(user.id, newProjectName.trim(), newProjectDesc.trim());
+      setProjects(prev => [created, ...prev]);
+      setShowCreateProjectModal(false);
+      setNewProjectName('');
+      setNewProjectDesc('');
+      toast.success('Project created successfully!');
+      // Automatically switch to the newly created project page!
+      setSelectedProjectId(created.id);
+      setActiveView('project');
+    } catch (err) {
+      toast.error('Failed to create project');
+    }
+  };
+
+  const handleRenameProject = async (projectId: string, newTitle: string) => {
+    try {
+      const updated = await projectService.renameProject(projectId, newTitle);
+      setProjects(prev => prev.map(p => p.id === projectId ? updated : p));
+      toast.success('Project renamed successfully');
+    } catch (err) {
+      toast.error('Failed to rename project');
+    }
+  };
+
+  const handleUpdateProjectSettings = async (updates: { title: string; description: string; color: string; icon: string }) => {
+    if (!selectedProjectId) return;
+    try {
+      const updated = await projectService.updateProject(selectedProjectId, updates);
+      setProjects(prev => prev.map(p => p.id === selectedProjectId ? updated : p));
+      toast.success('Project details updated successfully');
+    } catch (err) {
+      toast.error('Failed to update project settings');
+      throw err;
+    }
+  };
+
+  const handleDeleteProject = async (projectId: string) => {
+    const confirm = window.confirm('Are you sure you want to delete this project? All conversations inside this project will be moved to your Personal Workspace.');
+    if (!confirm) return;
+    try {
+      setConversations(prev => prev.map(c => c.project_id === projectId ? { ...c, project_id: null } : c));
+      if (currentConversation && currentConversation.project_id === projectId) {
+        setCurrentConversation(prev => prev ? { ...prev, project_id: null } : null);
+      }
+      await supabase.from('conversations').update({ project_id: null }).eq('project_id', projectId);
+      await projectService.deleteProject(projectId);
+      setProjects(prev => prev.filter(p => p.id !== projectId));
+      setSelectedProjectId(null);
+      setActiveView('chat');
+      toast.success('Project deleted. Conversations moved to Personal Workspace.');
+    } catch (err) {
+      console.error('[DeleteProject] Error:', err);
+      toast.error('Failed to delete project');
+    }
+  };
+
+  const handleMoveConversation = async () => {
+    if (!conversationToMoveId) return;
+    const targetProjId = moveTargetProjectId === 'none' ? null : moveTargetProjectId;
+    try {
+      if (targetProjId) {
+        await projectService.moveConversationIntoProject(conversationToMoveId, targetProjId);
+      } else {
+        await projectService.removeConversationFromProject(conversationToMoveId);
+      }
+      setConversations(prev => prev.map(c => c.id === conversationToMoveId ? { ...c, project_id: targetProjId } : c));
+      if (currentConversation && currentConversation.id === conversationToMoveId) {
+        setCurrentConversation(prev => prev ? { ...prev, project_id: targetProjId } : null);
+      }
+      toast.success(targetProjId ? 'Conversation moved to project' : 'Conversation moved to personal workspace');
+      setConversationToMoveId(null);
+    } catch (err) {
+      toast.error('Failed to move conversation');
+    }
+  };
+
+  const handleRemoveFromProject = async (conversationId: string) => {
+    try {
+      await projectService.removeConversationFromProject(conversationId);
+      setConversations(prev => prev.map(c => c.id === conversationId ? { ...c, project_id: null } : c));
+      if (currentConversation && currentConversation.id === conversationId) {
+        setCurrentConversation(prev => prev ? { ...prev, project_id: null } : null);
+      }
+      toast.success('Conversation removed from project');
+    } catch (err) {
+      toast.error('Failed to remove conversation from project');
+    }
+  };
+
   const handleNewChat = () => {
     setCurrentConversation(null);
     setMessages([]);
@@ -1089,6 +1384,7 @@ export default function App() {
     if (conv) {
       setCurrentConversation(conv);
       setIsTemporaryChat(!!conv.is_temporary);
+      setSelectedProjectId(conv.project_id || null);
       
       // Filter out duplicate messages by ID and ensure every message has a unique ID
       const uniqueMessages = (conv.messages || []).reduce((acc: any[], curr: any, idx: number) => {
@@ -1177,7 +1473,8 @@ export default function App() {
       messages: [],
       metadata: metadata,
       created_at: new Date().toISOString(),
-      updated_at: new Date().toISOString()
+      updated_at: new Date().toISOString(),
+      project_id: selectedProjectId || null
     };
 
     const creationPromise = (async () => {
@@ -2057,6 +2354,20 @@ export default function App() {
         }}
         onDeleteConversation={handleDeleteConversation}
         onRenameConversation={handleRenameConversation}
+        projects={projects}
+        selectedProjectId={selectedProjectId}
+        onSelectProject={(id) => {
+          setSelectedProjectId(id);
+          setActiveView('project');
+        }}
+        onCreateProjectClick={() => {
+          setShowCreateProjectModal(true);
+        }}
+        onMoveConversationClick={(id) => {
+          const conv = conversations.find(c => c.id === id);
+          setConversationToMoveId(id);
+          setMoveTargetProjectId(conv?.project_id || 'none');
+        }}
       />
 
       <main className="flex-1 flex flex-col relative overflow-hidden">
@@ -2082,7 +2393,7 @@ export default function App() {
                   {/* Mobile Menu toggle matching Image 2 exactly (black/dark circle, 2 lines) */}
                   <button 
                     onClick={() => setIsSidebarOpen(true)} 
-                    className="flex sm:hidden w-10 h-10 items-center justify-center bg-[#1E1F22] rounded-full hover:opacity-85 transition-all text-white shrink-0"
+                    className="flex sm:hidden w-10 h-10 items-center justify-center bg-zinc-100 dark:bg-[#1E1F22] rounded-full hover:bg-zinc-200 dark:hover:bg-zinc-800 transition-all text-zinc-800 dark:text-white border border-zinc-200 dark:border-zinc-800/60 shrink-0"
                   >
                     <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
                       <line x1="4" y1="8" x2="20" y2="8" />
@@ -2098,18 +2409,18 @@ export default function App() {
                   {/* Desktop Upgrade */}
                   <button 
                     onClick={() => setShowUpgradeModal(true)}
-                    className="hidden sm:flex items-center gap-1.5 px-4 py-1.5 bg-[#1E1F22] border border-zinc-800 rounded-full text-xs font-bold text-white transition-all hover:bg-zinc-800 shadow-sm shrink-0 ml-1"
+                    className="hidden sm:flex items-center gap-1.5 px-4 py-1.5 bg-zinc-100 dark:bg-[#1E1F22] border border-zinc-200 dark:border-zinc-800 rounded-full text-xs font-bold text-zinc-800 dark:text-white transition-all hover:bg-zinc-200 dark:hover:bg-zinc-800 shadow-sm shrink-0 ml-1"
                   >
                     <span className="text-[#19C37D] text-sm font-black">✦</span>
-                    <span className="text-zinc-200">Upgrade</span>
+                    <span className="text-zinc-600 dark:text-zinc-200">Upgrade</span>
                   </button>
                   {/* Mobile Get Plus */}
                   <button 
                     onClick={() => setShowUpgradeModal(true)}
-                    className="flex sm:hidden items-center gap-1.5 px-4.5 py-1.5 bg-[#1E1F22] border border-zinc-800/85 rounded-full text-xs font-bold text-white transition-all hover:bg-zinc-800 shadow-xs shrink-0 ml-1.5"
+                    className="flex sm:hidden items-center gap-1.5 px-4.5 py-1.5 bg-zinc-100 dark:bg-[#1E1F22] border border-zinc-200 dark:border-zinc-800/85 rounded-full text-xs font-bold text-zinc-800 dark:text-white transition-all hover:bg-zinc-200 dark:hover:bg-zinc-800 shadow-xs shrink-0 ml-1.5"
                   >
                     <span className="text-[#19C37D] text-xs font-black">✦</span>
-                    <span className="text-zinc-200">Get Plus</span>
+                    <span className="text-zinc-600 dark:text-zinc-200">Get Plus</span>
                   </button>
                 </>
               )}
@@ -2148,7 +2459,7 @@ export default function App() {
                   "w-9 h-9 sm:w-10 sm:h-10 flex items-center justify-center rounded-full transition-all shrink-0",
                   isTemporaryChat 
                     ? "bg-[#19C37D]/15 border border-[#19C37D]/35 text-[#19C37D]" 
-                    : "bg-[#1E1F22] sm:bg-zinc-100 dark:sm:bg-[#1E1F22] text-zinc-300 sm:text-zinc-500 sm:dark:text-zinc-400 hover:bg-zinc-200 dark:hover:bg-zinc-800"
+                    : "bg-zinc-100 dark:bg-[#1E1F22] text-zinc-500 dark:text-zinc-400 hover:bg-zinc-200 dark:hover:bg-zinc-800 border border-zinc-200/50 dark:border-zinc-800/60"
                 )}
                 title={isTemporaryChat ? "Click to turn off temporary chat" : "Turn on temporary chat to avoid saving to history"}
               >
@@ -2285,6 +2596,176 @@ export default function App() {
                   ))}
                 </div>
               )}
+            </div>
+          ) : activeView === 'project' ? (
+            <div className="flex-1 flex flex-col overflow-y-auto overscroll-y-contain animate-fade-in bg-white dark:bg-zinc-950">
+              <div className="max-w-4xl mx-auto w-full p-6 md:p-12 space-y-8 pb-32">
+                {(() => {
+                  const proj = projects.find(p => p.id === selectedProjectId);
+                  if (!proj) {
+                    return (
+                      <div className="text-center py-20 opacity-50 flex flex-col items-center gap-4 animate-fade-in">
+                        <div className="w-16 h-16 bg-zinc-100 dark:bg-zinc-900 rounded-full flex items-center justify-center">
+                          <Folder className="w-8 h-8 opacity-20" />
+                        </div>
+                        <div className="font-bold text-zinc-900 dark:text-zinc-100">Project Not Found</div>
+                      </div>
+                    );
+                  }
+                  
+                  const projConversations = conversations.filter(c => c.project_id === proj.id);
+                  
+                  return (
+                    <div className="space-y-8 animate-fade-in">
+                      {/* Project Header */}
+                      <div className="flex flex-col md:flex-row md:items-start justify-between gap-6 border-b border-zinc-200 dark:border-zinc-800 pb-8">
+                        <div className="space-y-4">
+                          <div className="flex items-center gap-3">
+                            <div className="w-12 h-12 rounded-2xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-600 dark:text-emerald-400 flex items-center justify-center font-bold shadow-sm shrink-0">
+                              <Folder className="w-6 h-6" />
+                            </div>
+                            <div>
+                              <h1 className="text-2xl md:text-3xl font-black text-zinc-900 dark:text-white tracking-tight">{proj.title}</h1>
+                              <p className="text-[10px] font-mono text-zinc-400 uppercase tracking-widest mt-0.5">
+                                Workspace Project • Updated {proj.updated_at ? new Date(proj.updated_at).toLocaleDateString() : 'recently'}
+                              </p>
+                            </div>
+                          </div>
+
+                          {proj.description && (
+                            <p className="text-sm md:text-base text-zinc-600 dark:text-zinc-400 font-medium max-w-2xl leading-relaxed">
+                              {proj.description}
+                            </p>
+                          )}
+
+                          <div className="flex items-center gap-2">
+                            <span className="inline-flex items-center gap-1.5 px-3 py-1 bg-zinc-100 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-xl text-xs font-bold text-zinc-600 dark:text-zinc-400">
+                              <MessageSquare className="w-3.5 h-3.5 text-emerald-500" />
+                              {projConversations.length} {projConversations.length === 1 ? 'conversation' : 'conversations'}
+                            </span>
+                          </div>
+                        </div>
+
+                        <div className="flex items-center gap-2.5 shrink-0 pt-2 md:pt-0">
+                          <button
+                            onClick={() => setShowProjectSettingsModal(true)}
+                            className="px-4 py-2.5 border border-zinc-200 dark:border-zinc-800 text-zinc-700 dark:text-zinc-300 hover:bg-zinc-50 dark:hover:bg-zinc-900 rounded-xl text-xs font-bold uppercase tracking-wider transition-all cursor-pointer bg-white dark:bg-zinc-900 flex items-center gap-2"
+                          >
+                            <SettingsIcon className="w-3.5 h-3.5" />
+                            <span>Settings</span>
+                          </button>
+                          <button
+                            onClick={() => handleDeleteProject(proj.id)}
+                            className="px-4 py-2.5 border border-red-200 dark:border-red-950/40 text-red-500 hover:bg-red-50 dark:hover:bg-red-950/10 rounded-xl text-xs font-bold uppercase tracking-wider transition-all cursor-pointer flex items-center gap-2"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                            <span>Delete</span>
+                          </button>
+                          <button 
+                            onClick={() => {
+                              handleNewChat();
+                              setActiveView('chat');
+                            }}
+                            className="px-5 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-bold uppercase tracking-wider transition-all shadow-md hover:shadow-emerald-500/25 active:scale-[0.98] cursor-pointer flex items-center gap-2"
+                          >
+                            <Plus className="w-4 h-4" />
+                            <span>New Chat</span>
+                          </button>
+                        </div>
+                      </div>
+
+                      {/* Recent Conversations inside this Project */}
+                      <div className="space-y-4">
+                        <div className="flex items-center justify-between">
+                          <h2 className="text-xs font-black uppercase tracking-widest text-zinc-400">Workspace Conversations</h2>
+                          <span className="text-[10px] font-mono text-zinc-400">{projConversations.length} total</span>
+                        </div>
+
+                        {projConversations.length === 0 ? (
+                          <div className="text-center py-16 px-6 bg-gradient-to-b from-zinc-50 to-zinc-100/50 dark:from-zinc-900/40 dark:to-zinc-950/40 border border-dashed border-zinc-200 dark:border-zinc-800 rounded-3xl space-y-4 max-w-xl mx-auto my-8">
+                            <div className="w-16 h-16 rounded-2xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-500 flex items-center justify-center mx-auto shadow-inner">
+                              <Folder className="w-8 h-8" />
+                            </div>
+                            <div className="space-y-1">
+                              <h3 className="text-lg font-bold text-zinc-900 dark:text-zinc-100">No conversations in this workspace yet</h3>
+                              <p className="text-xs text-zinc-500 max-w-sm mx-auto leading-relaxed">
+                                Start a new chat inside <strong className="text-zinc-700 dark:text-zinc-300">{proj.title}</strong> to organize your notes, research, and AI sessions.
+                              </p>
+                            </div>
+                            <button
+                              onClick={() => {
+                                handleNewChat();
+                                setActiveView('chat');
+                              }}
+                              className="px-6 py-3 bg-emerald-600 hover:bg-emerald-500 text-white font-bold rounded-2xl text-xs uppercase tracking-wider transition-all shadow-lg hover:shadow-emerald-500/20 inline-flex items-center gap-2 cursor-pointer active:scale-95"
+                            >
+                              <Plus className="w-4 h-4" />
+                              <span>Create Chat in {proj.title}</span>
+                            </button>
+                          </div>
+                        ) : (
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pb-12">
+                            {projConversations.map((conv, index) => (
+                              <div
+                                key={`proj-conv-${conv.id || index}`}
+                                className="p-6 bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-3xl text-left hover:border-zinc-400 dark:hover:border-zinc-600 transition-all group relative hover:shadow-xl flex flex-col justify-between"
+                              >
+                                <div 
+                                  onClick={() => {
+                                    handleSelectConversation(conv.id);
+                                    setActiveView('chat');
+                                  }} 
+                                  className="cursor-pointer flex-1"
+                                >
+                                  <div className="flex items-center justify-between mb-4">
+                                    <span className="text-[10px] font-black uppercase tracking-widest px-2.5 py-1 bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-400 rounded-lg">
+                                      {conv.type || 'Chat'}
+                                    </span>
+                                    <span className="text-[10px] font-mono opacity-40 uppercase tracking-widest">
+                                      {new Date(conv.created_at).toLocaleDateString()}
+                                    </span>
+                                  </div>
+                                  <h3 className="font-bold mb-2 group-hover:text-emerald-600 dark:group-hover:text-emerald-400 transition-colors line-clamp-1">
+                                    {conv.title || 'Untitled Chat'}
+                                  </h3>
+                                  <p className="text-xs opacity-60 line-clamp-2 leading-relaxed">
+                                    {conv.messages?.[0]?.content || 'No messages yet'}
+                                  </p>
+                                </div>
+                                
+                                <div className="mt-6 flex items-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity pt-4 border-t border-zinc-100 dark:border-zinc-800/80">
+                                  <button 
+                                    onClick={() => {
+                                      const newTitle = prompt('Rename conversation:', conv.title);
+                                      if (newTitle) handleRenameConversation(conv.id, newTitle);
+                                    }}
+                                    className="flex-1 py-2 bg-zinc-100 dark:bg-zinc-800 hover:bg-zinc-200 dark:hover:bg-zinc-700 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all cursor-pointer text-zinc-600 dark:text-zinc-300"
+                                  >
+                                    Rename
+                                  </button>
+                                  <button 
+                                    onClick={() => handleRemoveFromProject(conv.id)}
+                                    className="flex-1 py-2 bg-amber-50 dark:bg-amber-950/20 hover:bg-amber-100 text-amber-600 dark:text-amber-400 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all cursor-pointer"
+                                    title="Move out to Personal Workspace"
+                                  >
+                                    Remove
+                                  </button>
+                                  <button 
+                                    onClick={() => handleDeleteConversation(conv.id)}
+                                    className="flex-1 py-2 bg-red-50 dark:bg-red-950/20 hover:bg-red-100 text-red-500 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all cursor-pointer"
+                                  >
+                                    Delete
+                                  </button>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })()}
+              </div>
             </div>
           ) : (
             <>
@@ -2768,6 +3249,118 @@ export default function App() {
             onCancel={() => setShowContextForm(null)} 
           />
         )}
+        {showCreateProjectModal && (
+          <div 
+            className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm cursor-pointer animate-fade-in"
+            onClick={() => setShowCreateProjectModal(false)}
+          >
+            <div 
+              className="w-full max-w-md bg-white dark:bg-zinc-950 border border-zinc-200 dark:border-zinc-800 rounded-2xl shadow-xl p-6 cursor-default relative overflow-hidden"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <h3 className="text-lg font-bold text-zinc-900 dark:text-zinc-50 mb-4">Create Project</h3>
+              <div className="space-y-4">
+                <div>
+                  <label className="block text-xs font-black uppercase tracking-wider text-zinc-400 mb-1.5">Project Name</label>
+                  <input 
+                    type="text"
+                    value={newProjectName}
+                    onChange={(e) => setNewProjectName(e.target.value)}
+                    placeholder="e.g. Website development"
+                    className="w-full bg-zinc-50 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-xl px-4 py-3 text-sm text-zinc-900 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 transition-all"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-black uppercase tracking-wider text-zinc-400 mb-1.5">Optional Description</label>
+                  <textarea 
+                    value={newProjectDesc}
+                    onChange={(e) => setNewProjectDesc(e.target.value)}
+                    placeholder="Describe the scope of this project..."
+                    rows={3}
+                    className="w-full bg-zinc-50 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-xl px-4 py-3 text-sm text-zinc-900 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 transition-all resize-none"
+                  />
+                </div>
+                <div className="flex items-center justify-end gap-3 pt-2">
+                  <button 
+                    onClick={() => setShowCreateProjectModal(false)}
+                    className="px-4 py-2 bg-zinc-100 dark:bg-zinc-900 hover:bg-zinc-200 dark:hover:bg-zinc-800 text-zinc-600 dark:text-zinc-400 rounded-xl text-xs font-bold uppercase tracking-wider transition-all cursor-pointer"
+                  >
+                    Cancel
+                  </button>
+                  <button 
+                    onClick={handleCreateProject}
+                    disabled={!newProjectName.trim()}
+                    className="px-5 py-2 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white rounded-xl text-xs font-bold uppercase tracking-wider transition-all shadow-md hover:shadow-emerald-500/20 cursor-pointer"
+                  >
+                    Create
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+        {conversationToMoveId && (
+          <div 
+            className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm cursor-pointer animate-fade-in"
+            onClick={() => setConversationToMoveId(null)}
+          >
+            <div 
+              className="w-full max-w-md bg-white dark:bg-zinc-950 border border-zinc-200 dark:border-zinc-800 rounded-2xl shadow-xl p-6 cursor-default relative overflow-hidden"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <h3 className="text-lg font-bold text-zinc-900 dark:text-zinc-50 mb-4">Choose Project</h3>
+              <p className="text-xs text-zinc-500 mb-4">Select a workspace project to move this conversation into.</p>
+              
+              <div className="space-y-2 max-h-60 overflow-y-auto pr-1">
+                {/* No Project Option */}
+                <button
+                  onClick={() => setMoveTargetProjectId('none')}
+                  className={cn(
+                    "w-full text-left p-3.5 rounded-xl border text-sm flex items-center gap-3 transition-all cursor-pointer",
+                    moveTargetProjectId === 'none'
+                      ? "border-emerald-500/50 bg-emerald-500/5 dark:bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 font-bold"
+                      : "border-zinc-100 dark:border-zinc-900 hover:bg-zinc-50 dark:hover:bg-zinc-900/50 text-zinc-700 dark:text-zinc-300"
+                  )}
+                >
+                  <span className="text-base">🌐</span>
+                  <span>Personal (No Project)</span>
+                </button>
+
+                {/* Project Options */}
+                {projects.map((proj) => (
+                  <button
+                    key={`move-opt-${proj.id}`}
+                    onClick={() => setMoveTargetProjectId(proj.id)}
+                    className={cn(
+                      "w-full text-left p-3.5 rounded-xl border text-sm flex items-center gap-3 transition-all cursor-pointer",
+                      moveTargetProjectId === proj.id
+                        ? "border-emerald-500/50 bg-emerald-500/5 dark:bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 font-bold"
+                        : "border-zinc-100 dark:border-zinc-900 hover:bg-zinc-50 dark:hover:bg-zinc-900/50 text-zinc-700 dark:text-zinc-300"
+                    )}
+                  >
+                    <span className="text-base">📁</span>
+                    <span>{proj.title}</span>
+                  </button>
+                ))}
+              </div>
+
+              <div className="flex items-center justify-end gap-3 pt-6 border-t border-zinc-100 dark:border-zinc-900 mt-4">
+                <button 
+                  onClick={() => setConversationToMoveId(null)}
+                  className="px-4 py-2 bg-zinc-100 dark:bg-zinc-900 hover:bg-zinc-200 dark:hover:bg-zinc-800 text-zinc-600 dark:text-zinc-400 rounded-xl text-xs font-bold uppercase tracking-wider transition-all cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button 
+                  onClick={handleMoveConversation}
+                  className="px-5 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-bold uppercase tracking-wider transition-all shadow-md hover:shadow-emerald-500/20 cursor-pointer"
+                >
+                  Move
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
         {showLegal && (
           <LegalModal 
             type={showLegal} 
@@ -2792,23 +3385,23 @@ export default function App() {
               animate={{ scale: 1, opacity: 1, y: 0 }}
               exit={{ scale: 0.95, opacity: 0, y: 15 }}
               transition={{ type: "spring", duration: 0.4 }}
-              className="bg-[#1E1F22] text-zinc-100 border border-zinc-800/80 rounded-3xl max-w-sm md:max-w-md w-full p-6 md:p-8 shadow-2xl relative overflow-hidden"
+              className="bg-white dark:bg-[#1E1F22] text-zinc-800 dark:text-zinc-100 border border-zinc-200 dark:border-zinc-800/80 rounded-3xl max-w-sm md:max-w-md w-full p-6 md:p-8 shadow-2xl relative overflow-hidden"
             >
-              <h3 className="text-xl font-bold tracking-tight mb-6 text-white select-none">
+              <h3 className="text-xl font-bold tracking-tight mb-6 text-zinc-900 dark:text-white select-none">
                 Temporary Chat
               </h3>
               
               <div className="space-y-6 mb-8 select-none">
                 {/* Item 1 */}
                 <div className="flex items-start gap-4">
-                  <div className="mt-1 w-6 h-6 flex items-center justify-center shrink-0 text-zinc-400">
+                  <div className="mt-1 w-6 h-6 flex items-center justify-center shrink-0 text-zinc-400 dark:text-zinc-500">
                     <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeDasharray="3.5 2">
                       <path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z" />
                     </svg>
                   </div>
                   <div>
-                    <h4 className="font-bold text-sm text-zinc-200">Not in history</h4>
-                    <p className="text-xs text-zinc-400 leading-relaxed mt-1">
+                    <h4 className="font-bold text-sm text-zinc-800 dark:text-zinc-200">Not in history</h4>
+                    <p className="text-xs text-zinc-500 dark:text-zinc-400 leading-relaxed mt-1">
                       Temporary chats won't appear in your history. For safety purposes, we may keep a copy of this chat for up to 30 days.
                     </p>
                   </div>
@@ -2816,12 +3409,12 @@ export default function App() {
 
                 {/* Item 2 */}
                 <div className="flex items-start gap-4">
-                  <div className="mt-1.5 w-6 h-6 flex items-center justify-center text-zinc-400 font-mono text-xs font-black shrink-0 tracking-tighter select-none">
+                  <div className="mt-1.5 w-6 h-6 flex items-center justify-center text-zinc-400 dark:text-zinc-500 font-mono text-xs font-black shrink-0 tracking-tighter select-none">
                     0\0
                   </div>
                   <div>
-                    <h4 className="font-bold text-sm text-zinc-200">No model training</h4>
-                    <p className="text-xs text-zinc-400 leading-relaxed mt-1">
+                    <h4 className="font-bold text-sm text-zinc-800 dark:text-zinc-200">No model training</h4>
+                    <p className="text-xs text-zinc-500 dark:text-zinc-400 leading-relaxed mt-1">
                       Temporary chats won't be used to improve our models.
                     </p>
                   </div>
@@ -2829,26 +3422,26 @@ export default function App() {
 
                 {/* Item 3 */}
                 <div className="flex items-start gap-4">
-                  <div className="mt-1 w-6 h-6 flex items-center justify-center shrink-0 text-zinc-400">
+                  <div className="mt-1 w-6 h-6 flex items-center justify-center shrink-0 text-zinc-400 dark:text-zinc-500">
                     <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                       <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
                       <polyline points="14 2 14 8 20 8" />
                     </svg>
                   </div>
                   <div>
-                    <h4 className="font-bold text-sm text-zinc-200">Memory off</h4>
-                    <p className="text-xs text-zinc-400 leading-relaxed mt-1">
+                    <h4 className="font-bold text-sm text-zinc-800 dark:text-zinc-200">Memory off</h4>
+                    <p className="text-xs text-zinc-500 dark:text-zinc-400 leading-relaxed mt-1">
                       While in a temporary chat, Trelvix AI won't use or update its memory. Custom instructions will still be followed if you have them enabled.
                     </p>
                   </div>
                 </div>
               </div>
 
-              <div className="flex justify-end gap-3 border-t border-zinc-800/40 pt-4">
+              <div className="flex justify-end gap-3 border-t border-zinc-200 dark:border-zinc-800/40 pt-4">
                 <button 
                   type="button"
                   onClick={() => setShowTempChatIntro(false)}
-                  className="px-4 py-2 text-xs font-bold text-zinc-400 hover:text-white transition-colors"
+                  className="px-4 py-2 text-xs font-bold text-zinc-450 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-white transition-colors"
                 >
                   Cancel
                 </button>
@@ -2860,7 +3453,7 @@ export default function App() {
                     setShowTempChatIntro(false);
                     toast.success("Temporary chat is ON");
                   }}
-                  className="px-6 py-2 bg-white hover:bg-zinc-200 text-zinc-950 text-xs font-bold uppercase tracking-widest rounded-full transition-all active:scale-95"
+                  className="px-6 py-2 bg-zinc-950 dark:bg-white hover:bg-zinc-800 dark:hover:bg-zinc-200 text-white dark:text-zinc-950 text-xs font-bold uppercase tracking-widest rounded-full transition-all active:scale-95 cursor-pointer"
                 >
                   Continue
                 </button>
@@ -3104,6 +3697,15 @@ export default function App() {
           );
         })()}
       </AnimatePresence>
+
+      {showProjectSettingsModal && selectedProjectId && projects.some(p => p.id === selectedProjectId) && (
+        <ProjectSettingsModal 
+          isOpen={showProjectSettingsModal}
+          onClose={() => setShowProjectSettingsModal(false)}
+          project={projects.find(p => p.id === selectedProjectId)!}
+          onSave={handleUpdateProjectSettings}
+        />
+      )}
 
       <Toaster 
         position="top-center" 

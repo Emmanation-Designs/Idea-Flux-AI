@@ -12,7 +12,8 @@ import {
   Edit2,
   Search,
   MoreVertical,
-  Volume2
+  Volume2,
+  Folder
 } from 'lucide-react';
 import React, { useState } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
@@ -39,7 +40,12 @@ export const Sidebar = ({
   currentConversationId,
   onSelectConversation,
   onDeleteConversation,
-  onRenameConversation
+  onRenameConversation,
+  projects = [],
+  selectedProjectId = null,
+  onSelectProject,
+  onCreateProjectClick,
+  onMoveConversationClick
 }: { 
   isOpen: boolean; 
   setIsOpen: (open: boolean) => void;
@@ -56,6 +62,11 @@ export const Sidebar = ({
   onSelectConversation: (id: string) => void;
   onDeleteConversation: (id: string) => void;
   onRenameConversation: (id: string, newTitle: string) => void;
+  projects?: any[];
+  selectedProjectId?: string | null;
+  onSelectProject?: (id: string | null) => void;
+  onCreateProjectClick?: () => void;
+  onMoveConversationClick?: (id: string) => void;
 }) => {
   const [searchQuery, setSearchQuery] = useState('');
   const [revealedActionsId, setRevealedActionsId] = useState<string | null>(null);
@@ -67,7 +78,14 @@ export const Sidebar = ({
     }
   };
 
-  const filteredConversations = conversations.filter(conv => 
+  const contextConversations = conversations.filter(conv => {
+    if (selectedProjectId) {
+      return conv.project_id === selectedProjectId;
+    }
+    return !conv.project_id;
+  });
+
+  const filteredConversations = contextConversations.filter(conv => 
     (conv.title || 'Untitled Chat').toLowerCase().includes(searchQuery.toLowerCase())
   );
 
@@ -162,11 +180,76 @@ export const Sidebar = ({
           </button>
         </div>
 
+        {/* Workspaces & Projects Section */}
+        <div className="pt-4 border-t border-zinc-200/50 dark:border-zinc-800/50 my-2">
+          <div className="px-4 mb-3 flex items-center justify-between text-[10px] font-black uppercase tracking-[0.2em] text-zinc-400 animate-fade-in">
+            <div className="flex items-center gap-2">
+              <Folder className="w-3.5 h-3.5 text-zinc-400" />
+              <span>Workspaces</span>
+            </div>
+            <button 
+              onClick={(e) => {
+                e.stopPropagation();
+                onCreateProjectClick?.();
+              }}
+              className="p-1 hover:bg-zinc-200 dark:hover:bg-zinc-800 rounded-md text-zinc-400 hover:text-zinc-900 dark:hover:text-white transition-colors cursor-pointer"
+              title="Create new project"
+            >
+              <Plus className="w-3.5 h-3.5" />
+            </button>
+          </div>
+          
+          <div className="space-y-1">
+            {/* Personal Workspace Option */}
+            <button
+              onClick={() => handleAction(() => onSelectProject?.(null))}
+              className={cn(
+                "w-full text-left px-4 py-2 rounded-xl text-xs transition-all flex items-center justify-between group/proj relative min-w-0 cursor-pointer font-bold uppercase tracking-wider",
+                selectedProjectId === null
+                  ? "bg-white dark:bg-zinc-900 text-emerald-600 dark:text-emerald-400 shadow-sm border border-zinc-200 dark:border-zinc-800"
+                  : "text-zinc-500 hover:bg-zinc-100/80 dark:hover:bg-zinc-900/80"
+              )}
+            >
+              <div className="flex items-center gap-2.5 min-w-0">
+                <span className="text-sm shrink-0">🌐</span>
+                <span className="truncate">Personal Workspace</span>
+              </div>
+            </button>
+
+            {/* User Projects */}
+            {projects.map((proj) => {
+              const isActive = selectedProjectId === proj.id;
+              return (
+                <button
+                  key={`sidebar-proj-${proj.id}`}
+                  onClick={() => handleAction(() => onSelectProject?.(proj.id))}
+                  className={cn(
+                    "w-full text-left px-4 py-2 rounded-xl text-xs transition-all flex items-center justify-between group/proj relative min-w-0 cursor-pointer font-medium",
+                    isActive
+                      ? "bg-white dark:bg-zinc-900 text-zinc-900 dark:text-white shadow-sm border border-zinc-200 dark:border-zinc-800 font-bold"
+                      : "text-zinc-500 hover:bg-zinc-100/80 dark:hover:bg-zinc-900/80"
+                  )}
+                >
+                  <div className="flex items-center gap-2.5 min-w-0">
+                    <span className="text-sm shrink-0">📁</span>
+                    <span className="truncate">{proj.title}</span>
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
         {/* Recent History Section */}
         <div className="pt-4">
-          <div className="px-4 mb-4 flex items-center gap-2 text-[10px] font-black uppercase tracking-[0.2em] text-zinc-400">
-            <Clock className="w-3 h-3" />
-            Recent
+          <div className="px-4 mb-3 flex items-center justify-between text-[10px] font-black uppercase tracking-[0.2em] text-zinc-400">
+            <div className="flex items-center gap-2">
+              <Clock className="w-3 h-3" />
+              <span>{selectedProjectId ? projects.find(p => p.id === selectedProjectId)?.title || 'Project Chats' : 'Personal Chats'}</span>
+            </div>
+            <span className="text-[9px] px-1.5 py-0.5 rounded-md bg-zinc-100 dark:bg-zinc-900 font-mono">
+              {filteredConversations.length}
+            </span>
           </div>
           <div className="space-y-1">
             {filteredConversations.length === 0 ? (
@@ -234,6 +317,17 @@ export const Sidebar = ({
                               className="p-1.5 text-zinc-300 hover:text-red-500 rounded-lg hover:bg-red-50 dark:hover:bg-red-950/20 transition-all"
                             >
                               <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                onMoveConversationClick?.(conv.id);
+                                setRevealedActionsId(null);
+                              }}
+                              className="p-1.5 text-zinc-400 hover:text-blue-500 rounded-lg hover:bg-blue-50 dark:hover:bg-blue-950/20 transition-all cursor-pointer"
+                              title="Move to Project"
+                            >
+                              <Folder className="w-3.5 h-3.5" />
                             </button>
                             <button
                                onClick={() => setRevealedActionsId(null)}
