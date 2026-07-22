@@ -30,7 +30,12 @@ export const CreateOrganizationModal: React.FC<CreateOrganizationModalProps> = (
 
     try {
       setIsSubmitting(true);
-      const created = await createOrganization(name.trim(), description.trim() || undefined, logoUrl.trim() || undefined);
+      const created = await createOrganization(
+        name.trim(), 
+        description.trim() || undefined, 
+        logoUrl.trim() || undefined,
+        slug.trim() || undefined
+      );
       if (created) {
         setName('');
         setDescription('');

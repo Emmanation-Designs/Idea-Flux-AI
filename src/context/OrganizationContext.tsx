@@ -22,7 +22,7 @@ interface OrganizationContextType {
   switchWorkspace: (workspace: Workspace) => void;
   refreshOrganizations: () => Promise<void>;
   refreshMembersAndInvitations: () => Promise<void>;
-  createOrganization: (name: string, description?: string, logoUrl?: string) => Promise<Organization | null>;
+  createOrganization: (name: string, description?: string, logoUrl?: string, customSlug?: string) => Promise<Organization | null>;
   updateOrganization: (updates: { name?: string; slug?: string; description?: string; logo_url?: string }) => Promise<void>;
   deleteOrganization: () => Promise<void>;
   inviteMember: (email: string, role: OrganizationRole) => Promise<boolean>;
@@ -62,22 +62,24 @@ export const OrganizationProvider: React.FC<{
       const orgs = await organizationService.getUserOrganizations(userId);
       setUserOrganizations(orgs);
 
-      // If user is in an org workspace, verify org still exists or update reference
-      if (currentWorkspace.type === 'organization' && currentWorkspace.organization) {
-        const found = orgs.find(o => o.id === currentWorkspace.organization?.id);
-        if (found) {
-          setCurrentWorkspace({ type: 'organization', organization: found });
-        } else {
+      // If user is in an org workspace, verify org still exists or update reference using functional update
+      setCurrentWorkspace(prev => {
+        if (prev.type === 'organization' && prev.organization) {
+          const found = orgs.find(o => o.id === prev.organization?.id);
+          if (found) {
+            return { type: 'organization', organization: found };
+          }
           // Fall back to personal workspace if org no longer accessible
-          setCurrentWorkspace({ type: 'personal', organization: null });
+          return { type: 'personal', organization: null };
         }
-      }
+        return prev;
+      });
     } catch (error) {
       console.error('[OrganizationProvider] Error loading organizations:', error);
     } finally {
       setIsLoading(false);
     }
-  }, [userId, currentWorkspace.type, currentWorkspace.organization?.id]);
+  }, [userId]);
 
   // Load members & invitations for active organization
   const refreshMembersAndInvitations = useCallback(async () => {
@@ -113,11 +115,11 @@ export const OrganizationProvider: React.FC<{
     } catch (error) {
       console.error('[OrganizationProvider] Error refreshing org members:', error);
     }
-  }, [currentWorkspace, userId]);
+  }, [currentWorkspace.type, currentWorkspace.organization?.id, userId]);
 
   useEffect(() => {
     refreshOrganizations();
-  }, [userId]);
+  }, [refreshOrganizations]);
 
   useEffect(() => {
     refreshMembersAndInvitations();
@@ -135,14 +137,14 @@ export const OrganizationProvider: React.FC<{
   };
 
   // Create organization
-  const createOrganization = async (name: string, description?: string, logoUrl?: string) => {
+  const createOrganization = async (name: string, description?: string, logoUrl?: string, customSlug?: string) => {
     if (!userId) {
       toast.error('You must be logged in to create an organization');
       return null;
     }
 
     try {
-      const newOrg = await organizationService.createOrganization(userId, name, description, logoUrl);
+      const newOrg = await organizationService.createOrganization(userId, name, description, logoUrl, customSlug);
       toast.success(`Organization "${name}" created successfully!`);
       
       await refreshOrganizations();

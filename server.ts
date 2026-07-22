@@ -40,29 +40,33 @@ function getSupabaseAdminClient(): any {
   }
 
   const supabaseUrl = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || "https://wxezfzhhzlauggufecmm.supabase.co";
-  const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  let supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
   if (!supabaseUrl) {
     console.error("[Supabase] SUPABASE_URL is not defined in environment variables.");
     throw new Error("Supabase URL is required but missing in server configuration.");
   }
 
-  if (!supabaseServiceKey) {
-    console.error("[Supabase] SUPABASE_SERVICE_ROLE_KEY is not defined in environment variables.");
-    throw new Error("SUPABASE_SERVICE_ROLE_KEY is required but missing in server configuration.");
+  // Validate Service Role Key or fallback to Anon Key
+  let isValidJWT = false;
+  if (supabaseKey && !supabaseKey.includes("your_supabase")) {
+    const parts = supabaseKey.split(".");
+    isValidJWT = parts.length === 3 && supabaseKey.startsWith("eyJ");
   }
 
-  // Validate that the Service Role Key is a valid JWT
-  const parts = supabaseServiceKey.split(".");
-  const isValidJWT = parts.length === 3 && supabaseServiceKey.startsWith("eyJ");
-
   if (!isValidJWT) {
-    console.error("[Supabase] CRITICAL: SUPABASE_SERVICE_ROLE_KEY is not a valid JWT!");
-    throw new Error("SUPABASE_SERVICE_ROLE_KEY is invalid. It must be a valid JSON Web Token (JWT).");
+    const anonKey = process.env.SUPABASE_ANON_KEY || process.env.VITE_SUPABASE_ANON_KEY;
+    if (anonKey && anonKey.startsWith("eyJ") && anonKey.split(".").length === 3) {
+      console.warn("[Supabase] SUPABASE_SERVICE_ROLE_KEY missing or invalid. Falling back to SUPABASE_ANON_KEY.");
+      supabaseKey = anonKey;
+    } else {
+      console.error("[Supabase] CRITICAL: Neither SUPABASE_SERVICE_ROLE_KEY nor SUPABASE_ANON_KEY is a valid JWT!");
+      throw new Error("Supabase API key is invalid or missing in server configuration.");
+    }
   }
 
   console.log(`[Supabase] Initializing client with URL: ${supabaseUrl}`);
-  supabaseClientInstance = createClient<any>(supabaseUrl, supabaseServiceKey);
+  supabaseClientInstance = createClient<any>(supabaseUrl, supabaseKey);
   return supabaseClientInstance;
 }
 
@@ -323,40 +327,45 @@ app.get("/api/subscription/usage", async (req, res) => {
   try {
     const user = await authenticateUser(req);
     const supabase = getSupabaseAdminClient();
-    await validateSubscription(supabase, user.id);
+    
+    try {
+      await validateSubscription(supabase, user.id);
+    } catch (valErr: any) {
+      console.warn("[Subscription Usage] Non-blocking validateSubscription warning:", valErr?.message || valErr);
+    }
+
     const profile = await getSubscription(supabase, user.id);
     const usage = await getUserUsage(supabase, user.id);
-    const limits = await getPlanLimits(supabase, profile.current_plan || 'free');
-
-    const remaining = await getRemainingCapacity(supabase, user.id);
-    const plan = (profile.current_plan || 'free').toLowerCase();
+    const plan = (profile?.current_plan || 'free').toLowerCase();
+    const limits = await getPlanLimits(supabase, plan);
 
     let totalCapacity = 100;
     if (plan === 'plus') totalCapacity = 2000;
     if (plan === 'pro') totalCapacity = 10000;
 
-    const used = usage.daily_ai_capacity_used ?? 0;
-    const bonus = usage.rewarded_bonus?.ai_capacity ?? 0;
-    const limit = totalCapacity + bonus;
+    const used = usage?.daily_ai_capacity_used ?? 0;
+    const bonus = usage?.rewarded_bonus?.ai_capacity ?? 0;
+    const limit = (totalCapacity + bonus) || 100;
 
-    const nearingLimit = (used / limit) >= CAPACITY_WARNING_THRESHOLD;
+    const nearingLimit = limit > 0 ? (used / limit) >= CAPACITY_WARNING_THRESHOLD : false;
     const limitReached = used >= limit;
 
     const capacity_status = nearingLimit ? "AI usage running low" : "AI usage available";
 
     res.json({
-      usage,
-      limits,
-      profile,
+      usage: usage || {},
+      limits: limits || {},
+      profile: profile || {},
       capacity_status,
       nearingLimit,
       limitReached,
-      tts_used: usage.tts_characters_used_monthly,
-      tts_limit: limits.tts_monthly_limit
+      tts_used: usage?.tts_characters_used_monthly ?? 0,
+      tts_limit: limits?.tts_monthly_limit ?? 10000
     });
   } catch (error: any) {
     console.error("[Subscription Usage API Error]:", error);
-    res.status(error.status || 500).json({ error: error.error || error.message || "Failed to fetch usage info" });
+    const statusCode = error.status || 500;
+    res.status(statusCode).json({ error: error.error || error.message || "Failed to fetch usage info" });
   }
 });
 

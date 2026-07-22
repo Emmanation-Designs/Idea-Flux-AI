@@ -244,11 +244,9 @@ export const SUBSCRIPTION_CATALOG: Record<PlanId, PlanCatalogEntry> = {
 /**
  * Retrieves catalog entry for a specific plan.
  */
-export function getPlan(planId: PlanId): PlanCatalogEntry {
-  const plan = SUBSCRIPTION_CATALOG[planId];
-  if (!plan) {
-    throw new Error(`Invalid planId: ${planId}`);
-  }
+export function getPlan(planId: string): PlanCatalogEntry {
+  const normalized = (planId || '').toString().toLowerCase() as PlanId;
+  const plan = SUBSCRIPTION_CATALOG[normalized] || SUBSCRIPTION_CATALOG['free'];
   return plan;
 }
 

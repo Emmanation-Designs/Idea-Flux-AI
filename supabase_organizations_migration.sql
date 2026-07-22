@@ -103,7 +103,7 @@ BEGIN
   ON CONFLICT (organization_id, user_id) DO NOTHING;
   RETURN NEW;
 END;
-$$ LANGUAGE plpgsql SECURITY DEFINER;
+$$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp;
 
 DROP TRIGGER IF EXISTS trigger_add_owner_as_member ON public.organizations;
 CREATE TRIGGER trigger_add_owner_as_member
@@ -111,7 +111,96 @@ AFTER INSERT ON public.organizations
 FOR EACH ROW EXECUTE PROCEDURE add_owner_as_member();
 
 -- ====================================================================
--- ROW LEVEL SECURITY (RLS) POLICIES
+-- SECURITY DEFINER HELPER FUNCTIONS (PREVENTS RECURSIVE RLS)
+-- ====================================================================
+
+CREATE OR REPLACE FUNCTION public.is_org_member(_user_id UUID, _org_id UUID)
+RETURNS BOOLEAN
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+BEGIN
+  RETURN EXISTS (
+    SELECT 1
+    FROM public.organization_members
+    WHERE organization_id = _org_id
+      AND user_id = _user_id
+  );
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION public.is_org_admin(_user_id UUID, _org_id UUID)
+RETURNS BOOLEAN
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+BEGIN
+  RETURN EXISTS (
+    SELECT 1
+    FROM public.organization_members
+    WHERE organization_id = _org_id
+      AND user_id = _user_id
+      AND role IN ('owner', 'admin')
+  );
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION public.is_org_owner(_user_id UUID, _org_id UUID)
+RETURNS BOOLEAN
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+BEGIN
+  RETURN EXISTS (
+    SELECT 1
+    FROM public.organization_members
+    WHERE organization_id = _org_id
+      AND user_id = _user_id
+      AND role = 'owner'
+  ) OR EXISTS (
+    SELECT 1
+    FROM public.organizations
+    WHERE id = _org_id
+      AND owner_id = _user_id
+  );
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION public.get_user_organization_ids(_user_id UUID)
+RETURNS SETOF UUID
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+BEGIN
+  RETURN QUERY
+  SELECT organization_id
+  FROM public.organization_members
+  WHERE user_id = _user_id;
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION public.is_invitation_recipient(_email TEXT, _user_id UUID)
+RETURNS BOOLEAN
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+BEGIN
+  RETURN EXISTS (
+    SELECT 1
+    FROM auth.users
+    WHERE id = _user_id
+      AND email = _email
+  );
+END;
+$$;
+
+-- ====================================================================
+-- ROW LEVEL SECURITY (RLS) POLICIES (NON-RECURSIVE)
 -- ====================================================================
 
 ALTER TABLE public.organizations ENABLE ROW LEVEL SECURITY;
@@ -119,95 +208,118 @@ ALTER TABLE public.organization_members ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.organization_invitations ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.organization_files ENABLE ROW LEVEL SECURITY;
 
--- Organizations Policies
+-- Clean up legacy policies
+DROP POLICY IF EXISTS "Users can view organizations they belong to" ON public.organizations;
+DROP POLICY IF EXISTS "Authenticated users can create organizations" ON public.organizations;
+DROP POLICY IF EXISTS "Owners and Admins can update organization settings" ON public.organizations;
+DROP POLICY IF EXISTS "Only Owners can delete organizations" ON public.organizations;
+
+DROP POLICY IF EXISTS "Members can view other members of their organization" ON public.organization_members;
+DROP POLICY IF EXISTS "Owners and Admins can insert/manage members" ON public.organization_members;
+DROP POLICY IF EXISTS "Owners and Admins can update member roles" ON public.organization_members;
+DROP POLICY IF EXISTS "Owners, Admins or self can remove members" ON public.organization_members;
+
+DROP POLICY IF EXISTS "Members can view invitations of their organization" ON public.organization_invitations;
+DROP POLICY IF EXISTS "Owners and Admins can create invitations" ON public.organization_invitations;
+DROP POLICY IF EXISTS "Owners and Admins can delete invitations" ON public.organization_invitations;
+
+DROP POLICY IF EXISTS "Members can view org files" ON public.organization_files;
+DROP POLICY IF EXISTS "Members can upload org files" ON public.organization_files;
+DROP POLICY IF EXISTS "Owners and Admins or uploader can update org files" ON public.organization_files;
+DROP POLICY IF EXISTS "Owners and Admins or uploader can delete org files" ON public.organization_files;
+
+-- 1. Organizations Policies
 CREATE POLICY "Users can view organizations they belong to"
 ON public.organizations FOR SELECT
 USING (
-  id IN (
-    SELECT organization_id FROM public.organization_members WHERE user_id = auth.uid()
-  )
+  public.is_org_member(auth.uid(), id) OR owner_id = auth.uid()
 );
 
 CREATE POLICY "Authenticated users can create organizations"
 ON public.organizations FOR INSERT
-WITH CHECK (auth.uid() = owner_id);
+WITH CHECK (
+  auth.uid() = owner_id
+);
 
 CREATE POLICY "Owners and Admins can update organization settings"
 ON public.organizations FOR UPDATE
 USING (
-  id IN (
-    SELECT organization_id FROM public.organization_members 
-    WHERE user_id = auth.uid() AND role IN ('owner', 'admin')
-  )
+  public.is_org_admin(auth.uid(), id)
 );
 
 CREATE POLICY "Only Owners can delete organizations"
 ON public.organizations FOR DELETE
 USING (
-  auth.uid() = owner_id
+  public.is_org_owner(auth.uid(), id) OR owner_id = auth.uid()
 );
 
--- Organization Members Policies
+-- 2. Organization Members Policies (Non-Recursive)
 CREATE POLICY "Members can view other members of their organization"
 ON public.organization_members FOR SELECT
 USING (
-  organization_id IN (
-    SELECT organization_id FROM public.organization_members WHERE user_id = auth.uid()
-  )
+  public.is_org_member(auth.uid(), organization_id)
 );
 
 CREATE POLICY "Owners and Admins can insert/manage members"
 ON public.organization_members FOR INSERT
 WITH CHECK (
-  organization_id IN (
-    SELECT organization_id FROM public.organization_members 
-    WHERE user_id = auth.uid() AND role IN ('owner', 'admin')
-  ) OR user_id = auth.uid()
+  public.is_org_admin(auth.uid(), organization_id) OR user_id = auth.uid()
 );
 
 CREATE POLICY "Owners and Admins can update member roles"
 ON public.organization_members FOR UPDATE
 USING (
-  organization_id IN (
-    SELECT organization_id FROM public.organization_members 
-    WHERE user_id = auth.uid() AND role IN ('owner', 'admin')
-  )
+  public.is_org_admin(auth.uid(), organization_id)
 );
 
 CREATE POLICY "Owners, Admins or self can remove members"
 ON public.organization_members FOR DELETE
 USING (
-  organization_id IN (
-    SELECT organization_id FROM public.organization_members 
-    WHERE user_id = auth.uid() AND role IN ('owner', 'admin')
-  ) OR user_id = auth.uid()
+  public.is_org_admin(auth.uid(), organization_id) OR user_id = auth.uid()
 );
 
--- Organization Invitations Policies
+-- 3. Organization Invitations Policies
 CREATE POLICY "Members can view invitations of their organization"
 ON public.organization_invitations FOR SELECT
 USING (
-  organization_id IN (
-    SELECT organization_id FROM public.organization_members WHERE user_id = auth.uid()
-  ) OR email = (SELECT email FROM auth.users WHERE id = auth.uid())
+  public.is_org_member(auth.uid(), organization_id) OR public.is_invitation_recipient(email, auth.uid())
 );
 
 CREATE POLICY "Owners and Admins can create invitations"
 ON public.organization_invitations FOR INSERT
 WITH CHECK (
-  organization_id IN (
-    SELECT organization_id FROM public.organization_members 
-    WHERE user_id = auth.uid() AND role IN ('owner', 'admin')
-  )
+  public.is_org_admin(auth.uid(), organization_id)
 );
 
 CREATE POLICY "Owners and Admins can delete invitations"
 ON public.organization_invitations FOR DELETE
 USING (
-  organization_id IN (
-    SELECT organization_id FROM public.organization_members 
-    WHERE user_id = auth.uid() AND role IN ('owner', 'admin')
-  )
+  public.is_org_admin(auth.uid(), organization_id)
+);
+
+-- 4. Organization Files Policies
+CREATE POLICY "Members can view org files"
+ON public.organization_files FOR SELECT
+USING (
+  public.is_org_member(auth.uid(), organization_id)
+);
+
+CREATE POLICY "Members can upload org files"
+ON public.organization_files FOR INSERT
+WITH CHECK (
+  public.is_org_member(auth.uid(), organization_id) AND uploaded_by = auth.uid()
+);
+
+CREATE POLICY "Owners and Admins or uploader can update org files"
+ON public.organization_files FOR UPDATE
+USING (
+  public.is_org_admin(auth.uid(), organization_id) OR uploaded_by = auth.uid()
+);
+
+CREATE POLICY "Owners and Admins or uploader can delete org files"
+ON public.organization_files FOR DELETE
+USING (
+  public.is_org_admin(auth.uid(), organization_id) OR uploaded_by = auth.uid()
 );
 
 -- ====================================================================
@@ -222,9 +334,7 @@ USING (
   user_id = auth.uid() OR
   (
     organization_id IS NOT NULL AND
-    organization_id IN (
-      SELECT organization_id FROM public.organization_members WHERE user_id = auth.uid()
-    )
+    public.is_org_member(auth.uid(), organization_id)
   )
 );
 
@@ -234,10 +344,7 @@ ON public.projects FOR INSERT
 WITH CHECK (
   user_id = auth.uid() AND (
     organization_id IS NULL OR
-    organization_id IN (
-      SELECT organization_id FROM public.organization_members 
-      WHERE user_id = auth.uid() AND role IN ('owner', 'admin', 'member')
-    )
+    public.is_org_member(auth.uid(), organization_id)
   )
 );
 
@@ -249,8 +356,6 @@ USING (
   user_id = auth.uid() OR
   (
     organization_id IS NOT NULL AND
-    organization_id IN (
-      SELECT organization_id FROM public.organization_members WHERE user_id = auth.uid()
-    )
+    public.is_org_member(auth.uid(), organization_id)
   )
 );

@@ -20,10 +20,12 @@ export async function getSubscription(supabaseClient: any, userId: string): Prom
       .from('profiles')
       .select('current_plan, plan, subscription_status, subscription_provider, subscription_start, subscription_end, country_code, currency, created_at, updated_at')
       .eq('id', userId)
-      .single();
+      .maybeSingle();
 
     if (error || !data) {
-      console.warn(`[SubscriptionService] No profile found or error for ${userId}:`, error?.message || error);
+      if (error) {
+        console.warn(`[SubscriptionService] No profile found or error for ${userId}:`, error?.message || error);
+      }
       return {
         current_plan: 'free',
         subscription_status: 'active',
@@ -37,8 +39,11 @@ export async function getSubscription(supabaseClient: any, userId: string): Prom
       };
     }
 
+    const rawPlan = String(data.current_plan || data.plan || 'free').toLowerCase();
+    const current_plan = (['free', 'plus', 'pro'].includes(rawPlan) ? rawPlan : 'free') as any;
+
     return {
-      current_plan: (data.current_plan || data.plan || 'free').toLowerCase() as any,
+      current_plan,
       subscription_status: data.subscription_status || 'active',
       subscription_provider: data.subscription_provider || null,
       subscription_start: data.subscription_start || data.created_at || new Date().toISOString(),

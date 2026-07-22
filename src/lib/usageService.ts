@@ -78,8 +78,9 @@ export function getFeatureCost(feature: string): number {
 /**
  * Retrieves the dynamic limit rules for a given plan.
  */
-export async function getPlanLimits(supabaseClient: any, plan: 'free' | 'plus' | 'pro'): Promise<UsageLimits> {
-  const catalogLimits = getCatalogPlanLimits(plan as PlanId);
+export async function getPlanLimits(supabaseClient: any, plan: string): Promise<UsageLimits> {
+  const normalizedPlan = (['free', 'plus', 'pro'].includes(plan?.toLowerCase()) ? plan.toLowerCase() : 'free') as PlanId;
+  const catalogLimits = getCatalogPlanLimits(normalizedPlan);
   return {
     chat_limit: catalogLimits.chat === 'unlimited' ? 999999999 : catalogLimits.chat,
     image_generation_limit: catalogLimits.image_generation === 'unlimited' ? 999999999 : catalogLimits.image_generation,
@@ -98,113 +99,136 @@ export async function getPlanLimits(supabaseClient: any, plan: 'free' | 'plus' |
  * Lazily handles daily and monthly resets checking.
  */
 export async function getUserUsage(supabaseClient: any, userId: string): Promise<UserUsage> {
-  let { data, error } = await supabaseClient
-    .from('user_usage_tracking')
-    .select('*')
-    .eq('user_id', userId)
-    .single();
-
-  if (error || !data) {
-    // If not found, create a new tracking record for the user
-    const { data: newData, error: insertError } = await supabaseClient
-      .from('user_usage_tracking')
-      .insert({ 
-        user_id: userId,
-        daily_ai_capacity_used: 0,
-        last_capacity_reset: new Date().toISOString()
-      })
-      .select()
-      .single();
-
-    if (insertError) {
-      console.error(`[UsageService] Error inserting tracking row for ${userId}:`, insertError.message);
-      return {
-        chat_today: 0,
-        image_generation_today: 0,
-        image_edit_today: 0,
-        image_analysis_today: 0,
-        document_ai_today: 0,
-        pdf_today: 0,
-        ocr_today: 0,
-        daily_ai_capacity_used: 0,
-        last_capacity_reset: new Date().toISOString(),
-        tts_characters_used_monthly: 0,
-        last_daily_reset: new Date().toISOString(),
-        last_monthly_reset: new Date().toISOString(),
-        rewarded_bonus: {},
-      };
-    }
-    data = newData;
-  }
-
-  // Dynamic resets checking
-  let needsUpdate = false;
-  const now = new Date();
-  const updateFields: any = {};
-
-  // 1. Daily Reset (calendar day change in UTC)
-  const lastResetDate = new Date(data.last_capacity_reset || data.last_daily_reset);
-  const isDifferentDay = 
-    lastResetDate.getUTCFullYear() !== now.getUTCFullYear() ||
-    lastResetDate.getUTCMonth() !== now.getUTCMonth() ||
-    lastResetDate.getUTCDate() !== now.getUTCDate();
-
-  if (isDifferentDay) {
-    updateFields.chat_today = 0;
-    updateFields.image_generation_today = 0;
-    updateFields.image_edit_today = 0;
-    updateFields.image_analysis_today = 0;
-    updateFields.document_ai_today = 0;
-    updateFields.pdf_today = 0;
-    updateFields.ocr_today = 0;
-    updateFields.daily_ai_capacity_used = 0;
-    updateFields.rewarded_bonus = {};
-    updateFields.last_daily_reset = now.toISOString();
-    updateFields.last_capacity_reset = now.toISOString();
-    needsUpdate = true;
-  }
-
-  // 2. Monthly reset (30 days since last reset for TTS)
-  const lastMonthlyDate = new Date(data.last_monthly_reset);
-  const oneMonthLater = new Date(lastMonthlyDate);
-  oneMonthLater.setUTCMonth(oneMonthLater.getUTCMonth() + 1);
-
-  if (now >= oneMonthLater) {
-    updateFields.tts_characters_used_monthly = 0;
-    updateFields.last_monthly_reset = now.toISOString();
-    needsUpdate = true;
-  }
-
-  if (needsUpdate) {
-    const { data: updatedData, error: updateError } = await supabaseClient
-      .from('user_usage_tracking')
-      .update(updateFields)
-      .eq('user_id', userId)
-      .select()
-      .single();
-
-    if (!updateError && updatedData) {
-      data = updatedData;
-    } else {
-      console.error(`[UsageService] Error updating lazy resets for ${userId}:`, updateError?.message);
-    }
-  }
-
-  return {
-    chat_today: data.chat_today ?? 0,
-    image_generation_today: data.image_generation_today ?? 0,
-    image_edit_today: data.image_edit_today ?? 0,
-    image_analysis_today: data.image_analysis_today ?? 0,
-    document_ai_today: data.document_ai_today ?? 0,
-    pdf_today: data.pdf_today ?? 0,
-    ocr_today: data.ocr_today ?? 0,
-    daily_ai_capacity_used: data.daily_ai_capacity_used ?? 0,
-    last_capacity_reset: data.last_capacity_reset || data.last_daily_reset,
-    tts_characters_used_monthly: data.tts_characters_used_monthly ?? 0,
-    last_daily_reset: data.last_daily_reset,
-    last_monthly_reset: data.last_monthly_reset,
-    rewarded_bonus: typeof data.rewarded_bonus === 'string' ? JSON.parse(data.rewarded_bonus) : (data.rewarded_bonus || {}),
+  const nowIso = new Date().toISOString();
+  const fallbackUsage: UserUsage = {
+    chat_today: 0,
+    image_generation_today: 0,
+    image_edit_today: 0,
+    image_analysis_today: 0,
+    document_ai_today: 0,
+    pdf_today: 0,
+    ocr_today: 0,
+    daily_ai_capacity_used: 0,
+    last_capacity_reset: nowIso,
+    tts_characters_used_monthly: 0,
+    last_daily_reset: nowIso,
+    last_monthly_reset: nowIso,
+    rewarded_bonus: {},
   };
+
+  try {
+    let { data, error } = await supabaseClient
+      .from('user_usage_tracking')
+      .select('*')
+      .eq('user_id', userId)
+      .maybeSingle();
+
+    if (error || !data) {
+      const { data: newData, error: insertError } = await supabaseClient
+        .from('user_usage_tracking')
+        .insert({ 
+          user_id: userId,
+          daily_ai_capacity_used: 0,
+          last_capacity_reset: nowIso,
+          last_daily_reset: nowIso,
+          last_monthly_reset: nowIso
+        })
+        .select()
+        .maybeSingle();
+
+      if (insertError || !newData) {
+        if (insertError) {
+          console.error(`[UsageService] Error inserting tracking row for ${userId}:`, insertError.message);
+        }
+        return fallbackUsage;
+      }
+      data = newData;
+    }
+
+    if (!data) return fallbackUsage;
+
+    // Dynamic resets checking
+    let needsUpdate = false;
+    const now = new Date();
+    const updateFields: any = {};
+
+    // 1. Daily Reset (calendar day change in UTC)
+    const resetDateStr = data.last_capacity_reset || data.last_daily_reset || nowIso;
+    const lastResetDate = new Date(resetDateStr);
+    const validResetDate = !isNaN(lastResetDate.getTime()) ? lastResetDate : now;
+
+    const isDifferentDay = 
+      validResetDate.getUTCFullYear() !== now.getUTCFullYear() ||
+      validResetDate.getUTCMonth() !== now.getUTCMonth() ||
+      validResetDate.getUTCDate() !== now.getUTCDate();
+
+    if (isDifferentDay) {
+      updateFields.chat_today = 0;
+      updateFields.image_generation_today = 0;
+      updateFields.image_edit_today = 0;
+      updateFields.image_analysis_today = 0;
+      updateFields.document_ai_today = 0;
+      updateFields.pdf_today = 0;
+      updateFields.ocr_today = 0;
+      updateFields.daily_ai_capacity_used = 0;
+      updateFields.rewarded_bonus = {};
+      updateFields.last_daily_reset = now.toISOString();
+      updateFields.last_capacity_reset = now.toISOString();
+      needsUpdate = true;
+    }
+
+    // 2. Monthly reset (30 days since last reset for TTS)
+    const monthlyDateStr = data.last_monthly_reset || nowIso;
+    const lastMonthlyDate = new Date(monthlyDateStr);
+    const validMonthlyDate = !isNaN(lastMonthlyDate.getTime()) ? lastMonthlyDate : now;
+    const oneMonthLater = new Date(validMonthlyDate);
+    oneMonthLater.setUTCMonth(oneMonthLater.getUTCMonth() + 1);
+
+    if (now >= oneMonthLater) {
+      updateFields.tts_characters_used_monthly = 0;
+      updateFields.last_monthly_reset = now.toISOString();
+      needsUpdate = true;
+    }
+
+    if (needsUpdate) {
+      const { data: updatedData, error: updateError } = await supabaseClient
+        .from('user_usage_tracking')
+        .update(updateFields)
+        .eq('user_id', userId)
+        .select()
+        .maybeSingle();
+
+      if (!updateError && updatedData) {
+        data = updatedData;
+      } else if (updateError) {
+        console.error(`[UsageService] Error updating lazy resets for ${userId}:`, updateError.message);
+      }
+    }
+
+    return {
+      chat_today: data.chat_today ?? 0,
+      image_generation_today: data.image_generation_today ?? 0,
+      image_edit_today: data.image_edit_today ?? 0,
+      image_analysis_today: data.image_analysis_today ?? 0,
+      document_ai_today: data.document_ai_today ?? 0,
+      pdf_today: data.pdf_today ?? 0,
+      ocr_today: data.ocr_today ?? 0,
+      daily_ai_capacity_used: data.daily_ai_capacity_used ?? 0,
+      last_capacity_reset: data.last_capacity_reset || data.last_daily_reset || nowIso,
+      tts_characters_used_monthly: data.tts_characters_used_monthly ?? 0,
+      last_daily_reset: data.last_daily_reset || nowIso,
+      last_monthly_reset: data.last_monthly_reset || nowIso,
+      rewarded_bonus: (() => {
+        if (typeof data.rewarded_bonus === 'string') {
+          try { return JSON.parse(data.rewarded_bonus); } catch { return {}; }
+        }
+        return data.rewarded_bonus || {};
+      })(),
+    };
+  } catch (err: any) {
+    console.error(`[UsageService] Unexpected error getting usage for ${userId}:`, err?.message || err);
+    return fallbackUsage;
+  }
 }
 
 export interface CheckResult {

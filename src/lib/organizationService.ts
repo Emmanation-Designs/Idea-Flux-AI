@@ -88,30 +88,18 @@ export const organizationService = {
    */
   async getUserOrganizations(userId: string): Promise<Organization[]> {
     try {
-      // First try joining with organization_members
       const { data, error } = await supabase
         .from('organization_members')
         .select(`
           organization_id,
-          organizations:organization_id (*)
+          organizations (*)
         `)
         .eq('user_id', userId)
         .eq('status', 'active');
 
       if (error) {
-        console.warn('[OrganizationService] Error getting user orgs via join, attempting direct lookup:', error);
-        // Fallback: query organizations directly where owner_id = userId
-        const { data: directData, error: directError } = await supabase
-          .from('organizations')
-          .select('*')
-          .eq('owner_id', userId)
-          .order('created_at', { ascending: false });
-
-        if (directError) {
-          console.error('[OrganizationService] Direct lookup failed:', directError);
-          return [];
-        }
-        return (directData || []) as Organization[];
+        console.error('[OrganizationService] Error fetching user organizations:', error);
+        return [];
       }
 
       const orgs: Organization[] = (data || [])
@@ -330,20 +318,36 @@ export const organizationService = {
     const token = 'inv_' + Math.random().toString(36).substring(2, 15) + Date.now().toString(36);
     const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(); // 7 days
 
-    // Check if user with email exists in profiles/auth to join directly if possible
+    const normalizedEmail = email.toLowerCase().trim();
+
+    // Check if user with email exists in profiles/auth
     const { data: existingProfiles } = await supabase
       .from('profiles')
       .select('id, email')
-      .eq('email', email)
+      .eq('email', normalizedEmail)
       .limit(1);
 
     const existingUser = existingProfiles && existingProfiles[0];
+
+    // Prevent inviting a user who is already an active member of this organization
+    if (existingUser?.id) {
+      const { data: existingMember } = await supabase
+        .from('organization_members')
+        .select('id, status')
+        .eq('organization_id', orgId)
+        .eq('user_id', existingUser.id)
+        .maybeSingle();
+
+      if (existingMember && existingMember.status === 'active') {
+        throw new Error('User is already an active member of this organization');
+      }
+    }
 
     const { data, error } = await supabase
       .from('organization_invitations')
       .insert({
         organization_id: orgId,
-        email: email.toLowerCase().trim(),
+        email: normalizedEmail,
         role,
         token,
         expires_at: expiresAt,
