@@ -135,13 +135,13 @@ export const UpgradeModal: React.FC<UpgradeModalProps> = ({ isOpen, onClose, rea
     <>
       <AnimatePresence>
         {isOpen && (
-          <div className="fixed inset-0 z-[100] bg-zinc-50 dark:bg-[#090A0C] text-zinc-900 dark:text-zinc-100 overflow-y-auto cursor-default transition-colors">
+          <div className="fixed inset-0 z-[100] bg-zinc-50 dark:bg-[#07080A] text-zinc-900 dark:text-white overflow-y-auto cursor-default transition-colors">
             <div className="min-h-screen flex flex-col items-center justify-start p-4 md:p-8 md:py-16 relative">
               
               {/* Back / Close button */}
               <button 
                 onClick={onClose}
-                className="absolute top-4 left-4 md:top-8 md:left-8 p-2.5 bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-900 dark:hover:bg-zinc-800 border border-zinc-200 dark:border-zinc-800 text-zinc-600 dark:text-zinc-300 hover:text-zinc-900 dark:hover:text-white rounded-full transition-all active:scale-95 z-[110] shadow-xs cursor-pointer"
+                className="absolute top-4 left-4 md:top-8 md:left-8 p-2.5 bg-zinc-200/80 hover:bg-zinc-300 dark:bg-[#121417] dark:hover:bg-[#1C1E24] border border-zinc-300 dark:border-[#23262F] text-zinc-700 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-white rounded-full transition-all active:scale-95 z-[110] cursor-pointer"
                 title="Go Back"
               >
                 <X className="w-5 h-5" />
@@ -153,13 +153,13 @@ export const UpgradeModal: React.FC<UpgradeModalProps> = ({ isOpen, onClose, rea
                   Upgrade your plan
                 </h1>
                 
-                {/* Pill Toggle matching app design system */}
-                <div className="flex p-1 bg-zinc-100/80 dark:bg-zinc-900 border border-zinc-200/80 dark:border-zinc-800 rounded-full w-fit mx-auto shadow-inner">
+                {/* Pill Toggle matching image */}
+                <div className="flex p-1 bg-zinc-200/80 dark:bg-[#121417] border border-zinc-300 dark:border-[#20232A] rounded-full w-fit mx-auto shadow-inner">
                   <button
                     onClick={() => setBillingPeriod('monthly')}
                     className={cn(
                       "px-6 py-2 rounded-full text-xs font-bold transition-all whitespace-nowrap uppercase tracking-wider cursor-pointer",
-                      billingPeriod === 'monthly' ? "bg-white dark:bg-zinc-800 text-zinc-900 dark:text-white shadow-xs" : "text-zinc-500 hover:text-zinc-800 dark:text-zinc-400 dark:hover:text-zinc-200"
+                      billingPeriod === 'monthly' ? "bg-white dark:bg-[#252830] text-zinc-900 dark:text-white shadow-md" : "text-zinc-600 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-zinc-200"
                     )}
                   >
                     Personal
@@ -168,11 +168,11 @@ export const UpgradeModal: React.FC<UpgradeModalProps> = ({ isOpen, onClose, rea
                     onClick={() => setBillingPeriod('yearly')}
                     className={cn(
                       "px-6 py-2 rounded-full text-xs font-bold transition-all whitespace-nowrap uppercase tracking-wider flex items-center gap-1.5 cursor-pointer",
-                      billingPeriod === 'yearly' ? "bg-white dark:bg-zinc-800 text-zinc-900 dark:text-white shadow-xs" : "text-zinc-500 hover:text-zinc-800 dark:text-zinc-400 dark:hover:text-zinc-200"
+                      billingPeriod === 'yearly' ? "bg-white dark:bg-[#252830] text-zinc-900 dark:text-white shadow-md" : "text-zinc-600 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-zinc-200"
                     )}
                   >
                     Yearly
-                    <span className="px-1.5 py-0.5 bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20 text-[8px] rounded uppercase font-black tracking-widest">-10%</span>
+                    <span className="px-1.5 py-0.5 bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 text-[8px] rounded uppercase font-black tracking-widest">-10%</span>
                   </button>
                 </div>
               </div>
@@ -181,17 +181,17 @@ export const UpgradeModal: React.FC<UpgradeModalProps> = ({ isOpen, onClose, rea
               <div className="grid grid-cols-1 md:grid-cols-3 gap-8 w-full max-w-6xl px-2 md:px-6">
                 
                 {/* Free Plan Card */}
-                <div className="bg-white dark:bg-zinc-900/80 border border-zinc-200/90 dark:border-zinc-800/80 rounded-3xl p-6 md:p-8 flex flex-col justify-between min-h-[580px] shadow-sm relative overflow-hidden">
+                <div className="bg-[#121417] border border-[#1F2228] rounded-3xl p-6 md:p-8 flex flex-col justify-between min-h-[580px] shadow-lg relative overflow-hidden">
                   <div className="space-y-6">
                     <div className="space-y-2">
-                      <h3 className="text-2xl font-extrabold text-zinc-900 dark:text-white">Free</h3>
-                      <p className="text-xs text-zinc-500 dark:text-zinc-400">Everything you need to get started with AI.</p>
+                      <h3 className="text-2xl font-extrabold text-white">Free</h3>
+                      <p className="text-xs text-zinc-400">Everything you need to get started with AI.</p>
                     </div>
 
                     <div className="flex items-baseline gap-0.5 py-2">
-                      <span className="text-zinc-400 dark:text-zinc-500 text-2xl font-bold self-start mt-1">{currencySymbol}</span>
-                      <span className="text-5xl md:text-6xl font-black text-zinc-900 dark:text-white tracking-tight">0</span>
-                      <span className="text-xs font-semibold text-zinc-400 dark:text-zinc-500 ml-1">{billingPeriod === 'monthly' ? '/ month' : '/ year'}</span>
+                      <span className="text-zinc-500 text-2xl font-bold self-start mt-1">{currencySymbol}</span>
+                      <span className="text-5xl md:text-6xl font-black text-white tracking-tight">0</span>
+                      <span className="text-xs font-semibold text-zinc-500 ml-1">{billingPeriod === 'monthly' ? '/ month' : '/ year'}</span>
                     </div>
 
                     <button 
@@ -199,21 +199,21 @@ export const UpgradeModal: React.FC<UpgradeModalProps> = ({ isOpen, onClose, rea
                       className={cn(
                         "w-full py-3 px-6 rounded-full font-bold text-xs uppercase tracking-widest transition-all text-center border",
                         isFreeCurrent 
-                          ? "bg-zinc-100 dark:bg-zinc-800/60 border-zinc-200 dark:border-zinc-800 text-zinc-400 dark:text-zinc-500 cursor-not-allowed" 
-                          : "bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 border-zinc-200 dark:border-zinc-700 text-zinc-800 dark:text-zinc-200 cursor-pointer active:scale-95"
+                          ? "bg-zinc-900/60 border-zinc-800 text-zinc-500 cursor-not-allowed" 
+                          : "bg-zinc-800 hover:bg-zinc-700 border-zinc-700 text-white cursor-pointer active:scale-95"
                       )}
                     >
                       {isFreeCurrent ? "Your current plan" : "Select Free"}
                     </button>
 
-                    <hr className="border-zinc-200/80 dark:border-zinc-800/80" />
+                    <hr className="border-zinc-800/60" />
 
                     <div className="space-y-3.5">
                       {freeFeatures.map((feat, i) => {
                         const Icon = feat.icon;
                         return (
-                          <div key={i} className="flex items-start gap-3 text-xs text-zinc-700 dark:text-zinc-300 font-medium">
-                            <Icon className="w-4 h-4 text-zinc-400 dark:text-zinc-500 shrink-0 mt-0.5" />
+                          <div key={i} className="flex items-start gap-3 text-xs text-zinc-300 font-medium">
+                            <Icon className="w-4 h-4 text-zinc-500 shrink-0 mt-0.5" />
                             <span>{feat.text}</span>
                           </div>
                         );
@@ -222,29 +222,29 @@ export const UpgradeModal: React.FC<UpgradeModalProps> = ({ isOpen, onClose, rea
                   </div>
                 </div>
 
-                {/* Plus Plan Card (Highlighted / Accent) */}
-                <div className="bg-gradient-to-b from-emerald-500/10 via-emerald-500/5 to-white dark:from-emerald-500/10 dark:via-zinc-900/90 dark:to-zinc-900/90 border-2 border-emerald-500 rounded-3xl p-6 md:p-8 flex flex-col justify-between min-h-[580px] shadow-xl shadow-emerald-500/10 relative overflow-hidden">
+                {/* Plus Plan Card (Highlighted Green Accent) */}
+                <div className="bg-[#0B1511] border border-[#143B2A] rounded-3xl p-6 md:p-8 flex flex-col justify-between min-h-[580px] shadow-[0_0_50px_rgba(25,195,125,0.05)] relative overflow-hidden">
                   
                   {/* Popular Badge */}
                   <div className="absolute top-6 right-6">
-                    <span className="px-2.5 py-1 bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 text-[10px] font-black uppercase tracking-widest rounded-md border border-emerald-500/30">
+                    <span className="px-2.5 py-1 bg-[#19C37D]/15 text-emerald-300 text-[10px] font-black uppercase tracking-widest rounded-md border border-[#19C37D]/25">
                       Popular
                     </span>
                   </div>
 
                   <div className="space-y-6">
                     <div className="space-y-2">
-                      <h3 className="text-2xl font-extrabold text-zinc-900 dark:text-white">Plus</h3>
-                      <p className="text-xs text-zinc-600 dark:text-zinc-400">For creators, students and professionals who need more AI every day.</p>
+                      <h3 className="text-2xl font-extrabold text-white">Plus</h3>
+                      <p className="text-xs text-zinc-400">For creators, students and professionals who need more AI every day.</p>
                     </div>
 
                     <div className="py-2">
                       <div className="flex items-baseline gap-0.5">
-                        <span className="text-emerald-600 dark:text-emerald-400 text-2xl font-bold self-start mt-1">{currencySymbol}</span>
-                        <span className="text-5xl md:text-6xl font-black text-zinc-900 dark:text-white tracking-tight">{plusPrice}</span>
-                        <span className="text-xs font-semibold text-zinc-400 dark:text-zinc-500 ml-1">{billingPeriod === 'monthly' ? '/ month' : '/ year'}</span>
+                        <span className="text-[#19C37D] text-2xl font-bold self-start mt-1">{currencySymbol}</span>
+                        <span className="text-5xl md:text-6xl font-black text-white tracking-tight">{plusPrice}</span>
+                        <span className="text-xs font-semibold text-zinc-500 ml-1">{billingPeriod === 'monthly' ? '/ month' : '/ year'}</span>
                       </div>
-                      <div className="text-[10px] text-zinc-400 dark:text-zinc-500 uppercase tracking-wider mt-1.5 font-bold">
+                      <div className="text-[10px] text-zinc-500 uppercase tracking-wider mt-1.5 font-bold">
                         {billingPeriod === 'yearly' ? "Billed annually" : "Billed monthly"}
                       </div>
                     </div>
@@ -255,21 +255,21 @@ export const UpgradeModal: React.FC<UpgradeModalProps> = ({ isOpen, onClose, rea
                       className={cn(
                         "w-full py-3 px-6 rounded-full font-bold text-xs uppercase tracking-widest transition-all text-center shadow-md",
                         isPlusCurrent 
-                          ? "bg-zinc-100 dark:bg-zinc-800/60 border border-zinc-200 dark:border-zinc-800 text-zinc-400 dark:text-zinc-500 cursor-not-allowed" 
-                          : "bg-emerald-600 hover:bg-emerald-500 text-white cursor-pointer active:scale-95 shadow-emerald-500/20"
+                          ? "bg-zinc-900/60 border border-zinc-800 text-zinc-500 cursor-not-allowed" 
+                          : "bg-[#19C37D] hover:bg-[#15a86b] text-white cursor-pointer active:scale-95"
                       )}
                     >
                       {isPlusCurrent ? "Your current plan" : (isSubscribing === 'plus' ? "Connecting..." : "Upgrade to Plus")}
                     </button>
 
-                    <hr className="border-emerald-500/20 dark:border-emerald-500/20" />
+                    <hr className="border-[#143B2A]/40" />
 
                     <div className="space-y-3.5">
                       {plusFeatures.map((feat, i) => {
                         const Icon = feat.icon;
                         return (
-                          <div key={i} className="flex items-start gap-3 text-xs text-zinc-800 dark:text-zinc-200 font-semibold">
-                            <Icon className="w-4 h-4 text-emerald-500 shrink-0 mt-0.5" />
+                          <div key={i} className="flex items-start gap-3 text-xs text-zinc-200 font-medium">
+                            <Icon className="w-4 h-4 text-[#19C37D] shrink-0 mt-0.5" />
                             <span>{feat.text}</span>
                           </div>
                         );
@@ -278,29 +278,29 @@ export const UpgradeModal: React.FC<UpgradeModalProps> = ({ isOpen, onClose, rea
                   </div>
                 </div>
 
-                {/* Pro Plan Card */}
-                <div className="bg-white dark:bg-zinc-900/80 border border-zinc-200/90 dark:border-zinc-800/80 hover:border-emerald-500/40 rounded-3xl p-6 md:p-8 flex flex-col justify-between min-h-[580px] shadow-sm relative overflow-hidden transition-all">
+                {/* Pro Plan Card (Purple Accent) */}
+                <div className="bg-[#140F24] border border-[#2F1F4E] rounded-3xl p-6 md:p-8 flex flex-col justify-between min-h-[580px] shadow-[0_0_50px_rgba(147,51,234,0.05)] relative overflow-hidden">
                   
                   {/* Pro Badge */}
                   <div className="absolute top-6 right-6">
-                    <span className="px-2.5 py-1 bg-zinc-100 dark:bg-zinc-800 text-zinc-800 dark:text-zinc-200 text-[10px] font-black uppercase tracking-widest rounded-md border border-zinc-200 dark:border-zinc-700">
+                    <span className="px-2.5 py-1 bg-purple-500/15 text-purple-300 text-[10px] font-black uppercase tracking-widest rounded-md border border-purple-500/20">
                       Best Value
                     </span>
                   </div>
 
                   <div className="space-y-6">
                     <div className="space-y-2">
-                      <h3 className="text-2xl font-extrabold text-zinc-900 dark:text-white">Pro</h3>
-                      <p className="text-xs text-zinc-500 dark:text-zinc-400">Maximum intelligence for demanding work and advanced AI workflows.</p>
+                      <h3 className="text-2xl font-extrabold text-white">Pro</h3>
+                      <p className="text-xs text-zinc-400">Maximum intelligence for demanding work and advanced AI workflows.</p>
                     </div>
 
                     <div className="py-2">
                       <div className="flex items-baseline gap-0.5">
-                        <span className="text-emerald-600 dark:text-emerald-400 text-2xl font-bold self-start mt-1">{currencySymbol}</span>
-                        <span className="text-5xl md:text-6xl font-black text-zinc-900 dark:text-white tracking-tight">{proPrice}</span>
-                        <span className="text-xs font-semibold text-zinc-400 dark:text-zinc-500 ml-1">{billingPeriod === 'monthly' ? '/ month' : '/ year'}</span>
+                        <span className="text-purple-400 text-2xl font-bold self-start mt-1">{currencySymbol}</span>
+                        <span className="text-5xl md:text-6xl font-black text-white tracking-tight">{proPrice}</span>
+                        <span className="text-xs font-semibold text-zinc-500 ml-1">{billingPeriod === 'monthly' ? '/ month' : '/ year'}</span>
                       </div>
-                      <div className="text-[10px] text-zinc-400 dark:text-zinc-500 uppercase tracking-wider mt-1.5 font-bold">
+                      <div className="text-[10px] text-zinc-500 uppercase tracking-wider mt-1.5 font-bold">
                         {billingPeriod === 'yearly' ? "Billed annually" : "Billed monthly"}
                       </div>
                     </div>
@@ -311,21 +311,21 @@ export const UpgradeModal: React.FC<UpgradeModalProps> = ({ isOpen, onClose, rea
                       className={cn(
                         "w-full py-3 px-6 rounded-full font-bold text-xs uppercase tracking-widest transition-all text-center shadow-md",
                         isProCurrent 
-                          ? "bg-zinc-100 dark:bg-zinc-800/60 border border-zinc-200 dark:border-zinc-800 text-zinc-400 dark:text-zinc-500 cursor-not-allowed" 
-                          : "bg-zinc-900 hover:bg-zinc-800 dark:bg-white dark:hover:bg-zinc-100 text-white dark:text-zinc-900 cursor-pointer active:scale-95"
+                          ? "bg-zinc-900/60 border border-zinc-800 text-zinc-500 cursor-not-allowed" 
+                          : "bg-purple-600 hover:bg-purple-700 text-white cursor-pointer active:scale-95"
                       )}
                     >
                       {isProCurrent ? "Your current plan" : (isSubscribing === 'pro' ? "Connecting..." : "Upgrade to Pro")}
                     </button>
 
-                    <hr className="border-zinc-200/80 dark:border-zinc-800/80" />
+                    <hr className="border-purple-900/40" />
 
                     <div className="space-y-3.5">
                       {proFeatures.map((feat, i) => {
                         const Icon = feat.icon;
                         return (
-                          <div key={i} className="flex items-start gap-3 text-xs text-zinc-700 dark:text-zinc-300 font-medium">
-                            <Icon className="w-4 h-4 text-emerald-500 shrink-0 mt-0.5" />
+                          <div key={i} className="flex items-start gap-3 text-xs text-zinc-200 font-medium">
+                            <Icon className="w-4 h-4 text-purple-400 shrink-0 mt-0.5" />
                             <span>{feat.text}</span>
                           </div>
                         );
@@ -338,25 +338,25 @@ export const UpgradeModal: React.FC<UpgradeModalProps> = ({ isOpen, onClose, rea
 
               {/* Ad Section if triggered by usage block */}
               {reason === 'usage' && (
-                <div className="mt-12 w-full max-w-4xl p-6 bg-white dark:bg-zinc-900/60 border border-dashed border-zinc-200 dark:border-zinc-800 rounded-3xl text-center space-y-3">
-                  <div className="text-zinc-400 dark:text-zinc-500 font-bold text-xs uppercase tracking-widest">
+                <div className="mt-12 w-full max-w-4xl p-6 bg-[#121417] border border-dashed border-zinc-850 rounded-3xl text-center space-y-3">
+                  <div className="text-zinc-400 font-bold text-xs uppercase tracking-widest">
                     Rewarded Ads
                   </div>
                   <button 
                     disabled
-                    className="px-6 py-3 bg-zinc-100 dark:bg-zinc-800/50 text-zinc-400 dark:text-zinc-500 border border-zinc-200 dark:border-zinc-800 rounded-full font-extrabold text-xs uppercase tracking-widest cursor-not-allowed flex items-center justify-center gap-2 mx-auto"
+                    className="px-6 py-3 bg-zinc-800/50 text-zinc-500 border border-zinc-800 rounded-full font-extrabold text-xs uppercase tracking-widest cursor-not-allowed flex items-center justify-center gap-2 mx-auto"
                   >
                     Coming Soon
                   </button>
-                  <p className="text-[10px] text-zinc-400 dark:text-zinc-500 uppercase tracking-widest">
+                  <p className="text-[10px] text-zinc-500 uppercase tracking-widest">
                     Ad-supported credits are coming soon. Upgrade to immediately bypass all limits.
                   </p>
                 </div>
               )}
 
               {/* Secure transaction lock statement */}
-              <div className="mt-16 text-zinc-500 dark:text-zinc-400 text-xs flex items-center gap-1.5 justify-center">
-                <Lock className="w-3.5 h-3.5 text-emerald-500" />
+              <div className="mt-16 text-zinc-600 text-xs flex items-center gap-1.5 justify-center">
+                <Lock className="w-3.5 h-3.5" />
                 <span>All transactions are secure, encrypted and PCI-compliant.</span>
               </div>
 

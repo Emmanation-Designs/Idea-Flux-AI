@@ -64,8 +64,8 @@ export const SupportModal = ({
         {/* Header */}
         <div className="flex items-center justify-between px-6 sm:px-8 py-5 border-b border-zinc-100 dark:border-zinc-800/80 shrink-0 bg-zinc-50/50 dark:bg-zinc-950/40">
           <div className="flex items-center gap-3.5">
-            <div className="w-10 h-10 rounded-2xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-600 dark:text-emerald-400 flex items-center justify-center shadow-xs">
-              <LifeBuoy className="w-5 h-5" />
+            <div className="w-10 h-10 rounded-2xl bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 flex items-center justify-center shadow-xs overflow-hidden shrink-0">
+              <img src="/icon.png" alt="Trelvix AI Logo" className="w-full h-full object-cover" />
             </div>
             <div>
               <h2 className="text-lg font-extrabold text-zinc-900 dark:text-white leading-tight">Help & Support</h2>

@@ -32,7 +32,8 @@ import {
   Mail,
   Send,
   CheckCircle2,
-  Shield
+  Shield,
+  Brain
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { clsx, type ClassValue } from 'clsx';
@@ -43,12 +44,13 @@ import { supabase } from '../lib/supabase';
 import { openExternalLink } from '../utils/nativeCompat';
 import { getPlan, getPlanPrice, getPlanLimits, PlanId } from '../subscription/catalog';
 import { BillingCenter } from './BillingCenter';
+import { MemoryManager } from './MemoryManager';
 
 function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }
 
-type SettingsSection = 'account' | 'personality' | 'billing' | 'display' | 'legal' | 'support';
+type SettingsSection = 'account' | 'memory' | 'personality' | 'billing' | 'display' | 'legal' | 'support';
 
 const PERSONALITIES: { id: PersonalityType; name: string; icon: any; description: string; color: string }[] = [
   { 
@@ -325,6 +327,7 @@ export const Settings = (props: {
           
           <nav className="flex-1 space-y-1">
             <SidebarItem id="account" icon={User} label="Profile" />
+            <SidebarItem id="memory" icon={Brain} label="Memory" />
             <SidebarItem id="personality" icon={Sparkles} label="Personality" />
             <SidebarItem id="billing" icon={CreditCard} label="Billing" />
             <SidebarItem id="display" icon={Layout} label="Display" />
@@ -378,13 +381,13 @@ export const Settings = (props: {
           <div className="flex-1 overflow-y-auto overflow-x-hidden">
             <div className="max-w-2xl mx-auto p-6 md:p-10 space-y-10">
               {activeSection === 'account' && (
-                <div className="space-y-8 pb-12">
+                <div className="space-y-6 pb-12">
                   <div className="border-b border-zinc-100 dark:border-zinc-900 pb-4">
-                    <h3 className="text-lg font-bold text-zinc-900 dark:text-zinc-100">Profile & Personal Identity</h3>
-                    <p className="text-xs text-zinc-500 mt-1">Manage your public persona, avatar, and workspace credentials.</p>
+                    <h3 className="text-lg font-bold text-zinc-900 dark:text-zinc-100">Profile & Account</h3>
+                    <p className="text-xs text-zinc-500 mt-1">Your registered account email and workspace status.</p>
                   </div>
 
-                  {/* High-Craft Profile Hero Card */}
+                  {/* Clean Profile Hero Card */}
                   <div className="relative overflow-hidden rounded-3xl border border-zinc-200/80 dark:border-zinc-800 bg-gradient-to-br from-zinc-50 via-emerald-500/5 to-zinc-100/50 dark:from-zinc-900/60 dark:via-emerald-500/5 dark:to-zinc-950 p-6 sm:p-8 shadow-xs">
                     <div className="flex flex-col sm:flex-row items-center sm:items-start gap-6">
                       {/* Avatar with Camera Trigger */}
@@ -395,7 +398,7 @@ export const Settings = (props: {
                               <img src={localAvatarPreview || profile?.avatar_url || ''} alt="Profile" className="w-full h-full object-cover" />
                             ) : (
                               <span>
-                                {profile?.name?.charAt(0).toUpperCase() || profile?.email?.charAt(0).toUpperCase() || 'U'}
+                                {profile?.email?.charAt(0).toUpperCase() || 'U'}
                               </span>
                             )}
                             {isUploading && (
@@ -426,21 +429,13 @@ export const Settings = (props: {
                         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
                           <div>
                             <div className="flex items-center justify-center sm:justify-start gap-2">
-                              <h4 className="text-xl font-extrabold text-zinc-900 dark:text-zinc-100">
-                                {profile?.name || profile?.email?.split('@')[0]}
+                              <h4 className="text-xl font-extrabold text-zinc-900 dark:text-zinc-100 select-all">
+                                {profile?.email || 'No email registered'}
                               </h4>
-                              <span title="Verified Creator Account"><CheckCircle2 className="w-4 h-4 text-emerald-500" /></span>
+                              <span title="Verified Account"><CheckCircle2 className="w-4 h-4 text-emerald-500" /></span>
                             </div>
-                            <p className="text-xs text-zinc-500 dark:text-zinc-400 font-medium">{profile?.email}</p>
+                            <p className="text-xs text-zinc-500 dark:text-zinc-400 font-medium mt-0.5">Registration Email (Non-editable)</p>
                           </div>
-
-                          <button
-                            onClick={onUpgrade}
-                            className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs rounded-xl shadow-md transition-all shrink-0 cursor-pointer flex items-center gap-1.5 self-center sm:self-start"
-                          >
-                            <Sparkles className="w-3.5 h-3.5" />
-                            <span>Upgrade Plan</span>
-                          </button>
                         </div>
 
                         {/* Status Pills */}
@@ -449,7 +444,7 @@ export const Settings = (props: {
                             {profile?.plan || 'Free'} Plan Active
                           </span>
                           <span className="px-2.5 py-1 bg-zinc-200/60 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-400 rounded-lg text-[10px] font-bold">
-                            Trelvix AI Creator
+                            Verified User
                           </span>
                         </div>
                       </div>
@@ -458,36 +453,7 @@ export const Settings = (props: {
 
                   {/* Settings Form Section */}
                   <div className="space-y-6">
-                    {/* Display Name Input */}
-                    <div className="p-5 bg-white dark:bg-zinc-900/60 rounded-2xl border border-zinc-200/80 dark:border-zinc-800 space-y-3">
-                      <div className="flex items-center justify-between">
-                        <label className="text-xs font-bold text-zinc-800 dark:text-zinc-200 flex items-center gap-2">
-                          <User className="w-4 h-4 text-emerald-500" />
-                          <span>Display Name</span>
-                        </label>
-                        <span className="text-[10px] text-zinc-400 font-medium">Visible across your workspaces</span>
-                      </div>
-
-                      <div className="relative flex items-center">
-                        <input 
-                          type="text"
-                          value={newName}
-                          onChange={e => setNewName(e.target.value)}
-                          className="w-full bg-zinc-50 dark:bg-zinc-950 border border-zinc-200 dark:border-zinc-800 rounded-xl pl-4 pr-24 py-3 text-xs font-semibold focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 outline-none transition-all dark:text-white"
-                          placeholder="Your profile name"
-                        />
-                        {newName !== (profile?.name || profile?.email?.split('@')[0] || '') && (
-                          <button
-                            onClick={handleUpdateName}
-                            className="absolute right-2 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold rounded-lg transition-all cursor-pointer shadow-xs"
-                          >
-                            Save
-                          </button>
-                        )}
-                      </div>
-                    </div>
-
-                    {/* Email Input */}
+                    {/* Registered Email Card */}
                     <div className="p-5 bg-white dark:bg-zinc-900/60 rounded-2xl border border-zinc-200/80 dark:border-zinc-800 space-y-3">
                       <div className="flex items-center justify-between">
                         <label className="text-xs font-bold text-zinc-800 dark:text-zinc-200 flex items-center gap-2">
@@ -495,7 +461,7 @@ export const Settings = (props: {
                           <span>Account Email Address</span>
                         </label>
                         <span className="text-[10px] text-emerald-600 dark:text-emerald-400 font-bold bg-emerald-500/10 px-2 py-0.5 rounded-full border border-emerald-500/20">
-                          Verified
+                          Primary Email
                         </span>
                       </div>
 
@@ -504,7 +470,8 @@ export const Settings = (props: {
                           type="text"
                           value={profile?.email || ''}
                           disabled
-                          className="w-full bg-zinc-100/80 dark:bg-zinc-950 border border-zinc-200 dark:border-zinc-800/80 rounded-xl px-4 py-3 text-xs font-semibold text-zinc-500 dark:text-zinc-400 cursor-not-allowed outline-none select-all"
+                          readOnly
+                          className="w-full bg-zinc-100/80 dark:bg-zinc-950 border border-zinc-200 dark:border-zinc-800/80 rounded-xl px-4 py-3 text-xs font-semibold text-zinc-700 dark:text-zinc-300 cursor-not-allowed outline-none select-all"
                         />
                         <button
                           onClick={() => {
@@ -520,53 +487,78 @@ export const Settings = (props: {
                         </button>
                       </div>
                       <p className="text-[11px] text-zinc-400 dark:text-zinc-500">
-                        Primary email authentication address. Contact Support if you need to transfer email ownership.
+                        This email was provided during registration and is fixed as your account identity.
                       </p>
                     </div>
 
-                    {/* Workspace Security Summary */}
+                    {/* Security Info */}
                     <div className="p-5 bg-white dark:bg-zinc-900/60 rounded-2xl border border-zinc-200/80 dark:border-zinc-800 flex items-center justify-between">
                       <div className="space-y-0.5">
                         <div className="text-xs font-bold text-zinc-800 dark:text-zinc-200 flex items-center gap-2">
                           <Shield className="w-4 h-4 text-emerald-500" />
                           <span>Account Security & Protection</span>
                         </div>
-                        <p className="text-[11px] text-zinc-400">Encrypted session active</p>
+                        <p className="text-[11px] text-zinc-400">Session authenticated and encrypted</p>
                       </div>
-                      <span className="text-xs font-bold text-emerald-600 dark:text-emerald-400">Protected</span>
+                      <span className="text-xs font-bold text-emerald-600 dark:text-emerald-400">Active</span>
                     </div>
                   </div>
 
-                  {/* Danger Zone */}
+                  {/* Danger Zone - Delete Account */}
                   <div className="pt-6 border-t border-zinc-100 dark:border-zinc-900 space-y-4">
                     <div>
                       <h4 className="text-xs font-black text-red-500 uppercase tracking-widest">Danger Zone</h4>
-                      <p className="text-[10px] text-zinc-400 dark:text-zinc-500 leading-relaxed">Permanent, destructive, and non-reversible changes regarding your account data.</p>
+                      <p className="text-[10px] text-zinc-400 dark:text-zinc-500 leading-relaxed">Permanent account removal and data purge.</p>
                     </div>
 
                     <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 p-4 rounded-2xl border border-red-500/20 bg-red-500/5">
                       <div className="text-left space-y-0.5">
-                        <div className="text-xs font-bold text-zinc-800 dark:text-zinc-200">Deactivate Personal Workspace</div>
-                        <p className="text-[10px] text-zinc-400 dark:text-zinc-500 max-w-sm leading-normal">Purges all conversation histories, generated visuals, and workspace custom parameters.</p>
+                        <div className="text-xs font-bold text-zinc-800 dark:text-zinc-200">Delete Account</div>
+                        <p className="text-[10px] text-zinc-400 dark:text-zinc-500 max-w-sm leading-normal">Permanently delete your account, session, and purge all saved chats and preferences.</p>
                       </div>
                       <button 
                         onClick={() => {
-                          const confirmDelete = window.confirm("Are you sure you want to permanently deactivate and purge your Trelvix Workspace? This action is absolute and cannot be undone.");
+                          const confirmDelete = window.confirm("Are you sure you want to permanently delete your account? All saved data will be purged immediately.");
                           if (confirmDelete) {
-                            toast.loading("Purging personal datastores...");
+                            toast.loading("Deleting account...");
                             setTimeout(() => {
                               toast.dismiss();
-                              toast.success("Workspace purged successfully. Session closing.");
+                              toast.success("Account deleted successfully.");
                               onClose();
                             }, 1500);
                           }
                         }}
-                        className="px-4 py-2 bg-red-600 hover:bg-red-500 text-white font-bold text-xs rounded-xl transition-all shadow-md shrink-0 cursor-pointer"
+                        className="px-4 py-2 bg-red-600 hover:bg-red-500 text-white font-bold text-xs rounded-xl transition-all shadow-md shrink-0 cursor-pointer flex items-center gap-1.5"
                       >
-                        Deactivate Workspace
+                        <Trash2 className="w-3.5 h-3.5" />
+                        <span>Delete Account</span>
                       </button>
                     </div>
                   </div>
+                </div>
+              )}
+
+              {activeSection === 'memory' && (
+                <div className="space-y-6 pb-12">
+                  <div className="border-b border-zinc-100 dark:border-zinc-900 pb-4">
+                    <h3 className="text-lg font-bold text-zinc-900 dark:text-zinc-100">Memory Manager</h3>
+                    <p className="text-xs text-zinc-500 mt-1">
+                      Manage long-term information Trelvix AI has remembered about you and your work.
+                    </p>
+                  </div>
+
+                  <MemoryManager
+                    userId={profile?.id || ''}
+                    isMemoryEnabled={profile?.memory_enabled !== false}
+                    onToggleMemoryEnabled={async (enabled) => {
+                      try {
+                        await onUpdateProfile({ memory_enabled: enabled });
+                        toast.success(enabled ? 'Memory system enabled' : 'Memory system disabled');
+                      } catch (e) {
+                        toast.error('Failed to update memory settings');
+                      }
+                    }}
+                  />
                 </div>
               )}
 
@@ -696,8 +688,8 @@ export const Settings = (props: {
                   <div className="p-6 rounded-2xl bg-gradient-to-br from-emerald-500/10 via-zinc-50 to-white dark:from-emerald-500/10 dark:via-zinc-900 dark:to-zinc-950 border border-emerald-500/20 space-y-4">
                     <div className="flex items-center justify-between">
                       <div className="flex items-center gap-3">
-                        <div className="w-10 h-10 rounded-xl bg-emerald-500 text-white flex items-center justify-center font-bold">
-                          <LifeBuoy className="w-5 h-5" />
+                        <div className="w-10 h-10 rounded-xl bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 flex items-center justify-center font-bold overflow-hidden shrink-0">
+                          <img src="/icon.png" alt="Trelvix AI Logo" className="w-full h-full object-cover" />
                         </div>
                         <div>
                           <h4 className="text-sm font-bold text-zinc-900 dark:text-white">Ingenium Support Team</h4>

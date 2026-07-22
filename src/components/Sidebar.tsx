@@ -21,13 +21,16 @@ import {
   Sparkles,
   Sliders,
   LifeBuoy,
-  ShieldCheck
+  ShieldCheck,
+  Building2
 } from 'lucide-react';
 import React, { useState, useRef, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 import type { Profile } from '../types';
+import { WorkspaceSwitcher } from './WorkspaceSwitcher';
+import { useOrganization } from '../context/OrganizationContext';
 
 function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
@@ -46,6 +49,7 @@ export const Sidebar = ({
   onOpenUpgrade,
   onShowLegal,
   onOpenSupport,
+  onOpenOrgSettings,
   activeView,
   profile,
   conversations = [],
@@ -71,6 +75,7 @@ export const Sidebar = ({
   onOpenUpgrade?: () => void;
   onShowLegal?: (type: 'about' | 'privacy' | 'terms' | 'support') => void;
   onOpenSupport?: () => void;
+  onOpenOrgSettings?: () => void;
   activeView: string;
   profile: Profile | null;
   conversations?: any[];
@@ -84,10 +89,14 @@ export const Sidebar = ({
   onCreateProjectClick?: () => void;
   onMoveConversationClick?: (id: string) => void;
 }) => {
+  const { currentWorkspace } = useOrganization();
   const [searchQuery, setSearchQuery] = useState('');
   const [revealedActionsId, setRevealedActionsId] = useState<string | null>(null);
   const [isUserMenuOpen, setIsUserMenuOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
+
+  const isOrgWorkspace = currentWorkspace.type === 'organization';
+  const activeOrgId = currentWorkspace.organization?.id;
 
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
@@ -116,7 +125,22 @@ export const Sidebar = ({
     .toUpperCase() || 'EN';
   const userPlan = profile?.plan ? (profile.plan.charAt(0).toUpperCase() + profile.plan.slice(1)) : 'Free';
 
+  // Filter projects by workspace
+  const workspaceProjects = projects.filter(p => {
+    if (isOrgWorkspace) {
+      return p.organization_id === activeOrgId;
+    }
+    return !p.organization_id;
+  });
+
+  // Filter conversations by workspace & selected project
   const contextConversations = conversations.filter(conv => {
+    if (isOrgWorkspace) {
+      if (conv.organization_id && conv.organization_id !== activeOrgId) return false;
+    } else {
+      if (conv.organization_id) return false;
+    }
+
     if (selectedProjectId) {
       return conv.project_id === selectedProjectId;
     }
@@ -136,10 +160,10 @@ export const Sidebar = ({
         !isOpen && "pointer-events-none lg:pointer-events-auto"
       )}
     >
-      <div className="p-6 flex items-center justify-between mb-2">
+      <div className="p-4 flex items-center justify-between">
         <h2 
           onClick={() => handleAction(onNewChat)}
-          className="font-black text-xs uppercase tracking-[0.2em] cursor-pointer transition-opacity text-zinc-900 dark:text-white"
+          className="font-black text-xs uppercase tracking-[0.2em] cursor-pointer transition-opacity text-zinc-900 dark:text-white px-2"
         >
           Trelvix AI
         </h2>
@@ -147,6 +171,9 @@ export const Sidebar = ({
           <CloseIcon className="w-5 h-5" />
         </button>
       </div>
+
+      {/* Workspace Switcher Component */}
+      <WorkspaceSwitcher onOpenOrgSettings={onOpenOrgSettings} />
 
       <div className="px-4 mb-6">
         <button 
@@ -205,31 +232,31 @@ export const Sidebar = ({
           </button>
         </div>
 
-        {/* Workspaces & Projects Section */}
+        {/* Projects Section */}
         <div className="pt-4 border-t border-zinc-200/50 dark:border-zinc-800/50 my-2">
           <div className="px-4 mb-2 flex items-center justify-between text-[10px] font-black uppercase tracking-[0.2em] text-zinc-400 animate-fade-in">
             <div className="flex items-center gap-2">
               <FolderKanban className="w-3.5 h-3.5 text-zinc-400" />
-              <span>Workspaces</span>
+              <span>Projects</span>
             </div>
           </div>
           
           <div className="space-y-1">
-            {/* 1. Create Workspace */}
+            {/* 1. Create Project */}
             <button
               onClick={() => handleAction(() => onCreateProjectClick?.())}
               className="w-full text-left px-4 py-2 rounded-xl text-xs font-semibold text-zinc-600 dark:text-zinc-300 hover:bg-zinc-100/80 dark:hover:bg-zinc-900/80 transition-all flex items-center justify-between group/create cursor-pointer"
             >
               <div className="flex items-center gap-2.5 min-w-0">
                 <FolderPlus className="w-4 h-4 text-emerald-500 shrink-0 group-hover/create:scale-110 transition-transform" />
-                <span className="truncate">Create Workspace</span>
+                <span className="truncate">Create Project</span>
               </div>
               <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-md bg-emerald-500/10 text-emerald-600 dark:text-emerald-400">
                 + New
               </span>
             </button>
 
-            {/* 2. Projects (opens screen listing created projects) */}
+            {/* 2. Projects List Link */}
             <button
               onClick={() => handleAction(() => onOpenProjects?.())}
               className={cn(
@@ -241,20 +268,20 @@ export const Sidebar = ({
             >
               <div className="flex items-center gap-2.5 min-w-0">
                 <FolderKanban className="w-4 h-4 text-zinc-400 shrink-0 group-hover/projs:text-zinc-700 dark:group-hover/projs:text-zinc-200 transition-colors" />
-                <span className="truncate">Projects</span>
+                <span className="truncate">All Projects</span>
               </div>
               <span className="text-[10px] font-mono px-1.5 py-0.5 rounded-md bg-zinc-100 dark:bg-zinc-900 text-zinc-400">
-                {projects.length}
+                {workspaceProjects.length}
               </span>
             </button>
 
-            {/* Active Workspace Banner if a specific project is selected */}
+            {/* Active Project Banner if a specific project is selected */}
             {selectedProjectId !== null && (
               <div className="mt-2.5 mx-1 p-2.5 bg-emerald-500/10 border border-emerald-500/20 rounded-2xl flex items-center justify-between animate-fade-in">
                 <div className="flex items-center gap-2 min-w-0">
                   <Folder className="w-4 h-4 text-emerald-500 shrink-0" />
                   <div className="min-w-0">
-                    <p className="text-[9px] font-black uppercase tracking-wider text-emerald-600 dark:text-emerald-400">Active Workspace</p>
+                    <p className="text-[9px] font-black uppercase tracking-wider text-emerald-600 dark:text-emerald-400">Active Project</p>
                     <p className="text-xs font-bold text-zinc-900 dark:text-white truncate">
                       {projects.find(p => p.id === selectedProjectId)?.title || 'Project'}
                     </p>
@@ -263,7 +290,7 @@ export const Sidebar = ({
                 <button
                   onClick={() => handleAction(() => onSelectProject?.(null))}
                   className="p-1 hover:bg-emerald-500/20 rounded-lg text-emerald-600 dark:text-emerald-400 transition-colors cursor-pointer"
-                  title="Switch to Personal Workspace"
+                  title="Exit Project View"
                 >
                   <CloseIcon className="w-3.5 h-3.5" />
                 </button>
@@ -409,7 +436,7 @@ export const Sidebar = ({
                 className="w-full flex items-center justify-between p-2.5 rounded-xl hover:bg-zinc-100 dark:hover:bg-zinc-800/80 transition-colors text-left group/usr cursor-pointer"
               >
                 <div className="flex items-center gap-3 min-w-0">
-                  <div className="w-8 h-8 rounded-full bg-emerald-500 text-white font-extrabold text-xs flex items-center justify-center shrink-0 shadow-xs overflow-hidden">
+                  <div className="w-8 h-8 rounded-full bg-zinc-800 dark:bg-zinc-700 text-white font-extrabold text-xs flex items-center justify-center shrink-0 shadow-xs overflow-hidden">
                     {profile?.avatar_url ? (
                       <img src={profile.avatar_url} alt="User" className="w-full h-full object-cover" />
                     ) : (
@@ -434,7 +461,7 @@ export const Sidebar = ({
                 }}
                 className="w-full flex items-center gap-3 px-3 py-2 text-xs font-semibold text-zinc-800 dark:text-zinc-200 hover:bg-zinc-100 dark:hover:bg-zinc-800/80 rounded-xl transition-colors text-left cursor-pointer"
               >
-                <Sparkles className="w-4 h-4 text-emerald-500 shrink-0" />
+                <Sparkles className="w-4 h-4 text-zinc-400 dark:text-zinc-500 shrink-0" />
                 <span>Upgrade plan</span>
               </button>
 
@@ -446,7 +473,7 @@ export const Sidebar = ({
                 }}
                 className="w-full flex items-center gap-3 px-3 py-2 text-xs font-semibold text-zinc-800 dark:text-zinc-200 hover:bg-zinc-100 dark:hover:bg-zinc-800/80 rounded-xl transition-colors text-left cursor-pointer"
               >
-                <Sliders className="w-4 h-4 text-zinc-400 shrink-0" />
+                <Sliders className="w-4 h-4 text-zinc-400 dark:text-zinc-500 shrink-0" />
                 <span>Personalization</span>
               </button>
 
@@ -458,7 +485,7 @@ export const Sidebar = ({
                 }}
                 className="w-full flex items-center gap-3 px-3 py-2 text-xs font-semibold text-zinc-800 dark:text-zinc-200 hover:bg-zinc-100 dark:hover:bg-zinc-800/80 rounded-xl transition-colors text-left cursor-pointer"
               >
-                <User className="w-4 h-4 text-zinc-400 shrink-0" />
+                <User className="w-4 h-4 text-zinc-400 dark:text-zinc-500 shrink-0" />
                 <span>Profile</span>
               </button>
 
@@ -470,7 +497,7 @@ export const Sidebar = ({
                 }}
                 className="w-full flex items-center gap-3 px-3 py-2 text-xs font-semibold text-zinc-800 dark:text-zinc-200 hover:bg-zinc-100 dark:hover:bg-zinc-800/80 rounded-xl transition-colors text-left cursor-pointer"
               >
-                <SettingsIcon className="w-4 h-4 text-zinc-400 shrink-0" />
+                <SettingsIcon className="w-4 h-4 text-zinc-400 dark:text-zinc-500 shrink-0" />
                 <span>Settings</span>
               </button>
 
@@ -485,7 +512,7 @@ export const Sidebar = ({
                 className="w-full flex items-center justify-between px-3 py-2 text-xs font-semibold text-zinc-800 dark:text-zinc-200 hover:bg-zinc-100 dark:hover:bg-zinc-800/80 rounded-xl transition-colors text-left cursor-pointer group/sup"
               >
                 <div className="flex items-center gap-3">
-                  <LifeBuoy className="w-4 h-4 text-emerald-500 shrink-0" />
+                  <LifeBuoy className="w-4 h-4 text-zinc-400 dark:text-zinc-500 shrink-0" />
                   <span>Support & Contact</span>
                 </div>
                 <ChevronRight className="w-4 h-4 text-zinc-400 dark:text-zinc-500 group-hover/sup:text-zinc-700 dark:group-hover/sup:text-zinc-300 group-hover/sup:translate-x-0.5 transition-all" />
@@ -500,7 +527,7 @@ export const Sidebar = ({
                 className="w-full flex items-center justify-between px-3 py-2 text-xs font-semibold text-zinc-800 dark:text-zinc-200 hover:bg-zinc-100 dark:hover:bg-zinc-800/80 rounded-xl transition-colors text-left cursor-pointer group/leg"
               >
                 <div className="flex items-center gap-3">
-                  <ShieldCheck className="w-4 h-4 text-zinc-400 shrink-0" />
+                  <ShieldCheck className="w-4 h-4 text-zinc-400 dark:text-zinc-500 shrink-0" />
                   <span>Legal Policies</span>
                 </div>
                 <ChevronRight className="w-4 h-4 text-zinc-400 dark:text-zinc-500 group-hover/leg:text-zinc-700 dark:group-hover/leg:text-zinc-300 group-hover/leg:translate-x-0.5 transition-all" />
@@ -516,7 +543,7 @@ export const Sidebar = ({
                 }}
                 className="w-full flex items-center gap-3 px-3 py-2 text-xs font-semibold text-zinc-700 dark:text-zinc-300 hover:bg-red-500/10 hover:text-red-600 dark:hover:text-red-400 rounded-xl transition-colors text-left cursor-pointer"
               >
-                <LogOut className="w-4 h-4 text-zinc-400 shrink-0" />
+                <LogOut className="w-4 h-4 text-zinc-400 dark:text-zinc-500 shrink-0" />
                 <span>Log out</span>
               </button>
             </motion.div>
@@ -529,7 +556,7 @@ export const Sidebar = ({
           className="w-full flex items-center justify-between p-2 rounded-2xl bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 transition-all cursor-pointer shadow-xs hover:shadow-md hover:border-zinc-300 dark:hover:border-zinc-700 select-none group"
         >
           <div className="flex items-center gap-2.5 min-w-0">
-            <div className="w-8 h-8 rounded-full bg-emerald-500 text-white font-extrabold text-xs flex items-center justify-center shrink-0 shadow-xs overflow-hidden">
+            <div className="w-8 h-8 rounded-full bg-zinc-800 dark:bg-zinc-700 text-white font-extrabold text-xs flex items-center justify-center shrink-0 shadow-xs overflow-hidden">
               {profile?.avatar_url ? (
                 <img src={profile.avatar_url} alt="Profile" className="w-full h-full object-cover" />
               ) : (

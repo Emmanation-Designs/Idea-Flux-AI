@@ -42,7 +42,8 @@ import {
   Folder,
   FolderKanban,
   FolderPlus,
-  Search
+  Search,
+  ArrowLeft
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Toaster, toast } from 'sonner';
@@ -50,7 +51,6 @@ import ReactMarkdown from 'react-markdown';
 import remarkMath from 'remark-math';
 import rehypeKatex from 'rehype-katex';
 import { clsx, type ClassValue } from 'clsx';
-import { SplashScreen } from './components/SplashScreen';
 import ModelSelector from './components/ModelSelector';
 import { QueueStatusLoader } from './components/QueueStatusLoader';
 import { getModel, canUseModel, getDefaultModel } from './ai/modelCatalog';
@@ -214,6 +214,9 @@ import { DocumentExportCard } from './components/DocumentExportCard';
 import { UpgradeModal } from './components/UpgradeModal';
 import { AppsView } from './components/AppsView';
 import { TextToSpeechView } from './components/TextToSpeechView';
+import { OrganizationProvider } from './context/OrganizationContext';
+import { OrganizationSettings } from './components/OrganizationSettings';
+import { AcceptInvitationView } from './components/AcceptInvitationView';
 
 const PLAN_LIMITS = {
   free: { messages: Infinity, analysis: Infinity, images: Infinity },
@@ -234,7 +237,6 @@ export default function App() {
     const saved = localStorage.getItem('theme');
     return saved ? saved === 'dark' : true;
   });
-  const [isSplashing, setIsSplashing] = useState(true);
   const [user, setUser] = useState<any>(null);
   const [profile, setProfile] = useState<Profile | null>(null);
   const [conversations, setConversations] = useState<any[]>([]);
@@ -436,7 +438,14 @@ export default function App() {
   }, [expandedImage]);
 
   const [streamingMessage, setStreamingMessage] = useState('');
-  const [activeView, setActiveView] = useState<'chat' | 'history' | 'apps' | 'images' | 'settings' | 'tts' | 'project' | 'projects'>('chat');
+  const [activeView, setActiveView] = useState<'chat' | 'history' | 'apps' | 'images' | 'settings' | 'tts' | 'project' | 'projects' | 'org-settings'>('chat');
+  const [inviteToken, setInviteToken] = useState<string | null>(() => {
+    if (typeof window !== 'undefined') {
+      const params = new URLSearchParams(window.location.search);
+      return params.get('invite_token') || params.get('token') || null;
+    }
+    return null;
+  });
   const [projectSearchQuery, setProjectSearchQuery] = useState('');
   const [projects, setProjects] = useState<Project[]>([]);
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
@@ -1047,7 +1056,7 @@ export default function App() {
         personality: 'creative'
       };
       const { data: created } = await supabase.from('profiles').insert(newProfile).select().single();
-      setProfile(created);
+      setProfile(created ? { ...created, email: user.email, billing_email: created.billing_email || user.email } : null);
     } else if (data) {
       let lastReset = '';
       try {
@@ -1062,6 +1071,12 @@ export default function App() {
         console.error("Error parsing last_usage_reset:", err);
       }
       
+      const profileWithEmail = {
+        ...data,
+        email: user.email,
+        billing_email: data.billing_email || user.email
+      };
+
       if (lastReset && lastReset !== today) {
         // Reset counters for a new day
         await updateProfile({
@@ -1070,9 +1085,10 @@ export default function App() {
           images_used_today: 0,
           last_usage_reset: now.toISOString()
         });
+        setProfile(profileWithEmail);
       } else {
         // Standard profile fetch
-        setProfile(data);
+        setProfile(profileWithEmail);
       }
     }
   };
@@ -1133,41 +1149,15 @@ export default function App() {
           setMessages([]);
         }
       } else if (path === '/' || path === '') {
-        // Root visit: only auto-redirect if we have not loaded the initial conversation yet in this mount
+        // Root visit: always open a clean new chat screen on initial launch
         if (!hasLoadedInitialConversation.current) {
-          const lastId = localStorage.getItem('last_conversation_id');
-          const lastConv = lastId ? uniqueConversations.find((c: any) => c.id === lastId) : null;
-          const recentConv = lastConv || (uniqueConversations.length > 0 ? uniqueConversations[0] : null);
-
-          if (recentConv) {
-            console.log("[Chat] Root visit: auto-restoring recent conversation:", recentConv.id);
-            setCurrentConversation(recentConv);
-            setSelectedProjectId(recentConv.project_id || null);
-            
-            const uniqueMessages = (recentConv.messages || []).reduce((acc: any[], curr: any, idx: number) => {
-              const messageId = curr.id || `msg-legacy-${idx}`;
-              if (!acc.find(m => m.id === messageId)) {
-                acc.push({ ...curr, id: messageId });
-              }
-              return acc;
-            }, []);
-            
-            setMessages(uniqueMessages);
-            setStreamingMessage('');
-            setActiveView('chat');
-            
-            window.history.replaceState({ conversationId: recentConv.id }, document.title, `/c/${recentConv.id}`);
-          } else {
-            console.log("[Chat] Root visit: no conversations exist. Auto-creating a new one...");
-            const newConv = await startConversation('general', 'New Chat', '', {}, true);
-            if (newConv && newConv.id) {
-              window.history.replaceState({ conversationId: newConv.id }, document.title, `/c/${newConv.id}`);
-            }
-          }
+          console.log("[Chat] Root visit: starting on clean new chat screen");
+          setCurrentConversation(null);
+          setMessages([]);
+          setStreamingMessage('');
+          setActiveView('chat');
         }
       }
-
-      // Mark that we have finished the initial load sequence
       hasLoadedInitialConversation.current = true;
 
       // Auto-migrate/heal expiring images in the background after the UI starts rendering to keep chat loading incredibly fast
@@ -2287,14 +2277,6 @@ export default function App() {
 
   if (!user) return (
     <div className={cn(isDarkMode && "dark")}>
-      <AnimatePresence>
-        {isSplashing && (
-          <SplashScreen 
-            isDarkMode={isDarkMode} 
-            onComplete={() => setIsSplashing(false)} 
-          />
-        )}
-      </AnimatePresence>
       <Auth onAuthSuccess={() => {}} isDarkMode={isDarkMode} />
       <button 
         onClick={() => setIsDarkMode(!isDarkMode)}
@@ -2321,40 +2303,47 @@ export default function App() {
   );
 
   return (
-    <div 
-      style={{ height: viewportHeight }}
-      className={cn("fixed inset-0 w-full flex bg-white dark:bg-black text-zinc-900 dark:text-zinc-100 font-sans overflow-hidden", isDarkMode && "dark")}
-    >
-      <AnimatePresence>
-        {isSplashing && (
-          <SplashScreen 
-            isDarkMode={isDarkMode} 
-            onComplete={() => setIsSplashing(false)} 
-          />
-        )}
-        {isSidebarOpen && (
-          <motion.div 
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            onClick={() => setIsSidebarOpen(false)}
-            className="fixed inset-0 z-30 bg-black/40 backdrop-blur-[2px] lg:hidden cursor-pointer"
-          />
-        )}
-      </AnimatePresence>
-      <Sidebar 
-        isOpen={isSidebarOpen}
-        setIsOpen={setIsSidebarOpen}
-        onNewChat={handleNewChat}
-        onOpenSettings={(section) => {
-          if (section && ['account', 'personality', 'billing', 'display', 'legal', 'support'].includes(section)) {
-            setShowSettings(section as any);
-          } else {
-            setShowSettings(true);
-          }
-        }}
-        onOpenSupport={() => setShowSettings('support')}
-        onOpenApps={() => setActiveView('apps')}
+    <OrganizationProvider userId={user?.id} userEmail={user?.email}>
+      {inviteToken && (
+        <AcceptInvitationView 
+          token={inviteToken} 
+          onComplete={() => {
+            setInviteToken(null);
+            if (typeof window !== 'undefined') {
+              window.history.replaceState({}, document.title, window.location.pathname);
+            }
+          }} 
+        />
+      )}
+      <div 
+        style={{ height: viewportHeight }}
+        className={cn("fixed inset-0 w-full flex bg-white dark:bg-black text-zinc-900 dark:text-zinc-100 font-sans overflow-hidden", isDarkMode && "dark")}
+      >
+        <AnimatePresence>
+          {isSidebarOpen && (
+            <motion.div 
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setIsSidebarOpen(false)}
+              className="fixed inset-0 z-30 bg-black/40 backdrop-blur-[2px] lg:hidden cursor-pointer"
+            />
+          )}
+        </AnimatePresence>
+        <Sidebar 
+          isOpen={isSidebarOpen}
+          setIsOpen={setIsSidebarOpen}
+          onNewChat={handleNewChat}
+          onOpenSettings={(section) => {
+            if (section && ['account', 'personality', 'billing', 'display', 'legal', 'support'].includes(section)) {
+              setShowSettings(section as any);
+            } else {
+              setShowSettings(true);
+            }
+          }}
+          onOpenSupport={() => setShowSettings('support')}
+          onOpenOrgSettings={() => setActiveView('org-settings')}
+          onOpenApps={() => setActiveView('apps')}
         onOpenImages={() => setActiveView('images')}
         onOpenTTS={() => setActiveView('tts')}
         onOpenUpgrade={() => setShowUpgradeModal(true)}
@@ -2630,6 +2619,15 @@ export default function App() {
                           <Folder className="w-8 h-8 opacity-20" />
                         </div>
                         <div className="font-bold text-zinc-900 dark:text-zinc-100">Project Not Found</div>
+                        <button
+                          onClick={() => {
+                            setSelectedProjectId(null);
+                            setActiveView('projects');
+                          }}
+                          className="px-4 py-2 bg-zinc-100 dark:bg-zinc-800 text-xs font-bold rounded-xl cursor-pointer"
+                        >
+                          Back to Projects
+                        </button>
                       </div>
                     );
                   }
@@ -2638,79 +2636,99 @@ export default function App() {
                   
                   return (
                     <div className="space-y-8 animate-fade-in">
-                      {/* Project Header */}
-                      <div className="flex flex-col md:flex-row md:items-start justify-between gap-6 border-b border-zinc-200 dark:border-zinc-800 pb-8">
-                        <div className="space-y-4">
-                          <div className="flex items-center gap-3">
-                            <div className="w-12 h-12 rounded-2xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-600 dark:text-emerald-400 flex items-center justify-center font-bold shadow-sm shrink-0">
-                              <Folder className="w-6 h-6" />
+                      {/* Back Navigation Button */}
+                      <div>
+                        <button
+                          onClick={() => {
+                            setSelectedProjectId(null);
+                            setActiveView('projects');
+                          }}
+                          className="inline-flex items-center gap-2 text-xs font-bold text-zinc-500 hover:text-zinc-900 dark:hover:text-white transition-colors cursor-pointer group"
+                        >
+                          <ArrowLeft className="w-4 h-4 group-hover:-translate-x-1 transition-transform" />
+                          <span>Back to Projects</span>
+                        </button>
+                      </div>
+
+                      {/* Project Header Card */}
+                      <div className="bg-zinc-50 dark:bg-zinc-900/60 border border-zinc-200/80 dark:border-zinc-800/80 rounded-3xl p-6 md:p-8 space-y-6">
+                        <div className="flex flex-col md:flex-row md:items-start justify-between gap-6">
+                          <div className="space-y-3 flex-1 min-w-0">
+                            <div className="flex items-center gap-3">
+                              <div className="w-10 h-10 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-600 dark:text-emerald-400 flex items-center justify-center font-bold shrink-0">
+                                <Folder className="w-5 h-5" />
+                              </div>
+                              <div className="min-w-0">
+                                <div className="flex items-center gap-2">
+                                  <span className="px-2 py-0.5 rounded-md bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 text-[10px] font-bold uppercase tracking-wider">
+                                    Project
+                                  </span>
+                                  <span className="text-[10px] font-mono text-zinc-400">
+                                    Updated {proj.updated_at ? new Date(proj.updated_at).toLocaleDateString() : 'recently'}
+                                  </span>
+                                </div>
+                                <h1 className="text-2xl md:text-3xl font-bold text-zinc-900 dark:text-white tracking-tight mt-1 truncate">
+                                  {proj.title}
+                                </h1>
+                              </div>
                             </div>
-                            <div>
-                              <h1 className="text-2xl md:text-3xl font-black text-zinc-900 dark:text-white tracking-tight">{proj.title}</h1>
-                              <p className="text-[10px] font-mono text-zinc-400 uppercase tracking-widest mt-0.5">
-                                Workspace Project • Updated {proj.updated_at ? new Date(proj.updated_at).toLocaleDateString() : 'recently'}
+
+                            {proj.description ? (
+                              <p className="text-sm text-zinc-600 dark:text-zinc-400 leading-relaxed pt-1">
+                                {proj.description}
                               </p>
-                            </div>
+                            ) : (
+                              <p className="text-xs text-zinc-400 italic pt-1">
+                                No description added for this project.
+                              </p>
+                            )}
                           </div>
 
-                          {proj.description && (
-                            <p className="text-sm md:text-base text-zinc-600 dark:text-zinc-400 font-medium max-w-2xl leading-relaxed">
-                              {proj.description}
-                            </p>
-                          )}
-
-                          <div className="flex items-center gap-2">
-                            <span className="inline-flex items-center gap-1.5 px-3 py-1 bg-zinc-100 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-xl text-xs font-bold text-zinc-600 dark:text-zinc-400">
-                              <MessageSquare className="w-3.5 h-3.5 text-emerald-500" />
-                              {projConversations.length} {projConversations.length === 1 ? 'conversation' : 'conversations'}
-                            </span>
+                          <div className="flex items-center gap-2 shrink-0">
+                            <button
+                              onClick={() => setShowProjectSettingsModal(true)}
+                              className="px-3.5 py-2.5 border border-zinc-200 dark:border-zinc-800 text-zinc-700 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800 rounded-xl text-xs font-bold transition-all cursor-pointer bg-white dark:bg-zinc-900 flex items-center gap-2 shadow-xs"
+                            >
+                              <SettingsIcon className="w-3.5 h-3.5" />
+                              <span>Settings</span>
+                            </button>
+                            <button
+                              onClick={() => handleDeleteProject(proj.id)}
+                              className="p-2.5 border border-red-200 dark:border-red-950/40 text-red-500 hover:bg-red-50 dark:hover:bg-red-950/20 rounded-xl text-xs font-bold transition-all cursor-pointer"
+                              title="Delete Project"
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </button>
+                            <button 
+                              onClick={() => {
+                                handleNewChat();
+                                setActiveView('chat');
+                              }}
+                              className="px-4 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-bold transition-all shadow-md hover:shadow-emerald-500/20 active:scale-[0.98] cursor-pointer flex items-center gap-2"
+                            >
+                              <Plus className="w-4 h-4" />
+                              <span>New Chat</span>
+                            </button>
                           </div>
-                        </div>
-
-                        <div className="flex items-center gap-2.5 shrink-0 pt-2 md:pt-0">
-                          <button
-                            onClick={() => setShowProjectSettingsModal(true)}
-                            className="px-4 py-2.5 border border-zinc-200 dark:border-zinc-800 text-zinc-700 dark:text-zinc-300 hover:bg-zinc-50 dark:hover:bg-zinc-900 rounded-xl text-xs font-bold uppercase tracking-wider transition-all cursor-pointer bg-white dark:bg-zinc-900 flex items-center gap-2"
-                          >
-                            <SettingsIcon className="w-3.5 h-3.5" />
-                            <span>Settings</span>
-                          </button>
-                          <button
-                            onClick={() => handleDeleteProject(proj.id)}
-                            className="px-4 py-2.5 border border-red-200 dark:border-red-950/40 text-red-500 hover:bg-red-50 dark:hover:bg-red-950/10 rounded-xl text-xs font-bold uppercase tracking-wider transition-all cursor-pointer flex items-center gap-2"
-                          >
-                            <Trash2 className="w-3.5 h-3.5" />
-                            <span>Delete</span>
-                          </button>
-                          <button 
-                            onClick={() => {
-                              handleNewChat();
-                              setActiveView('chat');
-                            }}
-                            className="px-5 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-bold uppercase tracking-wider transition-all shadow-md hover:shadow-emerald-500/25 active:scale-[0.98] cursor-pointer flex items-center gap-2"
-                          >
-                            <Plus className="w-4 h-4" />
-                            <span>New Chat</span>
-                          </button>
                         </div>
                       </div>
 
-                      {/* Recent Conversations inside this Project */}
+                      {/* Project Conversations List */}
                       <div className="space-y-4">
-                        <div className="flex items-center justify-between">
-                          <h2 className="text-xs font-black uppercase tracking-widest text-zinc-400">Workspace Conversations</h2>
-                          <span className="text-[10px] font-mono text-zinc-400">{projConversations.length} total</span>
+                        <div className="flex items-center justify-between px-1">
+                          <h2 className="text-sm font-bold text-zinc-900 dark:text-white">Project Conversations</h2>
+                          <span className="text-xs font-mono text-zinc-400">{projConversations.length} {projConversations.length === 1 ? 'chat' : 'chats'}</span>
                         </div>
 
                         {projConversations.length === 0 ? (
-                          <div className="text-center py-16 px-6 bg-gradient-to-b from-zinc-50 to-zinc-100/50 dark:from-zinc-900/40 dark:to-zinc-950/40 border border-dashed border-zinc-200 dark:border-zinc-800 rounded-3xl space-y-4 max-w-xl mx-auto my-8">
-                            <div className="w-16 h-16 rounded-2xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-500 flex items-center justify-center mx-auto shadow-inner">
-                              <Folder className="w-8 h-8" />
+                          <div className="text-center py-16 px-6 bg-zinc-50/50 dark:bg-zinc-900/30 border border-dashed border-zinc-200 dark:border-zinc-800 rounded-3xl space-y-4 max-w-lg mx-auto my-4">
+                            <div className="w-12 h-12 rounded-2xl bg-zinc-100 dark:bg-zinc-800 text-zinc-400 flex items-center justify-center mx-auto">
+                              <MessageSquare className="w-6 h-6" />
                             </div>
                             <div className="space-y-1">
-                              <h3 className="text-lg font-bold text-zinc-900 dark:text-zinc-100">No conversations in this workspace yet</h3>
-                              <p className="text-xs text-zinc-500 max-w-sm mx-auto leading-relaxed">
-                                Start a new chat inside <strong className="text-zinc-700 dark:text-zinc-300">{proj.title}</strong> to organize your notes, research, and AI sessions.
+                              <h3 className="text-sm font-bold text-zinc-900 dark:text-zinc-100">No conversations in this project yet</h3>
+                              <p className="text-xs text-zinc-500 max-w-xs mx-auto leading-relaxed">
+                                Start a chat inside <strong className="text-zinc-700 dark:text-zinc-300">{proj.title}</strong> to organize your work.
                               </p>
                             </div>
                             <button
@@ -2718,10 +2736,10 @@ export default function App() {
                                 handleNewChat();
                                 setActiveView('chat');
                               }}
-                              className="px-6 py-3 bg-emerald-600 hover:bg-emerald-500 text-white font-bold rounded-2xl text-xs uppercase tracking-wider transition-all shadow-lg hover:shadow-emerald-500/20 inline-flex items-center gap-2 cursor-pointer active:scale-95"
+                              className="px-5 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white font-bold rounded-xl text-xs transition-all shadow-md hover:shadow-emerald-500/20 inline-flex items-center gap-2 cursor-pointer active:scale-95"
                             >
                               <Plus className="w-4 h-4" />
-                              <span>Create Chat in {proj.title}</span>
+                              <span>Start Chat</span>
                             </button>
                           </div>
                         ) : (
@@ -2729,7 +2747,7 @@ export default function App() {
                             {projConversations.map((conv, index) => (
                               <div
                                 key={`proj-conv-${conv.id || index}`}
-                                className="p-6 bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-3xl text-left hover:border-zinc-400 dark:hover:border-zinc-600 transition-all group relative hover:shadow-xl flex flex-col justify-between"
+                                className="p-5 bg-white dark:bg-zinc-900 border border-zinc-200/80 dark:border-zinc-800/80 rounded-2xl text-left hover:border-zinc-300 dark:hover:border-zinc-700 transition-all group relative shadow-xs hover:shadow-md flex flex-col justify-between"
                               >
                                 <div 
                                   onClick={() => {
@@ -2738,42 +2756,42 @@ export default function App() {
                                   }} 
                                   className="cursor-pointer flex-1"
                                 >
-                                  <div className="flex items-center justify-between mb-4">
-                                    <span className="text-[10px] font-black uppercase tracking-widest px-2.5 py-1 bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-400 rounded-lg">
+                                  <div className="flex items-center justify-between mb-3">
+                                    <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-400 rounded-md">
                                       {conv.type || 'Chat'}
                                     </span>
-                                    <span className="text-[10px] font-mono opacity-40 uppercase tracking-widest">
+                                    <span className="text-[10px] font-mono text-zinc-400">
                                       {new Date(conv.created_at).toLocaleDateString()}
                                     </span>
                                   </div>
-                                  <h3 className="font-bold mb-2 group-hover:text-emerald-600 dark:group-hover:text-emerald-400 transition-colors line-clamp-1">
+                                  <h3 className="font-bold text-sm text-zinc-900 dark:text-white group-hover:text-emerald-600 dark:group-hover:text-emerald-400 transition-colors line-clamp-1 mb-1">
                                     {conv.title || 'Untitled Chat'}
                                   </h3>
-                                  <p className="text-xs opacity-60 line-clamp-2 leading-relaxed">
+                                  <p className="text-xs text-zinc-500 dark:text-zinc-400 line-clamp-2 leading-relaxed">
                                     {conv.messages?.[0]?.content || 'No messages yet'}
                                   </p>
                                 </div>
                                 
-                                <div className="mt-6 flex items-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity pt-4 border-t border-zinc-100 dark:border-zinc-800/80">
+                                <div className="mt-4 flex items-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity pt-3 border-t border-zinc-100 dark:border-zinc-800/80">
                                   <button 
                                     onClick={() => {
                                       const newTitle = prompt('Rename conversation:', conv.title);
                                       if (newTitle) handleRenameConversation(conv.id, newTitle);
                                     }}
-                                    className="flex-1 py-2 bg-zinc-100 dark:bg-zinc-800 hover:bg-zinc-200 dark:hover:bg-zinc-700 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all cursor-pointer text-zinc-600 dark:text-zinc-300"
+                                    className="flex-1 py-1.5 bg-zinc-100 dark:bg-zinc-800 hover:bg-zinc-200 dark:hover:bg-zinc-700 rounded-lg text-[10px] font-bold transition-all cursor-pointer text-zinc-700 dark:text-zinc-300"
                                   >
                                     Rename
                                   </button>
                                   <button 
                                     onClick={() => handleRemoveFromProject(conv.id)}
-                                    className="flex-1 py-2 bg-amber-50 dark:bg-amber-950/20 hover:bg-amber-100 text-amber-600 dark:text-amber-400 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all cursor-pointer"
-                                    title="Move out to Personal Workspace"
+                                    className="flex-1 py-1.5 bg-amber-50 dark:bg-amber-950/20 hover:bg-amber-100 text-amber-600 dark:text-amber-400 rounded-lg text-[10px] font-bold transition-all cursor-pointer"
+                                    title="Move out of project"
                                   >
                                     Remove
                                   </button>
                                   <button 
                                     onClick={() => handleDeleteConversation(conv.id)}
-                                    className="flex-1 py-2 bg-red-50 dark:bg-red-950/20 hover:bg-red-100 text-red-500 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all cursor-pointer"
+                                    className="flex-1 py-1.5 bg-red-50 dark:bg-red-950/20 hover:bg-red-100 text-red-500 rounded-lg text-[10px] font-bold transition-all cursor-pointer"
                                   >
                                     Delete
                                   </button>
@@ -2792,48 +2810,43 @@ export default function App() {
             <div className="flex-1 flex flex-col overflow-y-auto overscroll-y-contain animate-fade-in bg-white dark:bg-zinc-950">
               <div className="max-w-5xl mx-auto w-full p-6 md:p-12 space-y-8 pb-32">
                 {/* Header Section */}
-                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-6 border-b border-zinc-200 dark:border-zinc-800 pb-8">
-                  <div className="flex items-center gap-3">
-                    <div className="w-12 h-12 rounded-2xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-600 dark:text-emerald-400 flex items-center justify-center font-bold shadow-sm shrink-0">
-                      <FolderKanban className="w-6 h-6" />
-                    </div>
-                    <div>
-                      <h1 className="text-2xl md:text-3xl font-black text-zinc-900 dark:text-white tracking-tight">Workspaces & Projects</h1>
-                      <p className="text-xs text-zinc-500 font-medium mt-0.5">Manage your AI workspace environments and organize custom chat sessions.</p>
-                    </div>
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-zinc-200 dark:border-zinc-800 pb-6">
+                  <div>
+                    <h1 className="text-2xl md:text-3xl font-bold text-zinc-900 dark:text-white tracking-tight">Projects</h1>
+                    <p className="text-xs text-zinc-500 font-medium mt-1">Organize your AI chats, code, and custom instructions into dedicated projects.</p>
                   </div>
 
                   <button 
                     onClick={() => setShowCreateProjectModal(true)}
-                    className="px-5 py-3 bg-emerald-600 hover:bg-emerald-500 text-white font-bold rounded-2xl text-xs uppercase tracking-wider transition-all shadow-md hover:shadow-emerald-500/20 flex items-center justify-center gap-2 cursor-pointer active:scale-95 shrink-0"
+                    className="px-4 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white font-bold rounded-xl text-xs transition-all shadow-sm hover:shadow-emerald-500/20 flex items-center justify-center gap-2 cursor-pointer active:scale-95 shrink-0"
                   >
-                    <FolderPlus className="w-4 h-4" />
-                    <span>Create Workspace</span>
+                    <Plus className="w-4 h-4" />
+                    <span>New Project</span>
                   </button>
                 </div>
 
-                {/* Search & Stats Bar */}
+                {/* Search & Counter Bar */}
                 <div className="flex items-center gap-3">
                   <div className="relative flex-1">
-                    <Search className="w-4 h-4 absolute left-4 top-1/2 -translate-y-1/2 text-zinc-400" />
+                    <Search className="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-zinc-400" />
                     <input
                       type="text"
                       value={projectSearchQuery}
                       onChange={(e) => setProjectSearchQuery(e.target.value)}
-                      placeholder="Search workspaces by name or description..."
-                      className="w-full pl-11 pr-10 py-3 bg-zinc-50 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-2xl text-sm font-medium text-zinc-900 dark:text-zinc-100 placeholder-zinc-400 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 transition-all"
+                      placeholder="Search projects..."
+                      className="w-full pl-10 pr-9 py-2.5 bg-zinc-50 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-xl text-xs font-medium text-zinc-900 dark:text-zinc-100 placeholder-zinc-400 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 transition-all"
                     />
                     {projectSearchQuery && (
                       <button 
                         onClick={() => setProjectSearchQuery('')}
-                        className="absolute right-4 top-1/2 -translate-y-1/2 text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-200"
+                        className="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-200"
                       >
-                        <X className="w-4 h-4" />
+                        <X className="w-3.5 h-3.5" />
                       </button>
                     )}
                   </div>
-                  <span className="text-xs font-mono text-zinc-500 px-3 py-3 bg-zinc-100 dark:bg-zinc-900 rounded-2xl border border-zinc-200 dark:border-zinc-800 shrink-0 font-bold">
-                    {projects.filter(p => p.title.toLowerCase().includes(projectSearchQuery.toLowerCase()) || (p.description || '').toLowerCase().includes(projectSearchQuery.toLowerCase())).length} {projects.filter(p => p.title.toLowerCase().includes(projectSearchQuery.toLowerCase()) || (p.description || '').toLowerCase().includes(projectSearchQuery.toLowerCase())).length === 1 ? 'workspace' : 'workspaces'}
+                  <span className="text-xs font-mono text-zinc-500 px-3 py-2.5 bg-zinc-100 dark:bg-zinc-900 rounded-xl border border-zinc-200 dark:border-zinc-800 shrink-0 font-medium">
+                    {projects.filter(p => p.title.toLowerCase().includes(projectSearchQuery.toLowerCase()) || (p.description || '').toLowerCase().includes(projectSearchQuery.toLowerCase())).length} {projects.filter(p => p.title.toLowerCase().includes(projectSearchQuery.toLowerCase()) || (p.description || '').toLowerCase().includes(projectSearchQuery.toLowerCase())).length === 1 ? 'project' : 'projects'}
                   </span>
                 </div>
 
@@ -2846,27 +2859,27 @@ export default function App() {
 
                   if (filteredList.length === 0) {
                     return (
-                      <div className="text-center py-20 px-6 bg-zinc-50/50 dark:bg-zinc-900/20 border border-dashed border-zinc-200 dark:border-zinc-800 rounded-3xl space-y-4 max-w-md mx-auto my-8 animate-fade-in">
-                        <div className="w-16 h-16 rounded-2xl bg-zinc-100 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 text-zinc-400 flex items-center justify-center mx-auto">
-                          <FolderKanban className="w-8 h-8 opacity-40" />
+                      <div className="text-center py-16 px-6 bg-zinc-50/50 dark:bg-zinc-900/30 border border-dashed border-zinc-200 dark:border-zinc-800 rounded-3xl space-y-4 max-w-sm mx-auto my-6 animate-fade-in">
+                        <div className="w-12 h-12 rounded-2xl bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 text-zinc-400 flex items-center justify-center mx-auto">
+                          <Folder className="w-6 h-6 opacity-60" />
                         </div>
                         <div className="space-y-1">
-                          <h3 className="text-base font-bold text-zinc-900 dark:text-zinc-100">
-                            {projectSearchQuery ? 'No matching workspaces' : 'No workspaces created yet'}
+                          <h3 className="text-sm font-bold text-zinc-900 dark:text-zinc-100">
+                            {projectSearchQuery ? 'No matching projects' : 'No projects created yet'}
                           </h3>
                           <p className="text-xs text-zinc-500 leading-relaxed">
                             {projectSearchQuery 
-                              ? 'Try searching with a different term or clear search filter.' 
-                              : 'Create a workspace project to group your conversations and customize environment context.'}
+                              ? 'Try searching with a different term.' 
+                              : 'Create a project to organize your chat sessions and group custom instructions.'}
                           </p>
                         </div>
                         {!projectSearchQuery && (
                           <button
                             onClick={() => setShowCreateProjectModal(true)}
-                            className="px-5 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white font-bold rounded-xl text-xs uppercase tracking-wider transition-all shadow-md hover:shadow-emerald-500/20 inline-flex items-center gap-2 cursor-pointer"
+                            className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white font-bold rounded-xl text-xs transition-all shadow-sm inline-flex items-center gap-2 cursor-pointer"
                           >
-                            <FolderPlus className="w-4 h-4" />
-                            <span>Create First Workspace</span>
+                            <Plus className="w-4 h-4" />
+                            <span>Create Project</span>
                           </button>
                         )}
                       </div>
@@ -2874,7 +2887,7 @@ export default function App() {
                   }
 
                   return (
-                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
+                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                       {filteredList.map((proj) => {
                         const projConvs = conversations.filter(c => c.project_id === proj.id);
                         const isSelected = selectedProjectId === proj.id;
@@ -2883,33 +2896,46 @@ export default function App() {
                           <div
                             key={`projects-screen-card-${proj.id}`}
                             className={cn(
-                              "p-6 bg-white dark:bg-zinc-900 border rounded-3xl transition-all duration-200 flex flex-col justify-between group relative shadow-sm hover:shadow-xl",
+                              "p-5 bg-white dark:bg-zinc-900/80 border rounded-2xl transition-all duration-200 flex flex-col justify-between group relative shadow-xs hover:shadow-md",
                               isSelected 
                                 ? "border-emerald-500/60 ring-2 ring-emerald-500/20" 
                                 : "border-zinc-200/80 dark:border-zinc-800/80 hover:border-zinc-300 dark:hover:border-zinc-700"
                             )}
                           >
-                            <div className="space-y-4">
+                            <div className="space-y-3">
                               <div className="flex items-center justify-between">
-                                <div className="w-10 h-10 rounded-2xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-600 dark:text-emerald-400 flex items-center justify-center font-bold">
-                                  <Folder className="w-5 h-5" />
+                                <div className="w-9 h-9 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-600 dark:text-emerald-400 flex items-center justify-center font-bold">
+                                  <Folder className="w-4.5 h-4.5" />
                                 </div>
-                                <span className="text-[10px] font-mono px-2.5 py-1 rounded-lg bg-zinc-100 dark:bg-zinc-800 text-zinc-500 dark:text-zinc-400 font-bold">
-                                  {projConvs.length} {projConvs.length === 1 ? 'chat' : 'chats'}
-                                </span>
+                                <div className="flex items-center gap-1.5">
+                                  <button
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      setSelectedProjectId(proj.id);
+                                      setShowProjectSettingsModal(true);
+                                    }}
+                                    className="p-1 hover:bg-zinc-100 dark:hover:bg-zinc-800 text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-200 rounded-lg transition-all cursor-pointer"
+                                    title="Rename Project"
+                                  >
+                                    <Edit2 className="w-3.5 h-3.5" />
+                                  </button>
+                                  <span className="text-[10px] font-mono px-2 py-0.5 rounded-md bg-zinc-100 dark:bg-zinc-800 text-zinc-500 dark:text-zinc-400 font-medium">
+                                    {projConvs.length} {projConvs.length === 1 ? 'chat' : 'chats'}
+                                  </span>
+                                </div>
                               </div>
 
                               <div>
-                                <h3 className="font-extrabold text-lg text-zinc-900 dark:text-white group-hover:text-emerald-600 dark:group-hover:text-emerald-400 transition-colors line-clamp-1">
+                                <h3 className="font-bold text-base text-zinc-900 dark:text-white group-hover:text-emerald-600 dark:group-hover:text-emerald-400 transition-colors line-clamp-1">
                                   {proj.title}
                                 </h3>
                                 <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-1 line-clamp-2 leading-relaxed min-h-[2.25rem]">
-                                  {proj.description || 'No description provided for this workspace.'}
+                                  {proj.description || 'No description provided.'}
                                 </p>
                               </div>
                             </div>
 
-                            <div className="pt-6 mt-4 border-t border-zinc-100 dark:border-zinc-800/80 space-y-3">
+                            <div className="pt-4 mt-3 border-t border-zinc-100 dark:border-zinc-800/80 space-y-2.5">
                               <div className="flex items-center justify-between text-[10px] font-mono text-zinc-400">
                                 <span>UPDATED</span>
                                 <span>{proj.updated_at ? new Date(proj.updated_at).toLocaleDateString() : 'Recently'}</span>
@@ -2921,29 +2947,19 @@ export default function App() {
                                     setSelectedProjectId(proj.id);
                                     setActiveView('project');
                                   }}
-                                  className="flex-1 py-2.5 bg-zinc-900 dark:bg-white text-white dark:text-zinc-900 hover:bg-zinc-800 dark:hover:bg-zinc-100 rounded-xl text-xs font-bold uppercase tracking-wider transition-all flex items-center justify-center gap-1.5 cursor-pointer shadow-sm"
+                                  className="flex-1 py-2 bg-zinc-900 dark:bg-white text-white dark:text-zinc-900 hover:bg-zinc-800 dark:hover:bg-zinc-100 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-1 cursor-pointer shadow-xs"
                                 >
-                                  <span>Open Workspace</span>
+                                  <span>Open</span>
                                   <ChevronRight className="w-3.5 h-3.5" />
-                                </button>
-                                
-                                <button
-                                  onClick={() => {
-                                    setSelectedProjectId(proj.id);
-                                    setShowProjectSettingsModal(true);
-                                  }}
-                                  className="p-2.5 bg-zinc-100 dark:bg-zinc-800 hover:bg-zinc-200 dark:hover:bg-zinc-700 text-zinc-600 dark:text-zinc-300 rounded-xl transition-all cursor-pointer"
-                                  title="Workspace Settings"
-                                >
-                                  <SettingsIcon className="w-4 h-4" />
                                 </button>
 
                                 <button
                                   onClick={() => handleDeleteProject(proj.id)}
-                                  className="p-2.5 bg-red-50 dark:bg-red-950/20 hover:bg-red-100 dark:hover:bg-red-950/40 text-red-500 rounded-xl transition-all cursor-pointer"
-                                  title="Delete Workspace"
+                                  className="px-3 py-2 bg-red-50 dark:bg-red-950/20 hover:bg-red-100 dark:hover:bg-red-950/40 text-red-500 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-1"
+                                  title="Delete Project"
                                 >
-                                  <Trash2 className="w-4 h-4" />
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                  <span>Delete</span>
                                 </button>
                               </div>
                             </div>
@@ -2955,6 +2971,8 @@ export default function App() {
                 })()}
               </div>
             </div>
+          ) : activeView === 'org-settings' ? (
+            <OrganizationSettings onBack={() => setActiveView('chat')} userId={user?.id} />
           ) : (
             <>
               {messages.length === 0 && !streamingMessage ? (
@@ -3912,5 +3930,6 @@ export default function App() {
         }}
       />
     </div>
-  );
+  </OrganizationProvider>
+);
 }

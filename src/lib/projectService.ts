@@ -15,7 +15,14 @@ export const projectService = {
   /**
    * Create a new project
    */
-  async createProject(userId: string, title: string, description?: string, icon?: string, color?: string): Promise<Project> {
+  async createProject(
+    userId: string, 
+    title: string, 
+    description?: string, 
+    icon?: string, 
+    color?: string,
+    organizationId?: string | null
+  ): Promise<Project> {
     const { data, error } = await supabase
       .from('projects')
       .insert({
@@ -24,6 +31,7 @@ export const projectService = {
         description: description || null,
         icon: icon || 'Folder',
         color: color || 'zinc',
+        organization_id: organizationId || null,
         updated_at: new Date().toISOString()
       })
       .select('*')

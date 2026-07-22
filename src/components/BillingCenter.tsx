@@ -21,7 +21,9 @@ import {
   ArrowUpRight,
   CheckCircle2,
   Trash2,
-  Play
+  Play,
+  Edit2,
+  Mail
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { clsx, type ClassValue } from 'clsx';
@@ -79,6 +81,32 @@ export const BillingCenter: React.FC<BillingCenterProps> = ({
   // Detailed usage state
   const [detailedUsage, setDetailedUsage] = useState<any | null>(null);
   const [isLoadingUsage, setIsLoadingUsage] = useState(true);
+
+  // Billing email edit state
+  const [isEditingBillingEmail, setIsEditingBillingEmail] = useState(false);
+  const [billingEmailInput, setBillingEmailInput] = useState(profile?.billing_email || profile?.email || '');
+  const [isSavingBillingEmail, setIsSavingBillingEmail] = useState(false);
+
+  useEffect(() => {
+    setBillingEmailInput(profile?.billing_email || profile?.email || '');
+  }, [profile?.billing_email, profile?.email]);
+
+  const handleSaveBillingEmail = async () => {
+    if (!billingEmailInput || !billingEmailInput.includes('@')) {
+      toast.error('Please enter a valid billing email address');
+      return;
+    }
+    setIsSavingBillingEmail(true);
+    try {
+      await onUpdateProfile({ billing_email: billingEmailInput.trim() });
+      toast.success('Billing email updated successfully');
+      setIsEditingBillingEmail(false);
+    } catch (err: any) {
+      toast.error('Failed to update billing email: ' + (err.message || 'Unknown error'));
+    } finally {
+      setIsSavingBillingEmail(false);
+    }
+  };
 
   const getLocalRegion = (): 'nigeria' | 'international' => {
     try {
@@ -361,24 +389,53 @@ export const BillingCenter: React.FC<BillingCenterProps> = ({
       <hr className="border-zinc-150 dark:border-zinc-800/80" />
 
       {/* Billing Information Row */}
-      <div className="flex items-center justify-between py-2">
-        <div className="space-y-2 flex-1 mr-4">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 py-2">
+        <div className="space-y-2 flex-1">
           <div className="text-base font-bold text-zinc-900 dark:text-zinc-100">Billing information</div>
-          <div className="space-y-0.5">
+          <div className="space-y-1">
             <div className="text-[10px] uppercase font-bold text-zinc-400 dark:text-zinc-500 tracking-wider">Billing email</div>
-            <div className="text-xs font-semibold text-zinc-600 dark:text-zinc-400 select-all">
-              {profile?.email || 'No billing email provided'}
-            </div>
+            {isEditingBillingEmail ? (
+              <div className="flex items-center gap-2 max-w-md pt-1">
+                <input 
+                  type="email"
+                  value={billingEmailInput}
+                  onChange={(e) => setBillingEmailInput(e.target.value)}
+                  placeholder="billing@example.com"
+                  className="flex-1 bg-white dark:bg-zinc-950 border border-zinc-300 dark:border-zinc-700 rounded-xl px-3 py-1.5 text-xs font-medium focus:ring-2 focus:ring-emerald-500 outline-none dark:text-white"
+                />
+                <button
+                  onClick={handleSaveBillingEmail}
+                  disabled={isSavingBillingEmail}
+                  className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-xs font-bold transition-all cursor-pointer shadow-xs disabled:opacity-50"
+                >
+                  {isSavingBillingEmail ? 'Saving...' : 'Save'}
+                </button>
+                <button
+                  onClick={() => {
+                    setBillingEmailInput(profile?.billing_email || profile?.email || '');
+                    setIsEditingBillingEmail(false);
+                  }}
+                  className="px-3 py-1.5 bg-zinc-200 dark:bg-zinc-800 hover:bg-zinc-300 dark:hover:bg-zinc-700 text-zinc-700 dark:text-zinc-300 rounded-lg text-xs font-bold transition-all cursor-pointer"
+                >
+                  Cancel
+                </button>
+              </div>
+            ) : (
+              <div className="flex items-center gap-3">
+                <span className="text-xs font-semibold text-zinc-700 dark:text-zinc-300 select-all">
+                  {profile?.billing_email || profile?.email || 'No billing email provided'}
+                </span>
+                <button
+                  onClick={() => setIsEditingBillingEmail(true)}
+                  className="text-[11px] font-bold text-emerald-600 dark:text-emerald-400 hover:underline flex items-center gap-1 cursor-pointer"
+                >
+                  <Edit2 className="w-3 h-3" />
+                  <span>Edit</span>
+                </button>
+              </div>
+            )}
           </div>
         </div>
-        <button
-          onClick={handleSync}
-          disabled={isRefreshing}
-          className="px-4 py-2 border border-zinc-200 dark:border-zinc-800 hover:bg-zinc-50 dark:hover:bg-zinc-900 text-zinc-900 dark:text-zinc-100 rounded-full text-xs font-bold transition-all flex items-center gap-1.5 whitespace-nowrap active:scale-95 disabled:opacity-50"
-        >
-          <RefreshCw className={cn("w-3 h-3", isRefreshing && "animate-spin")} />
-          Sync
-        </button>
       </div>
 
       <hr className="border-zinc-150 dark:border-zinc-800/80" />

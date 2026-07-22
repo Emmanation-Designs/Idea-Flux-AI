@@ -25,6 +25,8 @@ import {
   syncSubscription, 
   validateSubscription 
 } from "./src/subscription/subscriptionLifecycleService.js";
+import { selectRelevantMemories, formatMemoriesForSystemPrompt } from "./src/lib/memoryService.js";
+import { getServerUserMemories, saveServerUserMemory, extractAndStoreMemoriesFromChat } from "./src/lib/serverMemoryService.js";
 
 console.log("Server script starting...");
 dotenv.config();
@@ -106,7 +108,7 @@ async function authenticateUser(req: express.Request) {
 }
 
 const app = express();
-const PORT = Number(process.env.PORT) || 3000;
+const PORT = 3000;
 
 app.use(express.json({
   verify: (req: any, res, buf) => {
@@ -132,6 +134,174 @@ app.get("/api/health", (req, res) => {
     hasTavilyApiKey: !!process.env.TAVILY_API_KEY,
     environment: process.env.VERCEL ? 'vercel' : 'local'
   });
+});
+
+// Organization API: Get Invitation Details by Token
+app.get("/api/organizations/invitations/:token", async (req, res) => {
+  try {
+    const { token } = req.params;
+    const supabase = getSupabaseAdminClient();
+    
+    const { data: invitation, error } = await supabase
+      .from("organization_invitations")
+      .select("*, organizations(name, logo_url)")
+      .eq("token", token)
+      .maybeSingle();
+
+    if (error || !invitation) {
+      return res.status(404).json({ error: "Invitation not found or expired" });
+    }
+
+    res.json({
+      invitation: {
+        ...invitation,
+        organization_name: invitation.organizations?.name || "Organization",
+        organization_logo: invitation.organizations?.logo_url || null,
+      }
+    });
+  } catch (error: any) {
+    console.error("[Org Invitation GET API Error]:", error);
+    res.status(500).json({ error: "Failed to fetch invitation details" });
+  }
+});
+
+// Organization API: Accept Invitation
+app.post("/api/organizations/invitations/accept", async (req, res) => {
+  try {
+    const user = await authenticateUser(req);
+    const { token } = req.body;
+    if (!token) {
+      return res.status(400).json({ error: "Invitation token required" });
+    }
+
+    const supabase = getSupabaseAdminClient();
+
+    // Fetch invitation
+    const { data: invite, error } = await supabase
+      .from("organization_invitations")
+      .select("*")
+      .eq("token", token)
+      .maybeSingle();
+
+    if (error || !invite) {
+      return res.status(404).json({ error: "Invalid or expired invitation token" });
+    }
+
+    if (new Date(invite.expires_at) < new Date()) {
+      return res.status(400).json({ error: "This invitation has expired" });
+    }
+
+    // Add user as member
+    const { error: memError } = await supabase
+      .from("organization_members")
+      .upsert({
+        organization_id: invite.organization_id,
+        user_id: user.id,
+        role: invite.role,
+        status: "active",
+        joined_at: new Date().toISOString()
+      }, { onConflict: "organization_id,user_id" });
+
+    if (memError) {
+      console.error("[Org Accept Invite Error]:", memError);
+      return res.status(500).json({ error: "Failed to join organization" });
+    }
+
+    // Delete invitation
+    await supabase.from("organization_invitations").delete().eq("id", invite.id);
+
+    res.json({ status: "success", organization_id: invite.organization_id });
+  } catch (error: any) {
+    console.error("[Org Accept Invite API Error]:", error);
+    res.status(error.status || 500).json({ error: error.error || error.message || "Failed to accept invitation" });
+  }
+});
+
+// Organization API: Fast Search across Members, Projects, Invitations
+app.get("/api/organizations/:id/search", async (req, res) => {
+  try {
+    const user = await authenticateUser(req);
+    const orgId = req.params.id;
+    const query = String(req.query.q || "").toLowerCase().trim();
+
+    const supabase = getSupabaseAdminClient();
+
+    // Verify user is member of org
+    const { data: membership } = await supabase
+      .from("organization_members")
+      .select("role")
+      .eq("organization_id", orgId)
+      .eq("user_id", user.id)
+      .maybeSingle();
+
+    if (!membership) {
+      return res.status(403).json({ error: "Access denied to organization" });
+    }
+
+    // Perform queries
+    const [{ data: members }, { data: projects }, { data: invitations }] = await Promise.all([
+      supabase.from("organization_members").select("*, profiles(name, email, avatar_url)").eq("organization_id", orgId),
+      supabase.from("projects").select("*").eq("organization_id", orgId),
+      supabase.from("organization_invitations").select("*").eq("organization_id", orgId)
+    ]);
+
+    const filteredMembers = (members || []).filter((m: any) => 
+      !query || 
+      m.profiles?.name?.toLowerCase().includes(query) ||
+      m.profiles?.email?.toLowerCase().includes(query) ||
+      m.role.toLowerCase().includes(query)
+    );
+
+    const filteredProjects = (projects || []).filter((p: any) =>
+      !query || p.title.toLowerCase().includes(query) || (p.description && p.description.toLowerCase().includes(query))
+    );
+
+    const filteredInvitations = (invitations || []).filter((i: any) =>
+      !query || i.email.toLowerCase().includes(query) || i.role.toLowerCase().includes(query)
+    );
+
+    res.json({
+      members: filteredMembers,
+      projects: filteredProjects,
+      invitations: filteredInvitations
+    });
+  } catch (error: any) {
+    console.error("[Org Search API Error]:", error);
+    res.status(error.status || 500).json({ error: error.error || error.message || "Search failed" });
+  }
+});
+
+// Organization API: Admin Ready Usage & Stats Endpoint
+app.get("/api/organizations/:id/stats", async (req, res) => {
+  try {
+    const user = await authenticateUser(req);
+    const orgId = req.params.id;
+    const supabase = getSupabaseAdminClient();
+
+    const [
+      { count: memberCount },
+      { count: projectCount },
+      { count: conversationCount },
+      { count: fileCount }
+    ] = await Promise.all([
+      supabase.from("organization_members").select("*", { count: "exact", head: true }).eq("organization_id", orgId),
+      supabase.from("projects").select("*", { count: "exact", head: true }).eq("organization_id", orgId),
+      supabase.from("conversations").select("*", { count: "exact", head: true }).eq("organization_id", orgId),
+      supabase.from("organization_files").select("*", { count: "exact", head: true }).eq("organization_id", orgId)
+    ]);
+
+    res.json({
+      organization_id: orgId,
+      memberCount: memberCount || 0,
+      projectCount: projectCount || 0,
+      conversationCount: conversationCount || 0,
+      fileCount: fileCount || 0,
+      storageUsedBytes: (fileCount || 0) * 1024 * 512,
+    });
+  } catch (error: any) {
+    console.error("[Org Stats API Error]:", error);
+    res.status(error.status || 500).json({ error: "Failed to fetch organization stats" });
+  }
 });
 
 // Explicit subscription synchronization endpoint
@@ -226,6 +396,116 @@ app.post("/api/subscription/resume", async (req, res) => {
 });
 
 
+
+// --- Persistent Memory System Endpoints ---
+
+// GET /api/memory - List all memories for user
+app.get("/api/memory", async (req, res) => {
+  try {
+    const user = await authenticateUser(req);
+    const supabase = getSupabaseAdminClient();
+    const includeArchived = req.query.includeArchived === 'true';
+    const memories = await getServerUserMemories(supabase, user.id, includeArchived);
+    res.json({ memories });
+  } catch (error: any) {
+    console.error("[Memory API Error]:", error);
+    res.status(error.status || 500).json({ error: error.error || error.message || "Failed to fetch memories" });
+  }
+});
+
+// POST /api/memory - Create memory
+app.post("/api/memory", async (req, res) => {
+  try {
+    const user = await authenticateUser(req);
+    const supabase = getSupabaseAdminClient();
+    const { memory, category, importance, sourceConversationId } = req.body;
+    const result = await saveServerUserMemory(supabase, user.id, memory, category, importance, sourceConversationId);
+    if (!result.success) {
+      return res.status(400).json({ error: result.error || "Failed to save memory" });
+    }
+    res.json({ status: "success", memory: result.memory, isDuplicate: result.isDuplicate });
+  } catch (error: any) {
+    console.error("[Memory API Error]:", error);
+    res.status(error.status || 500).json({ error: error.error || error.message || "Failed to create memory" });
+  }
+});
+
+// PUT /api/memory/:id - Update memory
+app.put("/api/memory/:id", async (req, res) => {
+  try {
+    const user = await authenticateUser(req);
+    const supabase = getSupabaseAdminClient();
+    const memoryId = req.params.id;
+    const updates = req.body;
+
+    const { data, error } = await supabase
+      .from("user_memories")
+      .update({ ...updates, updated_at: new Date().toISOString() })
+      .eq("id", memoryId)
+      .eq("user_id", user.id)
+      .select()
+      .single();
+
+    if (error) throw error;
+    res.json({ status: "success", memory: data });
+  } catch (error: any) {
+    console.error("[Memory API Error]:", error);
+    res.status(error.status || 500).json({ error: error.error || error.message || "Failed to update memory" });
+  }
+});
+
+// DELETE /api/memory/all - Delete all memories
+app.delete("/api/memory/all", async (req, res) => {
+  try {
+    const user = await authenticateUser(req);
+    const supabase = getSupabaseAdminClient();
+    const { error } = await supabase
+      .from("user_memories")
+      .delete()
+      .eq("user_id", user.id);
+
+    if (error) throw error;
+    res.json({ status: "success" });
+  } catch (error: any) {
+    console.error("[Memory API Error]:", error);
+    res.status(error.status || 500).json({ error: error.error || error.message || "Failed to clear memories" });
+  }
+});
+
+// DELETE /api/memory/:id - Delete single memory
+app.delete("/api/memory/:id", async (req, res) => {
+  try {
+    const user = await authenticateUser(req);
+    const supabase = getSupabaseAdminClient();
+    const memoryId = req.params.id;
+
+    const { error } = await supabase
+      .from("user_memories")
+      .delete()
+      .eq("id", memoryId)
+      .eq("user_id", user.id);
+
+    if (error) throw error;
+    res.json({ status: "success" });
+  } catch (error: any) {
+    console.error("[Memory API Error]:", error);
+    res.status(error.status || 500).json({ error: error.error || error.message || "Failed to delete memory" });
+  }
+});
+
+// POST /api/memory/extract - Post-chat memory extraction
+app.post("/api/memory/extract", async (req, res) => {
+  try {
+    const user = await authenticateUser(req);
+    const supabase = getSupabaseAdminClient();
+    const { prompt, response, conversationId } = req.body;
+    const result = await extractAndStoreMemoriesFromChat(supabase, user.id, prompt, response, conversationId);
+    res.json({ status: "success", extractedCount: result.extractedCount, memories: result.memories });
+  } catch (error: any) {
+    console.error("[Memory Extract API Error]:", error);
+    res.status(error.status || 500).json({ error: error.error || error.message || "Failed to extract memories" });
+  }
+});
 
 // API routes
 app.all("/api/proxy-image", async (req, res) => {
@@ -1742,6 +2022,21 @@ Because you are integrated with our custom client-side file compiler, YOU ABSOLU
 - At the absolute end of your response, write exactly one code block with label \`\`\`json-file-data ... \`\`\` containing the full correct JSON configuration (with fileType, fileName, title, sections, etc.) as detailed in rule #7 above. Our compiler will automatically detect this and render actual [Download PDF], [Download Word], and [Download Excel] buttons so the user can download the real physical file!`;
     }
 
+    // --- Persistent Memory Context Retrieval ---
+    if (userId) {
+      try {
+        const userMemories = await getServerUserMemories(supabase, userId, false);
+        if (userMemories && userMemories.length > 0) {
+          const relevantMemories = selectRelevantMemories(userMemories, lastMessageContent, 7);
+          if (relevantMemories.length > 0) {
+            systemInstruction += formatMemoriesForSystemPrompt(relevantMemories);
+          }
+        }
+      } catch (memErr) {
+        console.warn("[Memory Injection Warning] Failed to inject memories:", memErr);
+      }
+    }
+
     const openAiMessages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [
       { role: "system", content: systemInstruction },
       ...messages.map((m: any) => {
@@ -1865,6 +2160,17 @@ Because you are integrated with our custom frontend compiler, YOU CAN and MUST c
             req.body.is_temporary
           ).catch(console.error);
         }
+
+        // --- Asynchronous Memory Extraction ---
+        if (userId && lastMessageContent) {
+          extractAndStoreMemoriesFromChat(supabase, userId, lastMessageContent, accumulatedText, req.body.conversationId)
+            .then(res => {
+              if (res.extractedCount > 0) {
+                console.log(`[Memory Extraction] Stored ${res.extractedCount} new user memories for user:${userId}`);
+              }
+            })
+            .catch(err => console.warn("[Memory Extraction Error]:", err));
+        }
       },
       abortController,
       jobId
@@ -1896,31 +2202,29 @@ Because you are integrated with our custom frontend compiler, YOU CAN and MUST c
 export default app;
 
 // Server startup logic
-const hasBuiltDist = fs.existsSync(path.join(process.cwd(), "dist", "index.html"));
+async function startServer() {
+  if (!process.env.VERCEL) {
+    if (process.env.NODE_ENV !== "production") {
+      console.log(`[Server] Starting Vite DevServer middleware on port ${PORT}...`);
+      const { createServer: createViteServer } = await import("vite");
+      const vite = await createViteServer({
+        server: { middlewareMode: true },
+        appType: "spa",
+      });
+      app.use(vite.middlewares);
+    } else {
+      const distPath = path.join(process.cwd(), "dist");
+      console.log(`[Server] Serving static files from ${distPath}...`);
+      app.use(express.static(distPath));
+      app.get("*", (req, res) => {
+        res.sendFile(path.join(distPath, "index.html"));
+      });
+    }
 
-if ((process.env.NODE_ENV !== "production" || !hasBuiltDist) && !process.env.VERCEL) {
-  const startServer = async () => {
-    console.log(`[Server] Starting Vite DevServer middleware. (hasBuiltDist: ${hasBuiltDist}, NODE_ENV: ${process.env.NODE_ENV})`);
-    const { createServer: createViteServer } = await import("vite");
-    const vite = await createViteServer({
-      server: { middlewareMode: true },
-      appType: "spa",
-    });
-    app.use(vite.middlewares);
     app.listen(PORT, "0.0.0.0", () => {
-      console.log(`Development server running on http://localhost:${PORT}`);
+      console.log(`Server running on http://0.0.0.0:${PORT}`);
     });
-  };
-  startServer();
-} else if (!process.env.VERCEL) {
-  // Static serving for production (non-Vercel)
-  const distPath = path.join(process.cwd(), "dist");
-  console.log(`[Server] Starting static file server at: ${distPath}`);
-  app.use(express.static(distPath));
-  app.get("*", (req, res) => {
-    res.sendFile(path.join(distPath, "index.html"));
-  });
-  app.listen(PORT, "0.0.0.0", () => {
-    console.log(`Production server running on port ${PORT}`);
-  });
+  }
 }
+
+startServer();
