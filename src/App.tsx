@@ -39,7 +39,10 @@ import {
   RotateCcw,
   ArrowUp,
   HelpCircle,
-  Folder
+  Folder,
+  FolderKanban,
+  FolderPlus,
+  Search
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Toaster, toast } from 'sonner';
@@ -431,7 +434,8 @@ export default function App() {
   }, [expandedImage]);
 
   const [streamingMessage, setStreamingMessage] = useState('');
-  const [activeView, setActiveView] = useState<'chat' | 'history' | 'apps' | 'images' | 'settings' | 'tts' | 'project'>('chat');
+  const [activeView, setActiveView] = useState<'chat' | 'history' | 'apps' | 'images' | 'settings' | 'tts' | 'project' | 'projects'>('chat');
+  const [projectSearchQuery, setProjectSearchQuery] = useState('');
   const [projects, setProjects] = useState<Project[]>([]);
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
   const [isLoadingProjects, setIsLoadingProjects] = useState(false);
@@ -524,7 +528,18 @@ export default function App() {
     }
   }, [currentConversation?.id]);
 
-  // Sync state with URL path and handle browser Back/Forward navigation
+  // Refs to track state during location changes and avoid stale closure / dependency loops
+  const conversationsRef = useRef(conversations);
+  useEffect(() => {
+    conversationsRef.current = conversations;
+  }, [conversations]);
+
+  const currentConversationRef = useRef(currentConversation);
+  useEffect(() => {
+    currentConversationRef.current = currentConversation;
+  }, [currentConversation]);
+
+  // Handle browser Back/Forward navigation (popstate event only)
   useEffect(() => {
     const handleLocationChange = () => {
       const path = window.location.pathname;
@@ -539,111 +554,101 @@ export default function App() {
       } else {
         setShowLegal(null);
         
-        // Deep-link pattern 1: /project/{projectId}/c/{conversationId}
+        const projListMatch = path.match(/^\/(projects|workspaces)/i);
         const projWithConvMatch = path.match(/^\/project\/([a-f0-9-]+)\/c\/([a-f0-9-]+)/i);
-        // Deep-link pattern 2: /project/{projectId}
         const projOnlyMatch = path.match(/^\/project\/([a-f0-9-]+)/i);
-        // Deep-link pattern 3: /c/{conversationId}
         const cMatch = path.match(/^\/c\/([a-f0-9-]+)/i);
 
-        if (projWithConvMatch) {
+        const currentConvs = conversationsRef.current;
+        const curConv = currentConversationRef.current;
+
+        if (projListMatch) {
+          setActiveView('projects');
+        } else if (projWithConvMatch) {
           const projId = projWithConvMatch[1];
           const urlId = projWithConvMatch[2];
           setSelectedProjectId(projId);
-          const found = conversations.find(c => c.id === urlId);
-          if (found) {
-            if (currentConversation?.id !== urlId) {
-              setCurrentConversation(found);
-              const uniqueMessages = (found.messages || []).reduce((acc: any[], curr: any, idx: number) => {
-                const messageId = curr.id || `msg-legacy-${idx}`;
-                if (!acc.find(m => m.id === messageId)) {
-                  acc.push({ ...curr, id: messageId });
-                }
-                return acc;
-              }, []);
-              setMessages(uniqueMessages);
-              setStreamingMessage('');
-              setActiveView('chat');
-            }
-          } else {
-            setCurrentConversation(null);
-            setMessages([]);
-            setActiveView('project');
+          const found = currentConvs.find(c => c.id === urlId);
+          if (found && curConv?.id !== urlId) {
+            setCurrentConversation(found);
+            const uniqueMessages = (found.messages || []).reduce((acc: any[], curr: any, idx: number) => {
+              const messageId = curr.id || `msg-legacy-${idx}`;
+              if (!acc.find(m => m.id === messageId)) {
+                acc.push({ ...curr, id: messageId });
+              }
+              return acc;
+            }, []);
+            setMessages(uniqueMessages);
+            setStreamingMessage('');
+            setActiveView('chat');
           }
         } else if (projOnlyMatch) {
           const projId = projOnlyMatch[1];
           setSelectedProjectId(projId);
-          setCurrentConversation(null);
-          setMessages([]);
+          if (curConv !== null) {
+            setCurrentConversation(null);
+            setMessages([]);
+          }
           setActiveView('project');
         } else if (cMatch) {
           const urlId = cMatch[1];
-          const found = conversations.find(c => c.id === urlId);
-          if (found) {
-            if (currentConversation?.id !== urlId) {
-              setCurrentConversation(found);
-              if (found.project_id) {
-                setSelectedProjectId(found.project_id);
+          const found = currentConvs.find(c => c.id === urlId);
+          if (found && curConv?.id !== urlId) {
+            setCurrentConversation(found);
+            setSelectedProjectId(found.project_id || null);
+            const uniqueMessages = (found.messages || []).reduce((acc: any[], curr: any, idx: number) => {
+              const messageId = curr.id || `msg-legacy-${idx}`;
+              if (!acc.find(m => m.id === messageId)) {
+                acc.push({ ...curr, id: messageId });
               }
-              const uniqueMessages = (found.messages || []).reduce((acc: any[], curr: any, idx: number) => {
-                const messageId = curr.id || `msg-legacy-${idx}`;
-                if (!acc.find(m => m.id === messageId)) {
-                  acc.push({ ...curr, id: messageId });
-                }
-                return acc;
-              }, []);
-              setMessages(uniqueMessages);
-              setStreamingMessage('');
-              setActiveView('chat');
-            }
-          } else {
-            if (currentConversation !== null) {
-              setCurrentConversation(null);
-              setMessages([]);
-            }
+              return acc;
+            }, []);
+            setMessages(uniqueMessages);
+            setStreamingMessage('');
+            setActiveView('chat');
           }
         } else if (path === '/' || path === '') {
-          if (currentConversation !== null) {
+          if (curConv !== null) {
             setCurrentConversation(null);
             setMessages([]);
+            setSelectedProjectId(null);
+            setActiveView('chat');
           }
         }
       }
     };
 
-    handleLocationChange();
-
     window.addEventListener('popstate', handleLocationChange);
     return () => window.removeEventListener('popstate', handleLocationChange);
-  }, [conversations, currentConversation?.id]);
+  }, []);
 
   // Synchronize browser URL with the active view and conversation ID
   useEffect(() => {
-    if (activeView === 'project' && selectedProjectId) {
-      const expectedPath = `/project/${selectedProjectId}`;
-      if (window.location.pathname !== expectedPath) {
-        window.history.pushState({}, document.title, expectedPath);
-      }
+    let expectedPath = '/';
+    if (showLegal) {
+      expectedPath = `/${showLegal}`;
+    } else if (activeView === 'projects') {
+      expectedPath = '/projects';
+    } else if (activeView === 'project' && selectedProjectId && !currentConversation?.id) {
+      expectedPath = `/project/${selectedProjectId}`;
     } else if (currentConversation?.id) {
-      const expectedPath = selectedProjectId 
+      expectedPath = selectedProjectId 
         ? `/project/${selectedProjectId}/c/${currentConversation.id}` 
         : `/c/${currentConversation.id}`;
-      if (window.location.pathname !== expectedPath) {
-        if (window.location.pathname === '/' || window.location.pathname === '') {
-          window.history.replaceState({ conversationId: currentConversation.id }, document.title, expectedPath);
-        } else {
-          window.history.pushState({ conversationId: currentConversation.id }, document.title, expectedPath);
-        }
-      }
+    } else if (activeView === 'chat' && !selectedProjectId) {
+      expectedPath = '/';
     } else {
-      if (activeView === 'chat' && window.location.pathname !== '/' && !selectedProjectId) {
-        const path = window.location.pathname;
-        if (path !== '/privacy' && path !== '/terms' && path !== '/about') {
-          window.history.pushState({}, document.title, '/');
-        }
+      return;
+    }
+
+    if (window.location.pathname !== expectedPath) {
+      if (window.location.pathname === '/' || window.location.pathname === '') {
+        window.history.replaceState({ conversationId: currentConversation?.id || null }, document.title, expectedPath);
+      } else {
+        window.history.pushState({ conversationId: currentConversation?.id || null }, document.title, expectedPath);
       }
     }
-  }, [currentConversation?.id, activeView, selectedProjectId]);
+  }, [currentConversation?.id, activeView, selectedProjectId, showLegal]);
 
   // Tab-Focus recovery & Background Sync:
   // If the user leaves the tab and comes back, and we were generating an image or loading,
@@ -1096,8 +1101,10 @@ export default function App() {
 
       // Startup URL parsing and restoration / redirect
       const path = window.location.pathname;
+      const projWithConvMatch = path.match(/^\/project\/([a-f0-9-]+)\/c\/([a-f0-9-]+)/i);
       const cMatch = path.match(/^\/c\/([a-f0-9-]+)/i);
-      const urlId = cMatch ? cMatch[1] : null;
+      const urlId = projWithConvMatch ? projWithConvMatch[2] : (cMatch ? cMatch[1] : null);
+      const projId = projWithConvMatch ? projWithConvMatch[1] : null;
 
       if (urlId) {
         // Deep link: load conversation from URL
@@ -1105,7 +1112,7 @@ export default function App() {
         if (urlConv) {
           console.log("[Chat] Auto-restoring conversation from deep link:", urlId);
           setCurrentConversation(urlConv);
-          setSelectedProjectId(urlConv.project_id || null);
+          setSelectedProjectId(projId || urlConv.project_id || null);
           
           const uniqueMessages = (urlConv.messages || []).reduce((acc: any[], curr: any, idx: number) => {
             const messageId = curr.id || `msg-legacy-${idx}`;
@@ -2358,8 +2365,13 @@ export default function App() {
         selectedProjectId={selectedProjectId}
         onSelectProject={(id) => {
           setSelectedProjectId(id);
-          setActiveView('project');
+          if (id) {
+            setActiveView('project');
+          } else {
+            setActiveView('chat');
+          }
         }}
+        onOpenProjects={() => setActiveView('projects')}
         onCreateProjectClick={() => {
           setShowCreateProjectModal(true);
         }}
@@ -2762,6 +2774,173 @@ export default function App() {
                           </div>
                         )}
                       </div>
+                    </div>
+                  );
+                })()}
+              </div>
+            </div>
+          ) : activeView === 'projects' ? (
+            <div className="flex-1 flex flex-col overflow-y-auto overscroll-y-contain animate-fade-in bg-white dark:bg-zinc-950">
+              <div className="max-w-5xl mx-auto w-full p-6 md:p-12 space-y-8 pb-32">
+                {/* Header Section */}
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-6 border-b border-zinc-200 dark:border-zinc-800 pb-8">
+                  <div className="flex items-center gap-3">
+                    <div className="w-12 h-12 rounded-2xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-600 dark:text-emerald-400 flex items-center justify-center font-bold shadow-sm shrink-0">
+                      <FolderKanban className="w-6 h-6" />
+                    </div>
+                    <div>
+                      <h1 className="text-2xl md:text-3xl font-black text-zinc-900 dark:text-white tracking-tight">Workspaces & Projects</h1>
+                      <p className="text-xs text-zinc-500 font-medium mt-0.5">Manage your AI workspace environments and organize custom chat sessions.</p>
+                    </div>
+                  </div>
+
+                  <button 
+                    onClick={() => setShowCreateProjectModal(true)}
+                    className="px-5 py-3 bg-emerald-600 hover:bg-emerald-500 text-white font-bold rounded-2xl text-xs uppercase tracking-wider transition-all shadow-md hover:shadow-emerald-500/20 flex items-center justify-center gap-2 cursor-pointer active:scale-95 shrink-0"
+                  >
+                    <FolderPlus className="w-4 h-4" />
+                    <span>Create Workspace</span>
+                  </button>
+                </div>
+
+                {/* Search & Stats Bar */}
+                <div className="flex items-center gap-3">
+                  <div className="relative flex-1">
+                    <Search className="w-4 h-4 absolute left-4 top-1/2 -translate-y-1/2 text-zinc-400" />
+                    <input
+                      type="text"
+                      value={projectSearchQuery}
+                      onChange={(e) => setProjectSearchQuery(e.target.value)}
+                      placeholder="Search workspaces by name or description..."
+                      className="w-full pl-11 pr-10 py-3 bg-zinc-50 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-2xl text-sm font-medium text-zinc-900 dark:text-zinc-100 placeholder-zinc-400 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 transition-all"
+                    />
+                    {projectSearchQuery && (
+                      <button 
+                        onClick={() => setProjectSearchQuery('')}
+                        className="absolute right-4 top-1/2 -translate-y-1/2 text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-200"
+                      >
+                        <X className="w-4 h-4" />
+                      </button>
+                    )}
+                  </div>
+                  <span className="text-xs font-mono text-zinc-500 px-3 py-3 bg-zinc-100 dark:bg-zinc-900 rounded-2xl border border-zinc-200 dark:border-zinc-800 shrink-0 font-bold">
+                    {projects.filter(p => p.title.toLowerCase().includes(projectSearchQuery.toLowerCase()) || (p.description || '').toLowerCase().includes(projectSearchQuery.toLowerCase())).length} {projects.filter(p => p.title.toLowerCase().includes(projectSearchQuery.toLowerCase()) || (p.description || '').toLowerCase().includes(projectSearchQuery.toLowerCase())).length === 1 ? 'workspace' : 'workspaces'}
+                  </span>
+                </div>
+
+                {/* Projects Cards Grid */}
+                {(() => {
+                  const filteredList = projects.filter(p => 
+                    p.title.toLowerCase().includes(projectSearchQuery.toLowerCase()) || 
+                    (p.description || '').toLowerCase().includes(projectSearchQuery.toLowerCase())
+                  );
+
+                  if (filteredList.length === 0) {
+                    return (
+                      <div className="text-center py-20 px-6 bg-zinc-50/50 dark:bg-zinc-900/20 border border-dashed border-zinc-200 dark:border-zinc-800 rounded-3xl space-y-4 max-w-md mx-auto my-8 animate-fade-in">
+                        <div className="w-16 h-16 rounded-2xl bg-zinc-100 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 text-zinc-400 flex items-center justify-center mx-auto">
+                          <FolderKanban className="w-8 h-8 opacity-40" />
+                        </div>
+                        <div className="space-y-1">
+                          <h3 className="text-base font-bold text-zinc-900 dark:text-zinc-100">
+                            {projectSearchQuery ? 'No matching workspaces' : 'No workspaces created yet'}
+                          </h3>
+                          <p className="text-xs text-zinc-500 leading-relaxed">
+                            {projectSearchQuery 
+                              ? 'Try searching with a different term or clear search filter.' 
+                              : 'Create a workspace project to group your conversations and customize environment context.'}
+                          </p>
+                        </div>
+                        {!projectSearchQuery && (
+                          <button
+                            onClick={() => setShowCreateProjectModal(true)}
+                            className="px-5 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white font-bold rounded-xl text-xs uppercase tracking-wider transition-all shadow-md hover:shadow-emerald-500/20 inline-flex items-center gap-2 cursor-pointer"
+                          >
+                            <FolderPlus className="w-4 h-4" />
+                            <span>Create First Workspace</span>
+                          </button>
+                        )}
+                      </div>
+                    );
+                  }
+
+                  return (
+                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
+                      {filteredList.map((proj) => {
+                        const projConvs = conversations.filter(c => c.project_id === proj.id);
+                        const isSelected = selectedProjectId === proj.id;
+                        
+                        return (
+                          <div
+                            key={`projects-screen-card-${proj.id}`}
+                            className={cn(
+                              "p-6 bg-white dark:bg-zinc-900 border rounded-3xl transition-all duration-200 flex flex-col justify-between group relative shadow-sm hover:shadow-xl",
+                              isSelected 
+                                ? "border-emerald-500/60 ring-2 ring-emerald-500/20" 
+                                : "border-zinc-200/80 dark:border-zinc-800/80 hover:border-zinc-300 dark:hover:border-zinc-700"
+                            )}
+                          >
+                            <div className="space-y-4">
+                              <div className="flex items-center justify-between">
+                                <div className="w-10 h-10 rounded-2xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-600 dark:text-emerald-400 flex items-center justify-center font-bold">
+                                  <Folder className="w-5 h-5" />
+                                </div>
+                                <span className="text-[10px] font-mono px-2.5 py-1 rounded-lg bg-zinc-100 dark:bg-zinc-800 text-zinc-500 dark:text-zinc-400 font-bold">
+                                  {projConvs.length} {projConvs.length === 1 ? 'chat' : 'chats'}
+                                </span>
+                              </div>
+
+                              <div>
+                                <h3 className="font-extrabold text-lg text-zinc-900 dark:text-white group-hover:text-emerald-600 dark:group-hover:text-emerald-400 transition-colors line-clamp-1">
+                                  {proj.title}
+                                </h3>
+                                <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-1 line-clamp-2 leading-relaxed min-h-[2.25rem]">
+                                  {proj.description || 'No description provided for this workspace.'}
+                                </p>
+                              </div>
+                            </div>
+
+                            <div className="pt-6 mt-4 border-t border-zinc-100 dark:border-zinc-800/80 space-y-3">
+                              <div className="flex items-center justify-between text-[10px] font-mono text-zinc-400">
+                                <span>UPDATED</span>
+                                <span>{proj.updated_at ? new Date(proj.updated_at).toLocaleDateString() : 'Recently'}</span>
+                              </div>
+
+                              <div className="flex items-center gap-2">
+                                <button
+                                  onClick={() => {
+                                    setSelectedProjectId(proj.id);
+                                    setActiveView('project');
+                                  }}
+                                  className="flex-1 py-2.5 bg-zinc-900 dark:bg-white text-white dark:text-zinc-900 hover:bg-zinc-800 dark:hover:bg-zinc-100 rounded-xl text-xs font-bold uppercase tracking-wider transition-all flex items-center justify-center gap-1.5 cursor-pointer shadow-sm"
+                                >
+                                  <span>Open Workspace</span>
+                                  <ChevronRight className="w-3.5 h-3.5" />
+                                </button>
+                                
+                                <button
+                                  onClick={() => {
+                                    setSelectedProjectId(proj.id);
+                                    setShowProjectSettingsModal(true);
+                                  }}
+                                  className="p-2.5 bg-zinc-100 dark:bg-zinc-800 hover:bg-zinc-200 dark:hover:bg-zinc-700 text-zinc-600 dark:text-zinc-300 rounded-xl transition-all cursor-pointer"
+                                  title="Workspace Settings"
+                                >
+                                  <SettingsIcon className="w-4 h-4" />
+                                </button>
+
+                                <button
+                                  onClick={() => handleDeleteProject(proj.id)}
+                                  className="p-2.5 bg-red-50 dark:bg-red-950/20 hover:bg-red-100 dark:hover:bg-red-950/40 text-red-500 rounded-xl transition-all cursor-pointer"
+                                  title="Delete Workspace"
+                                >
+                                  <Trash2 className="w-4 h-4" />
+                                </button>
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })}
                     </div>
                   );
                 })()}

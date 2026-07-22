@@ -13,7 +13,11 @@ import {
   Search,
   MoreVertical,
   Volume2,
-  Folder
+  Folder,
+  FolderPlus,
+  FolderKanban,
+  User,
+  ChevronRight
 } from 'lucide-react';
 import React, { useState } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
@@ -33,6 +37,7 @@ export const Sidebar = ({
   onOpenApps,
   onOpenImages,
   onOpenTTS,
+  onOpenProjects,
   onLogout,
   activeView,
   profile,
@@ -54,6 +59,7 @@ export const Sidebar = ({
   onOpenApps: () => void;
   onOpenImages: () => void;
   onOpenTTS: () => void;
+  onOpenProjects?: () => void;
   onLogout: () => void;
   activeView: string;
   profile: Profile | null;
@@ -182,61 +188,68 @@ export const Sidebar = ({
 
         {/* Workspaces & Projects Section */}
         <div className="pt-4 border-t border-zinc-200/50 dark:border-zinc-800/50 my-2">
-          <div className="px-4 mb-3 flex items-center justify-between text-[10px] font-black uppercase tracking-[0.2em] text-zinc-400 animate-fade-in">
+          <div className="px-4 mb-2 flex items-center justify-between text-[10px] font-black uppercase tracking-[0.2em] text-zinc-400 animate-fade-in">
             <div className="flex items-center gap-2">
-              <Folder className="w-3.5 h-3.5 text-zinc-400" />
+              <FolderKanban className="w-3.5 h-3.5 text-zinc-400" />
               <span>Workspaces</span>
             </div>
-            <button 
-              onClick={(e) => {
-                e.stopPropagation();
-                onCreateProjectClick?.();
-              }}
-              className="p-1 hover:bg-zinc-200 dark:hover:bg-zinc-800 rounded-md text-zinc-400 hover:text-zinc-900 dark:hover:text-white transition-colors cursor-pointer"
-              title="Create new project"
-            >
-              <Plus className="w-3.5 h-3.5" />
-            </button>
           </div>
           
           <div className="space-y-1">
-            {/* Personal Workspace Option */}
+            {/* 1. Create Workspace */}
             <button
-              onClick={() => handleAction(() => onSelectProject?.(null))}
+              onClick={() => handleAction(() => onCreateProjectClick?.())}
+              className="w-full text-left px-4 py-2 rounded-xl text-xs font-semibold text-zinc-600 dark:text-zinc-300 hover:bg-zinc-100/80 dark:hover:bg-zinc-900/80 transition-all flex items-center justify-between group/create cursor-pointer"
+            >
+              <div className="flex items-center gap-2.5 min-w-0">
+                <FolderPlus className="w-4 h-4 text-emerald-500 shrink-0 group-hover/create:scale-110 transition-transform" />
+                <span className="truncate">Create Workspace</span>
+              </div>
+              <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-md bg-emerald-500/10 text-emerald-600 dark:text-emerald-400">
+                + New
+              </span>
+            </button>
+
+            {/* 2. Projects (opens screen listing created projects) */}
+            <button
+              onClick={() => handleAction(() => onOpenProjects?.())}
               className={cn(
-                "w-full text-left px-4 py-2 rounded-xl text-xs transition-all flex items-center justify-between group/proj relative min-w-0 cursor-pointer font-bold uppercase tracking-wider",
-                selectedProjectId === null
-                  ? "bg-white dark:bg-zinc-900 text-emerald-600 dark:text-emerald-400 shadow-sm border border-zinc-200 dark:border-zinc-800"
-                  : "text-zinc-500 hover:bg-zinc-100/80 dark:hover:bg-zinc-900/80"
+                "w-full text-left px-4 py-2 rounded-xl text-xs font-semibold transition-all flex items-center justify-between group/projs cursor-pointer",
+                activeView === 'projects'
+                  ? "bg-white dark:bg-zinc-900 text-zinc-900 dark:text-white shadow-sm border border-zinc-200 dark:border-zinc-800 font-bold"
+                  : "text-zinc-600 dark:text-zinc-300 hover:bg-zinc-100/80 dark:hover:bg-zinc-900/80"
               )}
             >
               <div className="flex items-center gap-2.5 min-w-0">
-                <span className="text-sm shrink-0">🌐</span>
-                <span className="truncate">Personal Workspace</span>
+                <FolderKanban className="w-4 h-4 text-zinc-400 shrink-0 group-hover/projs:text-zinc-700 dark:group-hover/projs:text-zinc-200 transition-colors" />
+                <span className="truncate">Projects</span>
               </div>
+              <span className="text-[10px] font-mono px-1.5 py-0.5 rounded-md bg-zinc-100 dark:bg-zinc-900 text-zinc-400">
+                {projects.length}
+              </span>
             </button>
 
-            {/* User Projects */}
-            {projects.map((proj) => {
-              const isActive = selectedProjectId === proj.id;
-              return (
-                <button
-                  key={`sidebar-proj-${proj.id}`}
-                  onClick={() => handleAction(() => onSelectProject?.(proj.id))}
-                  className={cn(
-                    "w-full text-left px-4 py-2 rounded-xl text-xs transition-all flex items-center justify-between group/proj relative min-w-0 cursor-pointer font-medium",
-                    isActive
-                      ? "bg-white dark:bg-zinc-900 text-zinc-900 dark:text-white shadow-sm border border-zinc-200 dark:border-zinc-800 font-bold"
-                      : "text-zinc-500 hover:bg-zinc-100/80 dark:hover:bg-zinc-900/80"
-                  )}
-                >
-                  <div className="flex items-center gap-2.5 min-w-0">
-                    <span className="text-sm shrink-0">📁</span>
-                    <span className="truncate">{proj.title}</span>
+            {/* Active Workspace Banner if a specific project is selected */}
+            {selectedProjectId !== null && (
+              <div className="mt-2.5 mx-1 p-2.5 bg-emerald-500/10 border border-emerald-500/20 rounded-2xl flex items-center justify-between animate-fade-in">
+                <div className="flex items-center gap-2 min-w-0">
+                  <Folder className="w-4 h-4 text-emerald-500 shrink-0" />
+                  <div className="min-w-0">
+                    <p className="text-[9px] font-black uppercase tracking-wider text-emerald-600 dark:text-emerald-400">Active Workspace</p>
+                    <p className="text-xs font-bold text-zinc-900 dark:text-white truncate">
+                      {projects.find(p => p.id === selectedProjectId)?.title || 'Project'}
+                    </p>
                   </div>
+                </div>
+                <button
+                  onClick={() => handleAction(() => onSelectProject?.(null))}
+                  className="p-1 hover:bg-emerald-500/20 rounded-lg text-emerald-600 dark:text-emerald-400 transition-colors cursor-pointer"
+                  title="Switch to Personal Workspace"
+                >
+                  <CloseIcon className="w-3.5 h-3.5" />
                 </button>
-              );
-            })}
+              </div>
+            )}
           </div>
         </div>
 
