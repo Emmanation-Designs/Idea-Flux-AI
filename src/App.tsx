@@ -399,13 +399,15 @@ export default function App() {
       setSelectedModelId(def.id);
     }
   }, [profile?.plan, selectedModelId]);
-  const [showSettings, setShowSettings] = useState(false);
+  const [showSettings, setShowSettings] = useState<boolean | 'account' | 'personality' | 'billing' | 'display' | 'legal' | 'support'>(false);
   const [showContextForm, setShowContextForm] = useState<ConversationType | null>(null);
   const [showLegal, setShowLegal] = useState<'about' | 'privacy' | 'terms' | null>(null);
 
-
-
-  const handleShowLegal = (type: 'about' | 'privacy' | 'terms') => {
+  const handleShowLegal = (type: 'about' | 'privacy' | 'terms' | 'support') => {
+    if (type === 'support') {
+      setShowSettings('support');
+      return;
+    }
     setShowLegal(type);
     window.history.pushState({}, document.title, `/${type}`);
   };
@@ -2344,12 +2346,19 @@ export default function App() {
         isOpen={isSidebarOpen}
         setIsOpen={setIsSidebarOpen}
         onNewChat={handleNewChat}
-        onOpenSettings={() => {
-          setShowSettings(true);
+        onOpenSettings={(section) => {
+          if (section && ['account', 'personality', 'billing', 'display', 'legal', 'support'].includes(section)) {
+            setShowSettings(section as any);
+          } else {
+            setShowSettings(true);
+          }
         }}
+        onOpenSupport={() => setShowSettings('support')}
         onOpenApps={() => setActiveView('apps')}
         onOpenImages={() => setActiveView('images')}
         onOpenTTS={() => setActiveView('tts')}
+        onOpenUpgrade={() => setShowUpgradeModal(true)}
+        onShowLegal={handleShowLegal}
         activeView={activeView}
         onLogout={handleLogout}
         profile={profile}
@@ -3408,6 +3417,7 @@ export default function App() {
         {showSettings && (
           <Settings 
             profile={profile} 
+            initialSection={typeof showSettings === 'string' ? (showSettings as 'account' | 'personality' | 'billing' | 'display' | 'legal') : undefined}
             onClose={() => setShowSettings(false)} 
             onUpdateProfile={updateProfile}
             onShowLegal={handleShowLegal}

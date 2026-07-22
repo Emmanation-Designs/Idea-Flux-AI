@@ -26,7 +26,13 @@ import {
   Camera,
   Trash2,
   Edit2,
-  ChevronLeft
+  ChevronLeft,
+  LifeBuoy,
+  Copy,
+  Mail,
+  Send,
+  CheckCircle2,
+  Shield
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { clsx, type ClassValue } from 'clsx';
@@ -42,7 +48,7 @@ function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }
 
-type SettingsSection = 'account' | 'personality' | 'billing' | 'display' | 'legal';
+type SettingsSection = 'account' | 'personality' | 'billing' | 'display' | 'legal' | 'support';
 
 const PERSONALITIES: { id: PersonalityType; name: string; icon: any; description: string; color: string }[] = [
   { 
@@ -91,9 +97,10 @@ const PERSONALITIES: { id: PersonalityType; name: string; icon: any; description
 
 export const Settings = (props: { 
   profile: Profile | null; 
+  initialSection?: SettingsSection;
   onClose: () => void;
   onUpdateProfile: (updates: Partial<Profile>) => Promise<any>;
-  onShowLegal: (type: 'about' | 'privacy' | 'terms') => void;
+  onShowLegal: (type: 'about' | 'privacy' | 'terms' | 'support') => void;
   onUpgrade: () => void;
   isDarkMode: boolean;
   onToggleTheme: () => void;
@@ -102,6 +109,7 @@ export const Settings = (props: {
 }) => {
   const {
     profile,
+    initialSection,
     onClose,
     onUpdateProfile,
     onShowLegal,
@@ -111,7 +119,9 @@ export const Settings = (props: {
     imageSpeed = 'quality',
     onToggleImageSpeed
   } = props;
-  const [activeSection, setActiveSection] = React.useState<SettingsSection | null>(typeof window !== 'undefined' && window.innerWidth > 768 ? 'account' : null);
+  const [activeSection, setActiveSection] = React.useState<SettingsSection | null>(
+    initialSection || (typeof window !== 'undefined' && window.innerWidth > 768 ? 'account' : null)
+  );
   const [isEditingName, setIsEditingName] = React.useState(false);
   const [newName, setNewName] = React.useState(profile?.name || profile?.email?.split('@')[0] || '');
   const [isUploading, setIsUploading] = React.useState(false);
@@ -314,10 +324,11 @@ export const Settings = (props: {
           </div>
           
           <nav className="flex-1 space-y-1">
-            <SidebarItem id="account" icon={User} label="Account" />
+            <SidebarItem id="account" icon={User} label="Profile" />
             <SidebarItem id="personality" icon={Sparkles} label="Personality" />
             <SidebarItem id="billing" icon={CreditCard} label="Billing" />
             <SidebarItem id="display" icon={Layout} label="Display" />
+            <SidebarItem id="support" icon={LifeBuoy} label="Support" />
             <SidebarItem id="legal" icon={ShieldCheck} label="Legal" />
           </nav>
 
@@ -368,87 +379,161 @@ export const Settings = (props: {
             <div className="max-w-2xl mx-auto p-6 md:p-10 space-y-10">
               {activeSection === 'account' && (
                 <div className="space-y-8 pb-12">
-                  <div className="border-b border-zinc-100 dark:border-zinc-900 pb-5">
-                    <h3 className="text-base font-bold text-zinc-900 dark:text-zinc-100">Account Credentials</h3>
-                    <p className="text-xs text-zinc-500 mt-1">Update your workspace profile information and visibility settings.</p>
+                  <div className="border-b border-zinc-100 dark:border-zinc-900 pb-4">
+                    <h3 className="text-lg font-bold text-zinc-900 dark:text-zinc-100">Profile & Personal Identity</h3>
+                    <p className="text-xs text-zinc-500 mt-1">Manage your public persona, avatar, and workspace credentials.</p>
                   </div>
 
-                  {/* Profile Identification */}
-                  <div className="flex flex-col sm:flex-row items-center gap-6 p-6 bg-zinc-50/50 dark:bg-zinc-900/10 rounded-2xl border border-zinc-100 dark:border-zinc-900/50">
-                    <div className="relative shrink-0">
-                      <div className="w-20 h-20 rounded-full bg-zinc-100 dark:bg-zinc-900 flex items-center justify-center text-xl font-bold border border-zinc-200 dark:border-zinc-805 overflow-hidden relative z-10">
-                        {localAvatarPreview || profile?.avatar_url ? (
-                          <img src={localAvatarPreview || profile?.avatar_url || ''} alt="Profile" className="w-full h-full object-cover" />
-                        ) : (
-                          <span className="text-zinc-400 dark:text-zinc-600 font-semibold select-none">
-                            {profile?.name?.charAt(0).toUpperCase() || profile?.email?.charAt(0).toUpperCase()}
-                          </span>
-                        )}
-                        {isUploading && (
-                          <div className="absolute inset-0 bg-black/60 flex items-center justify-center z-20 backdrop-blur-sm">
-                            <div className="w-4 h-4 border-2 border-emerald-500 border-t-transparent rounded-full animate-spin" />
+                  {/* High-Craft Profile Hero Card */}
+                  <div className="relative overflow-hidden rounded-3xl border border-zinc-200/80 dark:border-zinc-800 bg-gradient-to-br from-zinc-50 via-emerald-500/5 to-zinc-100/50 dark:from-zinc-900/60 dark:via-emerald-500/5 dark:to-zinc-950 p-6 sm:p-8 shadow-xs">
+                    <div className="flex flex-col sm:flex-row items-center sm:items-start gap-6">
+                      {/* Avatar with Camera Trigger */}
+                      <div className="relative shrink-0">
+                        <div className="w-24 h-24 rounded-full bg-white dark:bg-zinc-900 p-1 shadow-md border border-emerald-500/30">
+                          <div className="w-full h-full rounded-full bg-emerald-500 text-white font-extrabold text-2xl flex items-center justify-center overflow-hidden relative">
+                            {localAvatarPreview || profile?.avatar_url ? (
+                              <img src={localAvatarPreview || profile?.avatar_url || ''} alt="Profile" className="w-full h-full object-cover" />
+                            ) : (
+                              <span>
+                                {profile?.name?.charAt(0).toUpperCase() || profile?.email?.charAt(0).toUpperCase() || 'U'}
+                              </span>
+                            )}
+                            {isUploading && (
+                              <div className="absolute inset-0 bg-black/60 flex items-center justify-center backdrop-blur-sm">
+                                <div className="w-5 h-5 border-2 border-emerald-400 border-t-transparent rounded-full animate-spin" />
+                              </div>
+                            )}
                           </div>
-                        )}
+                        </div>
+                        <button 
+                          onClick={() => fileInputRef.current?.click()}
+                          className="absolute bottom-0 right-0 w-8 h-8 rounded-full bg-emerald-600 hover:bg-emerald-500 text-white border-2 border-white dark:border-zinc-900 flex items-center justify-center shadow-lg transition-all active:scale-95 cursor-pointer"
+                          title="Upload Avatar"
+                        >
+                          <Camera className="w-4 h-4" />
+                        </button>
+                        <input 
+                          type="file" 
+                          ref={fileInputRef} 
+                          className="hidden" 
+                          accept="image/*" 
+                          onChange={handleFileChange}
+                        />
                       </div>
-                      <button 
-                        onClick={() => fileInputRef.current?.click()}
-                        className="absolute -bottom-1 -right-1 w-8 h-8 rounded-full bg-zinc-950 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 text-zinc-300 hover:text-white flex items-center justify-center shadow-lg hover:bg-emerald-500 dark:hover:bg-emerald-500 transition-all active:scale-95 z-20 cursor-pointer"
-                        title="Upload Avatar"
-                      >
-                        <Camera className="w-4 h-4" />
-                      </button>
-                      <input 
-                        type="file" 
-                        ref={fileInputRef} 
-                        className="hidden" 
-                        accept="image/*" 
-                        onChange={handleFileChange}
-                      />
-                    </div>
 
-                    <div className="text-center sm:text-left space-y-1">
-                      <h4 className="text-sm font-bold text-zinc-900 dark:text-zinc-100">
-                        {profile?.name || profile?.email?.split('@')[0]}
-                      </h4>
-                      <p className="text-xs text-zinc-400 font-medium">{profile?.email}</p>
-                      <div className="inline-flex items-center gap-1.5 px-2 py-0.5 mt-2 bg-emerald-500/10 border border-emerald-500/20 rounded-md text-[9px] font-black tracking-widest text-emerald-600 dark:text-emerald-400 uppercase select-none">
-                        {profile?.plan || 'Free'} Plan Active
+                      {/* User Info Header */}
+                      <div className="flex-1 text-center sm:text-left space-y-2">
+                        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                          <div>
+                            <div className="flex items-center justify-center sm:justify-start gap-2">
+                              <h4 className="text-xl font-extrabold text-zinc-900 dark:text-zinc-100">
+                                {profile?.name || profile?.email?.split('@')[0]}
+                              </h4>
+                              <span title="Verified Creator Account"><CheckCircle2 className="w-4 h-4 text-emerald-500" /></span>
+                            </div>
+                            <p className="text-xs text-zinc-500 dark:text-zinc-400 font-medium">{profile?.email}</p>
+                          </div>
+
+                          <button
+                            onClick={onUpgrade}
+                            className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs rounded-xl shadow-md transition-all shrink-0 cursor-pointer flex items-center gap-1.5 self-center sm:self-start"
+                          >
+                            <Sparkles className="w-3.5 h-3.5" />
+                            <span>Upgrade Plan</span>
+                          </button>
+                        </div>
+
+                        {/* Status Pills */}
+                        <div className="flex items-center justify-center sm:justify-start gap-2 pt-1 flex-wrap">
+                          <span className="px-2.5 py-1 bg-emerald-500/10 border border-emerald-500/20 text-emerald-600 dark:text-emerald-400 rounded-lg text-[10px] font-extrabold tracking-wider uppercase">
+                            {profile?.plan || 'Free'} Plan Active
+                          </span>
+                          <span className="px-2.5 py-1 bg-zinc-200/60 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-400 rounded-lg text-[10px] font-bold">
+                            Trelvix AI Creator
+                          </span>
+                        </div>
                       </div>
                     </div>
                   </div>
 
-                  {/* Settings fields */}
-                  <div className="space-y-4">
-                    <div className="space-y-1.5">
-                      <label className="text-[10px] text-zinc-400 dark:text-zinc-500 font-bold uppercase tracking-wider block pl-1">Display Name</label>
+                  {/* Settings Form Section */}
+                  <div className="space-y-6">
+                    {/* Display Name Input */}
+                    <div className="p-5 bg-white dark:bg-zinc-900/60 rounded-2xl border border-zinc-200/80 dark:border-zinc-800 space-y-3">
+                      <div className="flex items-center justify-between">
+                        <label className="text-xs font-bold text-zinc-800 dark:text-zinc-200 flex items-center gap-2">
+                          <User className="w-4 h-4 text-emerald-500" />
+                          <span>Display Name</span>
+                        </label>
+                        <span className="text-[10px] text-zinc-400 font-medium">Visible across your workspaces</span>
+                      </div>
+
                       <div className="relative flex items-center">
                         <input 
                           type="text"
                           value={newName}
                           onChange={e => setNewName(e.target.value)}
-                          className="w-full bg-white dark:bg-zinc-900/30 border border-zinc-200 dark:border-zinc-800 rounded-xl pl-4 pr-24 py-3 text-xs font-semibold focus:ring-1 focus:ring-emerald-500/30 focus:border-emerald-500/40 outline-none transition-all dark:text-white"
+                          className="w-full bg-zinc-50 dark:bg-zinc-950 border border-zinc-200 dark:border-zinc-800 rounded-xl pl-4 pr-24 py-3 text-xs font-semibold focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 outline-none transition-all dark:text-white"
                           placeholder="Your profile name"
                         />
                         {newName !== (profile?.name || profile?.email?.split('@')[0] || '') && (
                           <button
                             onClick={handleUpdateName}
-                            className="absolute right-2 px-3 py-1.5 bg-zinc-950 dark:bg-zinc-100 hover:bg-zinc-900 dark:hover:bg-white text-white dark:text-zinc-950 text-[10px] font-black uppercase tracking-widest rounded-lg transition-all cursor-pointer"
+                            className="absolute right-2 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold rounded-lg transition-all cursor-pointer shadow-xs"
                           >
-                            Update
+                            Save
                           </button>
                         )}
                       </div>
                     </div>
 
-                    <div className="space-y-1.5">
-                      <label className="text-[10px] text-zinc-400 dark:text-zinc-500 font-bold uppercase tracking-wider block pl-1">Email Address</label>
-                      <input 
-                        type="text"
-                        value={profile?.email || ''}
-                        disabled
-                        className="w-full bg-zinc-100/60 dark:bg-zinc-905/10 border border-zinc-200 dark:border-zinc-900 rounded-xl px-4 py-3 text-xs font-semibold text-zinc-400 dark:text-zinc-650 cursor-not-allowed outline-none select-all"
-                      />
-                      <p className="text-[9px] text-zinc-400 dark:text-zinc-600 pl-1">Primary email verification completed. Contact support to change address.</p>
+                    {/* Email Input */}
+                    <div className="p-5 bg-white dark:bg-zinc-900/60 rounded-2xl border border-zinc-200/80 dark:border-zinc-800 space-y-3">
+                      <div className="flex items-center justify-between">
+                        <label className="text-xs font-bold text-zinc-800 dark:text-zinc-200 flex items-center gap-2">
+                          <Mail className="w-4 h-4 text-emerald-500" />
+                          <span>Account Email Address</span>
+                        </label>
+                        <span className="text-[10px] text-emerald-600 dark:text-emerald-400 font-bold bg-emerald-500/10 px-2 py-0.5 rounded-full border border-emerald-500/20">
+                          Verified
+                        </span>
+                      </div>
+
+                      <div className="relative flex items-center">
+                        <input 
+                          type="text"
+                          value={profile?.email || ''}
+                          disabled
+                          className="w-full bg-zinc-100/80 dark:bg-zinc-950 border border-zinc-200 dark:border-zinc-800/80 rounded-xl px-4 py-3 text-xs font-semibold text-zinc-500 dark:text-zinc-400 cursor-not-allowed outline-none select-all"
+                        />
+                        <button
+                          onClick={() => {
+                            if (profile?.email) {
+                              navigator.clipboard.writeText(profile.email);
+                              toast.success('Email copied to clipboard');
+                            }
+                          }}
+                          className="absolute right-2 px-3 py-1.5 bg-zinc-200/70 dark:bg-zinc-800 hover:bg-zinc-300 dark:hover:bg-zinc-700 text-zinc-700 dark:text-zinc-200 text-xs font-bold rounded-lg transition-all cursor-pointer flex items-center gap-1"
+                        >
+                          <Copy className="w-3.5 h-3.5" />
+                          <span>Copy</span>
+                        </button>
+                      </div>
+                      <p className="text-[11px] text-zinc-400 dark:text-zinc-500">
+                        Primary email authentication address. Contact Support if you need to transfer email ownership.
+                      </p>
+                    </div>
+
+                    {/* Workspace Security Summary */}
+                    <div className="p-5 bg-white dark:bg-zinc-900/60 rounded-2xl border border-zinc-200/80 dark:border-zinc-800 flex items-center justify-between">
+                      <div className="space-y-0.5">
+                        <div className="text-xs font-bold text-zinc-800 dark:text-zinc-200 flex items-center gap-2">
+                          <Shield className="w-4 h-4 text-emerald-500" />
+                          <span>Account Security & Protection</span>
+                        </div>
+                        <p className="text-[11px] text-zinc-400">Encrypted session active</p>
+                      </div>
+                      <span className="text-xs font-bold text-emerald-600 dark:text-emerald-400">Protected</span>
                     </div>
                   </div>
 
@@ -459,7 +544,7 @@ export const Settings = (props: {
                       <p className="text-[10px] text-zinc-400 dark:text-zinc-500 leading-relaxed">Permanent, destructive, and non-reversible changes regarding your account data.</p>
                     </div>
 
-                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 p-4 rounded-xl border border-red-500/10 dark:border-red-500/5 bg-red-50/5 dark:bg-red-950/5">
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 p-4 rounded-2xl border border-red-500/20 bg-red-500/5">
                       <div className="text-left space-y-0.5">
                         <div className="text-xs font-bold text-zinc-800 dark:text-zinc-200">Deactivate Personal Workspace</div>
                         <p className="text-[10px] text-zinc-400 dark:text-zinc-500 max-w-sm leading-normal">Purges all conversation histories, generated visuals, and workspace custom parameters.</p>
@@ -476,9 +561,9 @@ export const Settings = (props: {
                             }, 1500);
                           }
                         }}
-                        className="px-4.5 py-2 bg-red-500/5 hover:bg-red-600 border border-red-500/20 hover:border-red-600/50 text-red-500 hover:text-white transition-all font-black uppercase text-[9px] tracking-wider rounded-lg shrink-0 cursor-pointer"
+                        className="px-4 py-2 bg-red-600 hover:bg-red-500 text-white font-bold text-xs rounded-xl transition-all shadow-md shrink-0 cursor-pointer"
                       >
-                        Terminate Account
+                        Deactivate Workspace
                       </button>
                     </div>
                   </div>
@@ -600,43 +685,161 @@ export const Settings = (props: {
                 </div>
               )}
 
+              {activeSection === 'support' && (
+                <div className="space-y-8 pb-8">
+                  <div className="space-y-1 border-b border-zinc-100 dark:border-zinc-900 pb-4">
+                    <h3 className="text-lg font-bold text-zinc-900 dark:text-zinc-100">Support & Contact Desk</h3>
+                    <p className="text-xs text-zinc-500">Get direct assistance from Ingenium Virtual Assistant Limited.</p>
+                  </div>
+
+                  {/* Official Contact Info Card */}
+                  <div className="p-6 rounded-2xl bg-gradient-to-br from-emerald-500/10 via-zinc-50 to-white dark:from-emerald-500/10 dark:via-zinc-900 dark:to-zinc-950 border border-emerald-500/20 space-y-4">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-3">
+                        <div className="w-10 h-10 rounded-xl bg-emerald-500 text-white flex items-center justify-center font-bold">
+                          <LifeBuoy className="w-5 h-5" />
+                        </div>
+                        <div>
+                          <h4 className="text-sm font-bold text-zinc-900 dark:text-white">Ingenium Support Team</h4>
+                          <p className="text-xs text-zinc-500 dark:text-zinc-400">Ingenium Virtual Assistant Limited</p>
+                        </div>
+                      </div>
+                      <span className="px-2.5 py-1 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 text-[10px] font-bold rounded-lg border border-emerald-500/20">
+                        24/7 Priority Desk
+                      </span>
+                    </div>
+
+                    <div className="flex items-center justify-between p-3.5 bg-white dark:bg-zinc-900/80 rounded-xl border border-zinc-200/80 dark:border-zinc-800">
+                      <div className="flex items-center gap-2.5">
+                        <Mail className="w-4 h-4 text-emerald-500 shrink-0" />
+                        <span className="text-xs font-mono text-zinc-800 dark:text-zinc-200">
+                          ingeniumvirtualassistant@zohomail.com
+                        </span>
+                      </div>
+                      <button
+                        onClick={() => {
+                          navigator.clipboard.writeText("ingeniumvirtualassistant@zohomail.com");
+                          toast.success("Support email copied!");
+                        }}
+                        className="px-3 py-1 bg-zinc-100 dark:bg-zinc-800 hover:bg-zinc-200 dark:hover:bg-zinc-700 text-xs font-bold text-zinc-700 dark:text-zinc-200 rounded-lg transition-all cursor-pointer flex items-center gap-1"
+                      >
+                        <Copy className="w-3 h-3" />
+                        <span>Copy</span>
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Direct Contact Form */}
+                  <div className="p-6 bg-white dark:bg-zinc-900/60 rounded-2xl border border-zinc-200/80 dark:border-zinc-800 space-y-4">
+                    <h4 className="text-sm font-bold text-zinc-900 dark:text-white flex items-center gap-2">
+                      <Send className="w-4 h-4 text-emerald-500" />
+                      <span>Send Direct Support Message</span>
+                    </h4>
+
+                    <form
+                      onSubmit={(e) => {
+                        e.preventDefault();
+                        const formData = new FormData(e.currentTarget);
+                        const name = formData.get('name') || profile?.name || 'User';
+                        const email = formData.get('email') || profile?.email || '';
+                        const msg = formData.get('message') || '';
+
+                        const subject = encodeURIComponent(`[Trelvix AI Support] Inquiry from ${name}`);
+                        const body = encodeURIComponent(
+                          `Hello Ingenium Support Team,\n\n${msg}\n\n---\nUser Name: ${name}\nUser Email: ${email}`
+                        );
+
+                        window.open(`mailto:ingeniumvirtualassistant@zohomail.com?subject=${subject}&body=${body}`, '_blank');
+                        toast.success("Opening email client to send message...");
+                      }}
+                      className="space-y-4"
+                    >
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                        <div className="space-y-1.5">
+                          <label className="text-[11px] font-bold text-zinc-700 dark:text-zinc-300">Your Name</label>
+                          <input
+                            type="text"
+                            name="name"
+                            defaultValue={profile?.name || ''}
+                            required
+                            placeholder="John Doe"
+                            className="w-full bg-zinc-50 dark:bg-zinc-950 border border-zinc-200 dark:border-zinc-800 rounded-xl px-3.5 py-2.5 text-xs font-semibold focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 outline-none dark:text-white"
+                          />
+                        </div>
+
+                        <div className="space-y-1.5">
+                          <label className="text-[11px] font-bold text-zinc-700 dark:text-zinc-300">Your Email</label>
+                          <input
+                            type="email"
+                            name="email"
+                            defaultValue={profile?.email || ''}
+                            required
+                            placeholder="user@example.com"
+                            className="w-full bg-zinc-50 dark:bg-zinc-950 border border-zinc-200 dark:border-zinc-800 rounded-xl px-3.5 py-2.5 text-xs font-semibold focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 outline-none dark:text-white"
+                          />
+                        </div>
+                      </div>
+
+                      <div className="space-y-1.5">
+                        <label className="text-[11px] font-bold text-zinc-700 dark:text-zinc-300">Message / Issue Details</label>
+                        <textarea
+                          name="message"
+                          rows={4}
+                          required
+                          placeholder="Describe how we can help you with your Trelvix AI workspace..."
+                          className="w-full bg-zinc-50 dark:bg-zinc-950 border border-zinc-200 dark:border-zinc-800 rounded-xl p-3 text-xs font-semibold focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 outline-none dark:text-white resize-none"
+                        />
+                      </div>
+
+                      <button
+                        type="submit"
+                        className="w-full py-3 bg-emerald-600 hover:bg-emerald-500 active:scale-[0.99] text-white font-bold text-xs rounded-xl transition-all shadow-md cursor-pointer flex items-center justify-center gap-2"
+                      >
+                        <Send className="w-4 h-4" />
+                        <span>Compose Email to Support</span>
+                      </button>
+                    </form>
+                  </div>
+                </div>
+              )}
+
               {activeSection === 'legal' && (
                 <div className="space-y-8">
                   <div className="space-y-2">
-                    <h3 className="text-lg font-bold">Legal & Support</h3>
-                    <p className="text-sm text-zinc-500">Review our terms, privacy policies, and about information.</p>
+                    <h3 className="text-lg font-bold text-zinc-900 dark:text-zinc-100">Legal Policies</h3>
+                    <p className="text-xs text-zinc-500">Review terms of service, privacy policy, and about documentation.</p>
                   </div>
 
-                  <div className="grid gap-2">
+                  <div className="grid gap-2.5">
                     {[
-                      { type: 'about' as const, label: 'About Trelvix AI', icon: Info },
-                      { type: 'privacy' as const, label: 'Privacy Policy', icon: ShieldCheck },
-                      { type: 'terms' as const, label: 'Terms of Service', icon: FileText }
+                      { type: 'about' as const, label: 'About Trelvix AI & Ingenium', desc: 'Company vision and creator tools ecosystem.', icon: Info },
+                      { type: 'privacy' as const, label: 'Privacy Policy', desc: 'Data protection and storage transparency.', icon: ShieldCheck },
+                      { type: 'terms' as const, label: 'Terms of Service', desc: 'Acceptable use guidelines and service terms.', icon: FileText }
                     ].map((doc) => (
                       <button 
                         key={doc.type}
                         onClick={() => onShowLegal(doc.type)} 
-                        className="w-full p-4 rounded-xl border border-zinc-100 dark:border-zinc-900 flex items-center justify-between group hover:bg-zinc-50 dark:hover:bg-zinc-900 transition-colors"
+                        className="w-full p-4 rounded-2xl border border-zinc-200/80 dark:border-zinc-800 bg-white dark:bg-zinc-900 flex items-center justify-between group hover:border-emerald-500/50 transition-all text-left cursor-pointer shadow-xs"
                       >
-                        <div className="flex items-center gap-3">
-                          <doc.icon className="w-4 h-4 text-zinc-400" />
-                          <span className="text-sm font-medium">{doc.label}</span>
+                        <div className="flex items-center gap-3.5">
+                          <div className="w-10 h-10 rounded-xl bg-zinc-100 dark:bg-zinc-800 flex items-center justify-center shrink-0">
+                            <doc.icon className="w-5 h-5 text-emerald-500" />
+                          </div>
+                          <div>
+                            <span className="text-xs font-bold text-zinc-900 dark:text-white block">{doc.label}</span>
+                            <span className="text-[11px] text-zinc-500 dark:text-zinc-400 font-medium">{doc.desc}</span>
+                          </div>
                         </div>
-                        <ChevronRight className="w-4 h-4 text-zinc-300 group-hover:text-zinc-600 dark:group-hover:text-zinc-400 transition-all" />
+                        <ChevronRight className="w-4 h-4 text-zinc-400 group-hover:text-emerald-500 group-hover:translate-x-0.5 transition-all" />
                       </button>
                     ))}
                   </div>
 
-                  <div className="pt-10 flex flex-col items-center gap-4 text-center">
-                    <div className="w-12 h-12 rounded-2xl bg-zinc-100 dark:bg-zinc-900 flex items-center justify-center">
-                      <HelpCircle className="w-6 h-6 text-zinc-400" />
-                    </div>
-                    <div>
-                      <div className="text-xs font-bold">Need help?</div>
-                      <p className="text-[11px] text-zinc-500 mt-1 max-w-[200px]">
-                        Contact our support team for specialized assistance.
-                      </p>
-                    </div>
+                  <div className="p-4 rounded-xl bg-zinc-100 dark:bg-zinc-900 text-center space-y-1 border border-zinc-200 dark:border-zinc-800">
+                    <p className="text-xs font-bold text-zinc-700 dark:text-zinc-300">
+                      Trelvix AI &copy; {new Date().getFullYear()} Ingenium Virtual Assistant Limited
+                    </p>
+                    <p className="text-[11px] text-zinc-500">All rights reserved worldwide.</p>
                   </div>
                 </div>
               )}

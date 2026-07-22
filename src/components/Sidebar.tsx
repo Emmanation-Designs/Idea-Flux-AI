@@ -17,9 +17,13 @@ import {
   FolderPlus,
   FolderKanban,
   User,
-  ChevronRight
+  ChevronRight,
+  Sparkles,
+  Sliders,
+  LifeBuoy,
+  ShieldCheck
 } from 'lucide-react';
-import React, { useState } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
@@ -39,6 +43,9 @@ export const Sidebar = ({
   onOpenTTS,
   onOpenProjects,
   onLogout,
+  onOpenUpgrade,
+  onShowLegal,
+  onOpenSupport,
   activeView,
   profile,
   conversations = [],
@@ -55,12 +62,15 @@ export const Sidebar = ({
   isOpen: boolean; 
   setIsOpen: (open: boolean) => void;
   onNewChat: () => void;
-  onOpenSettings: () => void;
+  onOpenSettings: (section?: string) => void;
   onOpenApps: () => void;
   onOpenImages: () => void;
   onOpenTTS: () => void;
   onOpenProjects?: () => void;
   onLogout: () => void;
+  onOpenUpgrade?: () => void;
+  onShowLegal?: (type: 'about' | 'privacy' | 'terms' | 'support') => void;
+  onOpenSupport?: () => void;
   activeView: string;
   profile: Profile | null;
   conversations?: any[];
@@ -76,6 +86,18 @@ export const Sidebar = ({
 }) => {
   const [searchQuery, setSearchQuery] = useState('');
   const [revealedActionsId, setRevealedActionsId] = useState<string | null>(null);
+  const [isUserMenuOpen, setIsUserMenuOpen] = useState(false);
+  const menuRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (menuRef.current && !menuRef.current.contains(event.target as Node)) {
+        setIsUserMenuOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
 
   const handleAction = (callback: () => void) => {
     callback();
@@ -83,6 +105,16 @@ export const Sidebar = ({
       setIsOpen(false);
     }
   };
+
+  const userName = profile?.name || profile?.email?.split('@')[0] || 'Emmanuel Nwaije';
+  const userInitials = userName
+    .split(' ')
+    .filter(Boolean)
+    .map(n => n[0])
+    .join('')
+    .substring(0, 2)
+    .toUpperCase() || 'EN';
+  const userPlan = profile?.plan ? (profile.plan.charAt(0).toUpperCase() + profile.plan.slice(1)) : 'Free';
 
   const contextConversations = conversations.filter(conv => {
     if (selectedProjectId) {
@@ -170,19 +202,6 @@ export const Sidebar = ({
           >
             <LayoutGrid className="w-4 h-4" />
             Apps
-          </button>
-
-          <button 
-            onClick={() => handleAction(onOpenSettings)}
-            className={cn(
-              "w-full flex items-center gap-3 px-4 py-2.5 text-sm font-medium rounded-xl transition-all",
-              activeView === 'settings' 
-                ? "bg-zinc-200 dark:bg-zinc-800 text-zinc-900 dark:text-zinc-100 shadow-sm" 
-                : "text-zinc-500 hover:bg-zinc-100 dark:hover:bg-zinc-900"
-            )}
-          >
-            <SettingsIcon className="w-4 h-4" />
-            Settings
           </button>
         </div>
 
@@ -370,36 +389,169 @@ export const Sidebar = ({
         </div>
       </div>
 
-      <div className="p-4 border-t border-zinc-200 dark:border-zinc-800 bg-white/50 dark:bg-zinc-950 px-2 space-y-1">
-        <button 
-          onClick={() => handleAction(onOpenSettings)}
-          className="w-full flex items-center gap-3 p-3 rounded-2xl hover:bg-zinc-100 dark:hover:bg-zinc-900 transition-all text-left outline-none"
-        >
-          <div className="w-10 h-10 rounded-xl bg-zinc-100 dark:bg-zinc-900 flex items-center justify-center border border-zinc-200 dark:border-zinc-800 overflow-hidden shrink-0">
-            {profile?.avatar_url ? (
-              <img src={profile.avatar_url} alt="Profile" className="w-full h-full object-cover" />
-            ) : (
-              <LogOut className="w-4 h-4 text-zinc-400 rotate-180" />
-            )}
-          </div>
-          <div className="flex-1 min-w-0">
-            <p className="text-xs font-black text-zinc-900 dark:text-zinc-100 truncate uppercase tracking-widest">
-              {profile?.name || profile?.email?.split('@')[0] || 'User'}
-            </p>
-            <p className="text-[10px] text-zinc-400 font-bold uppercase tracking-widest truncate">
-              {profile?.plan || 'Free'} Plan
-            </p>
-          </div>
-          <SettingsIcon className="w-4 h-4 text-zinc-300" />
-        </button>
+      <div className="p-3 border-t border-zinc-200/80 dark:border-zinc-800/80 bg-zinc-100/50 dark:bg-zinc-950 relative" ref={menuRef}>
+        {/* Profile Popover Menu */}
+        <AnimatePresence>
+          {isUserMenuOpen && (
+            <motion.div
+              initial={{ opacity: 0, y: 10, scale: 0.96 }}
+              animate={{ opacity: 1, y: 0, scale: 1 }}
+              exit={{ opacity: 0, y: 10, scale: 0.96 }}
+              transition={{ duration: 0.15, ease: "easeOut" }}
+              className="absolute bottom-full mb-2.5 left-2 right-2 bg-white dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 border border-zinc-200 dark:border-zinc-800/90 rounded-2xl p-2 shadow-2xl z-50 overflow-hidden font-sans"
+            >
+              {/* Header item */}
+              <button
+                onClick={() => {
+                  setIsUserMenuOpen(false);
+                  handleAction(() => onOpenSettings('account'));
+                }}
+                className="w-full flex items-center justify-between p-2.5 rounded-xl hover:bg-zinc-100 dark:hover:bg-zinc-800/80 transition-colors text-left group/usr cursor-pointer"
+              >
+                <div className="flex items-center gap-3 min-w-0">
+                  <div className="w-8 h-8 rounded-full bg-emerald-500 text-white font-extrabold text-xs flex items-center justify-center shrink-0 shadow-xs overflow-hidden">
+                    {profile?.avatar_url ? (
+                      <img src={profile.avatar_url} alt="User" className="w-full h-full object-cover" />
+                    ) : (
+                      userInitials
+                    )}
+                  </div>
+                  <div className="min-w-0">
+                    <p className="text-sm font-bold text-zinc-900 dark:text-white truncate leading-tight">{userName}</p>
+                    <p className="text-xs text-zinc-500 dark:text-zinc-400 font-medium truncate">{userPlan} Plan</p>
+                  </div>
+                </div>
+                <ChevronRight className="w-4 h-4 text-zinc-400 dark:text-zinc-500 group-hover/usr:text-zinc-700 dark:group-hover/usr:text-zinc-300 group-hover/usr:translate-x-0.5 transition-all shrink-0" />
+              </button>
 
-        <button 
-          onClick={onLogout}
-          className="w-full flex items-center gap-3 px-4 py-2 text-[10px] font-black uppercase tracking-widest text-zinc-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-950/20 rounded-xl transition-colors"
+              <div className="my-1 border-t border-zinc-100 dark:border-zinc-800/80" />
+
+              {/* Upgrade plan */}
+              <button
+                onClick={() => {
+                  setIsUserMenuOpen(false);
+                  handleAction(() => onOpenUpgrade ? onOpenUpgrade() : onOpenSettings('billing'));
+                }}
+                className="w-full flex items-center gap-3 px-3 py-2 text-xs font-semibold text-zinc-800 dark:text-zinc-200 hover:bg-zinc-100 dark:hover:bg-zinc-800/80 rounded-xl transition-colors text-left cursor-pointer"
+              >
+                <Sparkles className="w-4 h-4 text-emerald-500 shrink-0" />
+                <span>Upgrade plan</span>
+              </button>
+
+              {/* Personalization */}
+              <button
+                onClick={() => {
+                  setIsUserMenuOpen(false);
+                  handleAction(() => onOpenSettings('personality'));
+                }}
+                className="w-full flex items-center gap-3 px-3 py-2 text-xs font-semibold text-zinc-800 dark:text-zinc-200 hover:bg-zinc-100 dark:hover:bg-zinc-800/80 rounded-xl transition-colors text-left cursor-pointer"
+              >
+                <Sliders className="w-4 h-4 text-zinc-400 shrink-0" />
+                <span>Personalization</span>
+              </button>
+
+              {/* Profile */}
+              <button
+                onClick={() => {
+                  setIsUserMenuOpen(false);
+                  handleAction(() => onOpenSettings('account'));
+                }}
+                className="w-full flex items-center gap-3 px-3 py-2 text-xs font-semibold text-zinc-800 dark:text-zinc-200 hover:bg-zinc-100 dark:hover:bg-zinc-800/80 rounded-xl transition-colors text-left cursor-pointer"
+              >
+                <User className="w-4 h-4 text-zinc-400 shrink-0" />
+                <span>Profile</span>
+              </button>
+
+              {/* Settings */}
+              <button
+                onClick={() => {
+                  setIsUserMenuOpen(false);
+                  handleAction(() => onOpenSettings('display'));
+                }}
+                className="w-full flex items-center gap-3 px-3 py-2 text-xs font-semibold text-zinc-800 dark:text-zinc-200 hover:bg-zinc-100 dark:hover:bg-zinc-800/80 rounded-xl transition-colors text-left cursor-pointer"
+              >
+                <SettingsIcon className="w-4 h-4 text-zinc-400 shrink-0" />
+                <span>Settings</span>
+              </button>
+
+              <div className="my-1 border-t border-zinc-100 dark:border-zinc-800/80" />
+
+              {/* Support */}
+              <button
+                onClick={() => {
+                  setIsUserMenuOpen(false);
+                  handleAction(() => onOpenSupport ? onOpenSupport() : onOpenSettings('support'));
+                }}
+                className="w-full flex items-center justify-between px-3 py-2 text-xs font-semibold text-zinc-800 dark:text-zinc-200 hover:bg-zinc-100 dark:hover:bg-zinc-800/80 rounded-xl transition-colors text-left cursor-pointer group/sup"
+              >
+                <div className="flex items-center gap-3">
+                  <LifeBuoy className="w-4 h-4 text-emerald-500 shrink-0" />
+                  <span>Support & Contact</span>
+                </div>
+                <ChevronRight className="w-4 h-4 text-zinc-400 dark:text-zinc-500 group-hover/sup:text-zinc-700 dark:group-hover/sup:text-zinc-300 group-hover/sup:translate-x-0.5 transition-all" />
+              </button>
+
+              {/* Legal */}
+              <button
+                onClick={() => {
+                  setIsUserMenuOpen(false);
+                  handleAction(() => onShowLegal ? onShowLegal('about') : onOpenSettings('legal'));
+                }}
+                className="w-full flex items-center justify-between px-3 py-2 text-xs font-semibold text-zinc-800 dark:text-zinc-200 hover:bg-zinc-100 dark:hover:bg-zinc-800/80 rounded-xl transition-colors text-left cursor-pointer group/leg"
+              >
+                <div className="flex items-center gap-3">
+                  <ShieldCheck className="w-4 h-4 text-zinc-400 shrink-0" />
+                  <span>Legal Policies</span>
+                </div>
+                <ChevronRight className="w-4 h-4 text-zinc-400 dark:text-zinc-500 group-hover/leg:text-zinc-700 dark:group-hover/leg:text-zinc-300 group-hover/leg:translate-x-0.5 transition-all" />
+              </button>
+
+              <div className="my-1 border-t border-zinc-100 dark:border-zinc-800/80" />
+
+              {/* Log out */}
+              <button
+                onClick={() => {
+                  setIsUserMenuOpen(false);
+                  onLogout();
+                }}
+                className="w-full flex items-center gap-3 px-3 py-2 text-xs font-semibold text-zinc-700 dark:text-zinc-300 hover:bg-red-500/10 hover:text-red-600 dark:hover:text-red-400 rounded-xl transition-colors text-left cursor-pointer"
+              >
+                <LogOut className="w-4 h-4 text-zinc-400 shrink-0" />
+                <span>Log out</span>
+              </button>
+            </motion.div>
+          )}
+        </AnimatePresence>
+
+        {/* Trigger Button Card */}
+        <div
+          onClick={() => setIsUserMenuOpen(!isUserMenuOpen)}
+          className="w-full flex items-center justify-between p-2 rounded-2xl bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 transition-all cursor-pointer shadow-xs hover:shadow-md hover:border-zinc-300 dark:hover:border-zinc-700 select-none group"
         >
-          <LogOut className="w-3.5 h-3.5" />
-          Sign Out
-        </button>
+          <div className="flex items-center gap-2.5 min-w-0">
+            <div className="w-8 h-8 rounded-full bg-emerald-500 text-white font-extrabold text-xs flex items-center justify-center shrink-0 shadow-xs overflow-hidden">
+              {profile?.avatar_url ? (
+                <img src={profile.avatar_url} alt="Profile" className="w-full h-full object-cover" />
+              ) : (
+                userInitials
+              )}
+            </div>
+            <div className="min-w-0">
+              <p className="text-xs font-bold text-zinc-900 dark:text-white truncate max-w-[100px] sm:max-w-[120px]">{userName}</p>
+              <p className="text-[10px] text-zinc-500 dark:text-zinc-400 font-medium truncate">{userPlan} Plan</p>
+            </div>
+          </div>
+
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              onOpenUpgrade ? onOpenUpgrade() : onOpenSettings('billing');
+            }}
+            className="px-3 py-1 bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 text-zinc-900 dark:text-white font-bold text-[11px] rounded-full transition-all border border-zinc-200 dark:border-zinc-700/80 cursor-pointer shrink-0 ml-1 active:scale-95"
+          >
+            Upgrade
+          </button>
+        </div>
       </div>
     </motion.aside>
   );
