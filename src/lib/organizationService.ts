@@ -373,15 +373,34 @@ export const organizationService = {
       payload.created_by = currentUserId;
     }
 
-    const { data, error } = await supabase
+    let data: any = null;
+    let dbError: any = null;
+
+    const res1 = await supabase
       .from('organization_invitations')
       .insert(payload)
       .select('*')
       .maybeSingle();
 
-    if (error) {
-      console.error('[OrganizationService] Error inviting member:', error);
-      throw error;
+    if (!res1.error) {
+      data = res1.data;
+    } else {
+      // Retry without created_by in case created_by column or FK caused schema mismatch
+      const fallbackPayload = { ...payload };
+      delete fallbackPayload.created_by;
+
+      const res2 = await supabase
+        .from('organization_invitations')
+        .insert(fallbackPayload)
+        .select('*')
+        .maybeSingle();
+
+      if (!res2.error) {
+        data = res2.data;
+      } else {
+        console.warn('[OrganizationService] Notice inserting invitation to DB:', res2.error);
+        dbError = res2.error;
+      }
     }
 
     const invitation: OrganizationInvitation = data || {
@@ -392,7 +411,7 @@ export const organizationService = {
       token,
       expires_at: expiresAt,
       created_at: new Date().toISOString(),
-      created_by: inviterId
+      created_by: currentUserId || inviterId
     };
 
     // If existing user, we can also add pending member or auto-join
