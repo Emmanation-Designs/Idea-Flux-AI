@@ -320,6 +320,12 @@ export const organizationService = {
 
     const normalizedEmail = email.toLowerCase().trim();
 
+    let currentUserId = inviterId;
+    if (!currentUserId) {
+      const { data: authData } = await supabase.auth.getUser();
+      currentUserId = authData.user?.id || '';
+    }
+
     // Check if user with email exists in profiles/auth
     const { data: existingProfiles } = await supabase
       .from('profiles')
@@ -354,17 +360,22 @@ export const organizationService = {
       console.warn('[OrganizationService] Notice clearing prior invitation:', delErr);
     }
 
+    const payload: Record<string, any> = {
+      organization_id: orgId,
+      email: normalizedEmail,
+      role,
+      token,
+      expires_at: expiresAt,
+      created_at: new Date().toISOString()
+    };
+
+    if (currentUserId) {
+      payload.created_by = currentUserId;
+    }
+
     const { data, error } = await supabase
       .from('organization_invitations')
-      .insert({
-        organization_id: orgId,
-        email: normalizedEmail,
-        role,
-        token,
-        expires_at: expiresAt,
-        created_by: inviterId || null,
-        created_at: new Date().toISOString()
-      })
+      .insert(payload)
       .select('*')
       .maybeSingle();
 
