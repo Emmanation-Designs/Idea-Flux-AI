@@ -81,6 +81,8 @@ CREATE INDEX IF NOT EXISTS idx_org_files_org_id ON public.organization_files(org
 -- AUTOMATIC TRIGGER FOR UPDATED_AT
 -- ====================================================================
 
+DROP TRIGGER IF EXISTS set_updated_at_organizations ON public.organizations;
+DROP FUNCTION IF EXISTS update_updated_at_column CASCADE;
 CREATE OR REPLACE FUNCTION update_updated_at_column()
 RETURNS TRIGGER AS $$
 BEGIN
@@ -89,12 +91,13 @@ BEGIN
 END;
 $$ language 'plpgsql';
 
-DROP TRIGGER IF EXISTS set_updated_at_organizations ON public.organizations;
 CREATE TRIGGER set_updated_at_organizations
 BEFORE UPDATE ON public.organizations
 FOR EACH ROW EXECUTE PROCEDURE update_updated_at_column();
 
 -- Automatically add owner as active member when an organization is created
+DROP TRIGGER IF EXISTS trigger_add_owner_as_member ON public.organizations;
+DROP FUNCTION IF EXISTS add_owner_as_member CASCADE;
 CREATE OR REPLACE FUNCTION add_owner_as_member()
 RETURNS TRIGGER AS $$
 BEGIN
@@ -105,7 +108,6 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp;
 
-DROP TRIGGER IF EXISTS trigger_add_owner_as_member ON public.organizations;
 CREATE TRIGGER trigger_add_owner_as_member
 AFTER INSERT ON public.organizations
 FOR EACH ROW EXECUTE PROCEDURE add_owner_as_member();
@@ -114,6 +116,7 @@ FOR EACH ROW EXECUTE PROCEDURE add_owner_as_member();
 -- SECURITY DEFINER HELPER FUNCTIONS (PREVENTS RECURSIVE RLS)
 -- ====================================================================
 
+DROP FUNCTION IF EXISTS public.is_org_member CASCADE;
 CREATE OR REPLACE FUNCTION public.is_org_member(_user_id UUID, _org_id UUID)
 RETURNS BOOLEAN
 LANGUAGE plpgsql
@@ -126,10 +129,16 @@ BEGIN
     FROM public.organization_members
     WHERE organization_id = _org_id
       AND user_id = _user_id
+  ) OR EXISTS (
+    SELECT 1
+    FROM public.organizations
+    WHERE id = _org_id
+      AND owner_id = _user_id
   );
 END;
 $$;
 
+DROP FUNCTION IF EXISTS public.is_org_admin CASCADE;
 CREATE OR REPLACE FUNCTION public.is_org_admin(_user_id UUID, _org_id UUID)
 RETURNS BOOLEAN
 LANGUAGE plpgsql
@@ -143,10 +152,16 @@ BEGIN
     WHERE organization_id = _org_id
       AND user_id = _user_id
       AND role IN ('owner', 'admin')
+  ) OR EXISTS (
+    SELECT 1
+    FROM public.organizations
+    WHERE id = _org_id
+      AND owner_id = _user_id
   );
 END;
 $$;
 
+DROP FUNCTION IF EXISTS public.is_org_owner CASCADE;
 CREATE OR REPLACE FUNCTION public.is_org_owner(_user_id UUID, _org_id UUID)
 RETURNS BOOLEAN
 LANGUAGE plpgsql
@@ -169,6 +184,7 @@ BEGIN
 END;
 $$;
 
+DROP FUNCTION IF EXISTS public.get_user_organization_ids CASCADE;
 CREATE OR REPLACE FUNCTION public.get_user_organization_ids(_user_id UUID)
 RETURNS SETOF UUID
 LANGUAGE plpgsql
@@ -183,6 +199,7 @@ BEGIN
 END;
 $$;
 
+DROP FUNCTION IF EXISTS public.is_invitation_recipient CASCADE;
 CREATE OR REPLACE FUNCTION public.is_invitation_recipient(_email TEXT, _user_id UUID)
 RETURNS BOOLEAN
 LANGUAGE plpgsql
@@ -221,6 +238,7 @@ DROP POLICY IF EXISTS "Owners, Admins or self can remove members" ON public.orga
 
 DROP POLICY IF EXISTS "Members can view invitations of their organization" ON public.organization_invitations;
 DROP POLICY IF EXISTS "Owners and Admins can create invitations" ON public.organization_invitations;
+DROP POLICY IF EXISTS "Owners and Admins can update invitations" ON public.organization_invitations;
 DROP POLICY IF EXISTS "Owners and Admins can delete invitations" ON public.organization_invitations;
 
 DROP POLICY IF EXISTS "Members can view org files" ON public.organization_files;
@@ -288,6 +306,12 @@ USING (
 CREATE POLICY "Owners and Admins can create invitations"
 ON public.organization_invitations FOR INSERT
 WITH CHECK (
+  public.is_org_admin(auth.uid(), organization_id)
+);
+
+CREATE POLICY "Owners and Admins can update invitations"
+ON public.organization_invitations FOR UPDATE
+USING (
   public.is_org_admin(auth.uid(), organization_id)
 );
 

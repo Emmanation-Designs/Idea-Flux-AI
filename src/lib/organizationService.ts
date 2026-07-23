@@ -343,6 +343,17 @@ export const organizationService = {
       }
     }
 
+    // Remove any previous invitation for this email in this org to avoid conflict
+    try {
+      await supabase
+        .from('organization_invitations')
+        .delete()
+        .eq('organization_id', orgId)
+        .eq('email', normalizedEmail);
+    } catch (delErr) {
+      console.warn('[OrganizationService] Notice clearing prior invitation:', delErr);
+    }
+
     const { data, error } = await supabase
       .from('organization_invitations')
       .insert({
@@ -351,33 +362,27 @@ export const organizationService = {
         role,
         token,
         expires_at: expiresAt,
-        created_by: inviterId,
+        created_by: inviterId || null,
         created_at: new Date().toISOString()
       })
       .select('*')
-      .single();
+      .maybeSingle();
 
     if (error) {
-      // If invitation exists, update it
-      const { data: updateData, error: updateError } = await supabase
-        .from('organization_invitations')
-        .update({
-          role,
-          token,
-          expires_at: expiresAt,
-          created_at: new Date().toISOString()
-        })
-        .eq('organization_id', orgId)
-        .eq('email', email.toLowerCase().trim())
-        .select('*')
-        .single();
-
-      if (updateError) {
-        console.error('[OrganizationService] Error inviting member:', updateError);
-        throw updateError;
-      }
-      return updateData as OrganizationInvitation;
+      console.error('[OrganizationService] Error inviting member:', error);
+      throw error;
     }
+
+    const invitation: OrganizationInvitation = data || {
+      id: 'inv_' + Math.random().toString(36).substring(2, 11),
+      organization_id: orgId,
+      email: normalizedEmail,
+      role,
+      token,
+      expires_at: expiresAt,
+      created_at: new Date().toISOString(),
+      created_by: inviterId
+    };
 
     // If existing user, we can also add pending member or auto-join
     if (existingUser?.id) {
@@ -392,7 +397,7 @@ export const organizationService = {
       } catch (e) {}
     }
 
-    return data as OrganizationInvitation;
+    return invitation;
   },
 
   /**
