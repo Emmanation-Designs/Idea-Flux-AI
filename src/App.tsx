@@ -3574,6 +3574,15 @@ export default function App() {
             onClose={handleCloseLegal} 
           />
         )}
+        {inviteToken && (
+          <AcceptInvitationView
+            token={inviteToken}
+            onComplete={() => {
+              setInviteToken(null);
+              window.history.replaceState({}, document.title, window.location.pathname);
+            }}
+          />
+        )}
         <UpgradeModal 
           isOpen={showUpgradeModal} 
           onClose={() => setShowUpgradeModal(false)} 

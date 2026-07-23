@@ -19,7 +19,10 @@ import {
   Eye,
   Clock,
   Sparkles,
-  BarChart2
+  BarChart2,
+  Copy,
+  Link,
+  CheckCircle2
 } from 'lucide-react';
 import { useOrganization } from '../context/OrganizationContext';
 import { organizationService } from '../lib/organizationService';
@@ -64,6 +67,18 @@ export const OrganizationSettings: React.FC<OrganizationSettingsProps> = ({ onBa
   const [inviteEmail, setInviteEmail] = useState('');
   const [inviteRole, setInviteRole] = useState<OrganizationRole>('member');
   const [isInviting, setIsInviting] = useState(false);
+  const [createdInviteLink, setCreatedInviteLink] = useState<{ email: string; link: string } | null>(null);
+  const [copiedId, setCopiedId] = useState<string | null>(null);
+
+  const handleCopyLink = (token: string, inviteId?: string) => {
+    const link = `${window.location.origin}/?token=${token}`;
+    navigator.clipboard.writeText(link);
+    toast.success('Invitation link copied to clipboard!');
+    if (inviteId) {
+      setCopiedId(inviteId);
+      setTimeout(() => setCopiedId(null), 2500);
+    }
+  };
 
   // Stats State
   const [stats, setStats] = useState<OrganizationStats | null>(null);
@@ -125,8 +140,19 @@ export const OrganizationSettings: React.FC<OrganizationSettingsProps> = ({ onBa
 
     try {
       setIsInviting(true);
-      const success = await inviteMember(inviteEmail.trim().toLowerCase(), inviteRole);
-      if (success) {
+      const res = await inviteMember(inviteEmail.trim().toLowerCase(), inviteRole);
+      if (res) {
+        const invToken = typeof res === 'object' && res?.token ? res.token : '';
+        if (invToken) {
+          const generatedLink = `${window.location.origin}/?token=${invToken}`;
+          setCreatedInviteLink({ email: inviteEmail.trim(), link: generatedLink });
+          try {
+            await navigator.clipboard.writeText(generatedLink);
+            toast.success('Invite link created & copied to clipboard!');
+          } catch (e) {
+            toast.success('Invite link created!');
+          }
+        }
         setInviteEmail('');
       }
     } finally {
@@ -405,12 +431,37 @@ export const OrganizationSettings: React.FC<OrganizationSettingsProps> = ({ onBa
         {/* Tab 3: Invitations */}
         {activeTab === 'invitations' && (
           <div className="space-y-6">
+            {/* Newly Created Invite Link Alert Banner */}
+            {createdInviteLink && (
+              <div className="p-4 bg-emerald-500/10 border border-emerald-500/30 rounded-2xl flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs">
+                <div>
+                  <div className="flex items-center gap-1.5 font-bold text-emerald-700 dark:text-emerald-400">
+                    <CheckCircle2 className="w-4 h-4" />
+                    <span>Invitation Created for {createdInviteLink.email}</span>
+                  </div>
+                  <p className="text-zinc-600 dark:text-zinc-400 mt-0.5 font-mono text-[11px] truncate max-w-md">
+                    {createdInviteLink.link}
+                  </p>
+                </div>
+                <button
+                  onClick={() => {
+                    navigator.clipboard.writeText(createdInviteLink.link);
+                    toast.success('Invite link copied!');
+                  }}
+                  className="px-3.5 py-2 bg-emerald-600 hover:bg-emerald-500 text-white font-bold rounded-xl flex items-center justify-center gap-1.5 shrink-0 transition-colors shadow-sm"
+                >
+                  <Copy className="w-3.5 h-3.5" />
+                  <span>Copy Link</span>
+                </button>
+              </div>
+            )}
+
             {/* Send Invite Form */}
             {permissions.canInvite && (
               <div className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-2xl p-6 shadow-sm space-y-4">
                 <div>
                   <h2 className="text-base font-bold text-zinc-900 dark:text-zinc-100">Invite New Team Member</h2>
-                  <p className="text-xs text-zinc-500">Send an invitation email to add teammates to your workspace.</p>
+                  <p className="text-xs text-zinc-500">Create an invitation link to share with teammates or add them to your workspace.</p>
                 </div>
 
                 <form onSubmit={handleSendInvite} className="flex flex-col sm:flex-row items-center gap-3 max-w-2xl">
@@ -436,7 +487,7 @@ export const OrganizationSettings: React.FC<OrganizationSettingsProps> = ({ onBa
                     disabled={isInviting || !inviteEmail.trim()}
                     className="w-full sm:w-auto px-5 py-2.5 text-xs font-semibold text-white bg-zinc-900 dark:bg-zinc-100 dark:text-zinc-900 hover:bg-zinc-800 dark:hover:bg-zinc-200 rounded-xl shadow-sm transition-all whitespace-nowrap"
                   >
-                    {isInviting ? 'Sending...' : 'Send Invitation'}
+                    {isInviting ? 'Creating...' : 'Create Invitation'}
                   </button>
                 </form>
               </div>
@@ -464,16 +515,24 @@ export const OrganizationSettings: React.FC<OrganizationSettingsProps> = ({ onBa
                         </span>
                       </div>
 
-                      {permissions.canInvite && (
-                        <div className="flex items-center gap-2 shrink-0">
+                      <div className="flex items-center gap-2 shrink-0">
+                        <button
+                          onClick={() => handleCopyLink(invite.token, invite.id)}
+                          className="px-3 py-1.5 text-xs font-semibold bg-zinc-100 dark:bg-zinc-800 hover:bg-zinc-200 dark:hover:bg-zinc-700 text-zinc-800 dark:text-zinc-200 rounded-lg transition-colors flex items-center gap-1.5"
+                        >
+                          {copiedId === invite.id ? <Check className="w-3.5 h-3.5 text-emerald-500" /> : <Copy className="w-3.5 h-3.5" />}
+                          <span>{copiedId === invite.id ? 'Copied!' : 'Copy Link'}</span>
+                        </button>
+
+                        {permissions.canInvite && (
                           <button
                             onClick={() => cancelInvitation(invite.id)}
                             className="px-3 py-1.5 text-xs font-medium text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950/30 rounded-lg transition-colors"
                           >
                             Cancel
                           </button>
-                        </div>
-                      )}
+                        )}
+                      </div>
                     </div>
                   ))
                 )}

@@ -25,7 +25,7 @@ interface OrganizationContextType {
   createOrganization: (name: string, description?: string, logoUrl?: string, customSlug?: string) => Promise<Organization | null>;
   updateOrganization: (updates: { name?: string; slug?: string; description?: string; logo_url?: string }) => Promise<void>;
   deleteOrganization: () => Promise<void>;
-  inviteMember: (email: string, role: OrganizationRole) => Promise<boolean>;
+  inviteMember: (email: string, role: OrganizationRole) => Promise<OrganizationInvitation | boolean | null>;
   updateMemberRole: (memberId: string, role: OrganizationRole) => Promise<void>;
   removeMember: (memberId: string) => Promise<void>;
   cancelInvitation: (invitationId: string) => Promise<void>;
@@ -201,16 +201,16 @@ export const OrganizationProvider: React.FC<{
 
   // Invite member
   const inviteMember = async (email: string, role: OrganizationRole) => {
-    if (currentWorkspace.type !== 'organization' || !currentWorkspace.organization || !userId) return false;
+    if (currentWorkspace.type !== 'organization' || !currentWorkspace.organization || !userId) return null;
 
     try {
-      await organizationService.inviteMember(currentWorkspace.organization.id, email, role, userId);
-      toast.success(`Invitation sent to ${email}`);
+      const inv = await organizationService.inviteMember(currentWorkspace.organization.id, email, role, userId);
+      toast.success(`Invitation created for ${email}`);
       await refreshMembersAndInvitations();
-      return true;
+      return inv;
     } catch (error: any) {
       toast.error(error.message || 'Failed to send invitation');
-      return false;
+      return null;
     }
   };
 
