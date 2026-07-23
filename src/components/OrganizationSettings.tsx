@@ -511,7 +511,7 @@ export const OrganizationSettings: React.FC<OrganizationSettingsProps> = ({ onBa
                           </span>
                         </div>
                         <span className="text-[11px] text-zinc-400 flex items-center gap-1 mt-0.5">
-                          <Clock className="w-3 h-3" /> Expires {new Date(invite.expires_at).toLocaleDateString()}
+                          <Clock className="w-3 h-3" /> Expires {new Date(invite.expires_at).toLocaleString([], { dateStyle: 'short', timeStyle: 'short' })}
                         </span>
                       </div>
 

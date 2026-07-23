@@ -316,7 +316,7 @@ export const organizationService = {
     inviterId: string
   ): Promise<OrganizationInvitation> {
     const token = 'inv_' + Math.random().toString(36).substring(2, 15) + Date.now().toString(36);
-    const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(); // 7 days
+    const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(); // 24 hours
 
     const normalizedEmail = email.toLowerCase().trim();
 
