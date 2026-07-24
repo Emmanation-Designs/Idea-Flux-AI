@@ -39,13 +39,9 @@ function getSupabaseAdminClient(): any {
     return supabaseClientInstance;
   }
 
-  const supabaseUrl = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || "https://wxezfzhhzlauggufecmm.supabase.co";
-  let supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
-
-  if (!supabaseUrl) {
-    console.error("[Supabase] SUPABASE_URL is not defined in environment variables.");
-    throw new Error("Supabase URL is required but missing in server configuration.");
-  }
+  const rawUrl = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || "https://wxezfzhhzlauggufecmm.supabase.co";
+  const supabaseUrl = rawUrl.trim();
+  let supabaseKey = (process.env.SUPABASE_SERVICE_ROLE_KEY || "").trim();
 
   // Validate Service Role Key or fallback to Anon Key
   let isValidJWT = false;
@@ -55,7 +51,8 @@ function getSupabaseAdminClient(): any {
   }
 
   if (!isValidJWT) {
-    const anonKey = process.env.SUPABASE_ANON_KEY || process.env.VITE_SUPABASE_ANON_KEY || "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Ind4ZXpmemhoemxhdWdndWZlY21tIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQyNTQxMjcsImV4cCI6MjA4OTgzMDEyN30.2nsDSFhOtm1Xs3RuZNDo74jGbBwd05E7lPP-FN5cd1Q";
+    const rawAnon = process.env.SUPABASE_ANON_KEY || process.env.VITE_SUPABASE_ANON_KEY || "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Ind4ZXpmemhoemxhdWdndWZlY21tIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQyNTQxMjcsImV4cCI6MjA4OTgzMDEyN30.2nsDSFhOtm1Xs3RuZNDo74jGbBwd05E7lPP-FN5cd1Q";
+    const anonKey = rawAnon.trim();
     if (anonKey && anonKey.startsWith("eyJ") && anonKey.split(".").length === 3) {
       console.warn("[Supabase] SUPABASE_SERVICE_ROLE_KEY missing or invalid. Falling back to SUPABASE_ANON_KEY.");
       supabaseKey = anonKey;
@@ -144,7 +141,17 @@ app.get("/api/health", (req, res) => {
 app.get("/api/organizations/invitations/:token", async (req, res) => {
   try {
     const { token } = req.params;
-    const supabase = getSupabaseAdminClient();
+    if (!token || typeof token !== "string") {
+      return res.status(400).json({ error: "Token required" });
+    }
+
+    let supabase: any;
+    try {
+      supabase = getSupabaseAdminClient();
+    } catch (dbErr) {
+      console.warn("[Org Invitation GET API] DB client init warning:", dbErr);
+      return res.status(404).json({ error: "Invitation not found or expired" });
+    }
     
     const { data: invitation, error } = await supabase
       .from("organization_invitations")
@@ -156,18 +163,26 @@ app.get("/api/organizations/invitations/:token", async (req, res) => {
       return res.status(404).json({ error: "Invitation not found or expired" });
     }
 
+    if (invitation.expires_at && new Date(invitation.expires_at) < new Date()) {
+      return res.status(410).json({ error: "This invitation has expired" });
+    }
+
     let orgName = "Organization";
     let orgLogo = null;
 
     if (invitation.organization_id) {
-      const { data: org } = await supabase
-        .from("organizations")
-        .select("name, logo_url")
-        .eq("id", invitation.organization_id)
-        .maybeSingle();
-      if (org) {
-        orgName = org.name;
-        orgLogo = org.logo_url;
+      try {
+        const { data: org } = await supabase
+          .from("organizations")
+          .select("name, logo_url")
+          .eq("id", invitation.organization_id)
+          .maybeSingle();
+        if (org) {
+          orgName = org.name;
+          orgLogo = org.logo_url;
+        }
+      } catch (e) {
+        console.warn("[Org Invitation GET API] Fetch org error:", e);
       }
     }
 
@@ -179,8 +194,8 @@ app.get("/api/organizations/invitations/:token", async (req, res) => {
       }
     });
   } catch (error: any) {
-    console.error("[Org Invitation GET API Error]:", error);
-    res.status(500).json({ error: "Failed to fetch invitation details" });
+    console.warn("[Org Invitation GET API Error]:", error);
+    res.status(404).json({ error: "Invitation not found or expired" });
   }
 });
 

@@ -39,9 +39,13 @@ export const AcceptInvitationView: React.FC<AcceptInvitationViewProps> = ({ toke
         // Direct client fallback lookup via Supabase
         const directInvite = await organizationService.getInvitationByToken(token);
         if (active && directInvite) {
-          setInvite(directInvite);
+          if (directInvite.expires_at && new Date(directInvite.expires_at) < new Date()) {
+            setErrorMsg('This invitation link has expired (24-hour limit)');
+          } else {
+            setInvite(directInvite);
+          }
         } else if (active) {
-          setErrorMsg('Invalid or expired invitation token');
+          setErrorMsg('This invitation link is invalid or has already been used');
         }
       } catch (err: any) {
         if (active) setErrorMsg('Invalid or expired invitation token');

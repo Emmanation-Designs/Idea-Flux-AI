@@ -509,6 +509,20 @@ export const organizationService = {
       .maybeSingle();
 
     if (error || !invite) {
+      // Check if the user is already a member of an organization
+      if (userId) {
+        const { data: existingMembership } = await supabase
+          .from('organization_members')
+          .select('organization_id')
+          .eq('user_id', userId)
+          .order('joined_at', { ascending: false })
+          .limit(1)
+          .maybeSingle();
+
+        if (existingMembership?.organization_id) {
+          return { organization_id: existingMembership.organization_id };
+        }
+      }
       throw new Error('Invalid or expired invitation token');
     }
 
@@ -522,7 +536,7 @@ export const organizationService = {
       .upsert({
         organization_id: invite.organization_id,
         user_id: userId,
-        role: invite.role,
+        role: invite.role || 'member',
         status: 'active',
         joined_at: new Date().toISOString()
       }, { onConflict: 'organization_id,user_id' });
