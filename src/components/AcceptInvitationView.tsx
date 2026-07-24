@@ -22,15 +22,26 @@ export const AcceptInvitationView: React.FC<AcceptInvitationViewProps> = ({ toke
     async function loadInvite() {
       try {
         setIsLoading(true);
-        const res = await fetch(`/api/organizations/invitations/${token}`);
-        if (res.ok) {
-          const data = await res.json();
-          if (active && data.invitation) {
-            setInvite(data.invitation);
+        // Try backend API route first
+        try {
+          const res = await fetch(`/api/organizations/invitations/${token}`);
+          if (res.ok) {
+            const data = await res.json();
+            if (active && data.invitation) {
+              setInvite(data.invitation);
+              return;
+            }
           }
-        } else {
-          // Fallback direct check
-          const data = await organizationService.acceptInvitation(token, '', '');
+        } catch (apiErr) {
+          console.warn('[AcceptInvitationView] Server API fetch failed, trying direct lookup', apiErr);
+        }
+
+        // Direct client fallback lookup via Supabase
+        const directInvite = await organizationService.getInvitationByToken(token);
+        if (active && directInvite) {
+          setInvite(directInvite);
+        } else if (active) {
+          setErrorMsg('Invalid or expired invitation token');
         }
       } catch (err: any) {
         if (active) setErrorMsg('Invalid or expired invitation token');

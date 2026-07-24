@@ -148,7 +148,7 @@ app.get("/api/organizations/invitations/:token", async (req, res) => {
     
     const { data: invitation, error } = await supabase
       .from("organization_invitations")
-      .select("*, organizations(name, logo_url)")
+      .select("*")
       .eq("token", token)
       .maybeSingle();
 
@@ -156,11 +156,26 @@ app.get("/api/organizations/invitations/:token", async (req, res) => {
       return res.status(404).json({ error: "Invitation not found or expired" });
     }
 
+    let orgName = "Organization";
+    let orgLogo = null;
+
+    if (invitation.organization_id) {
+      const { data: org } = await supabase
+        .from("organizations")
+        .select("name, logo_url")
+        .eq("id", invitation.organization_id)
+        .maybeSingle();
+      if (org) {
+        orgName = org.name;
+        orgLogo = org.logo_url;
+      }
+    }
+
     res.json({
       invitation: {
         ...invitation,
-        organization_name: invitation.organizations?.name || "Organization",
-        organization_logo: invitation.organizations?.logo_url || null,
+        organization_name: orgName,
+        organization_logo: orgLogo,
       }
     });
   } catch (error: any) {

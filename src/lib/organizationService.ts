@@ -464,6 +464,40 @@ export const organizationService = {
   },
 
   /**
+   * Get invitation details directly by token
+   */
+  async getInvitationByToken(token: string): Promise<OrganizationInvitation | null> {
+    const { data: invite, error } = await supabase
+      .from('organization_invitations')
+      .select('*')
+      .eq('token', token)
+      .maybeSingle();
+
+    if (error || !invite) return null;
+
+    let orgName = 'Organization';
+    let orgLogo = null;
+
+    if (invite.organization_id) {
+      const { data: org } = await supabase
+        .from('organizations')
+        .select('name, logo_url')
+        .eq('id', invite.organization_id)
+        .maybeSingle();
+      if (org) {
+        orgName = org.name;
+        orgLogo = org.logo_url;
+      }
+    }
+
+    return {
+      ...invite,
+      organization_name: orgName,
+      organization_logo: orgLogo
+    } as OrganizationInvitation;
+  },
+
+  /**
    * Accept an invitation using token
    */
   async acceptInvitation(token: string, userId: string, userEmail: string): Promise<{ organization_id: string }> {
