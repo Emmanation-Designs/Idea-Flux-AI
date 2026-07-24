@@ -1,4 +1,4 @@
-import { supabase } from './supabase';
+import { supabase } from './supabase.js';
 import type { 
   Organization, 
   OrganizationMember, 
@@ -8,7 +8,7 @@ import type {
   OrganizationStats,
   Project,
   Conversation
-} from '../types';
+} from '../types.js';
 
 export const getPermissionsForRole = (role: OrganizationRole | null): OrganizationPermissions => {
   if (!role) {

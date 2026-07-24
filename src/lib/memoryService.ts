@@ -1,5 +1,5 @@
-import { supabase } from './supabase';
-import type { UserMemory, MemoryCategory } from '../types';
+import { supabase } from './supabase.js';
+import type { UserMemory, MemoryCategory } from '../types.js';
 
 // Sensitive patterns that MUST NEVER be stored in memory
 const SENSITIVE_PATTERNS = [
