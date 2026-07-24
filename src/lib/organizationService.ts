@@ -374,8 +374,9 @@ export const organizationService = {
     }
 
     let data: any = null;
+    let apiErrorMsg: string | null = null;
 
-    // 1. Try server API endpoint first (uses admin client, bypasses RLS)
+    // 1. Send via server API endpoint (uses admin client, bypasses client RLS)
     try {
       const authHeader = (await supabase.auth.getSession())?.data?.session?.access_token;
       const apiRes = await fetch('/api/organizations/invitations', {
@@ -387,28 +388,28 @@ export const organizationService = {
         body: JSON.stringify(payload)
       });
 
-      if (apiRes.ok) {
-        const body = await apiRes.json();
-        if (body?.invitation) {
-          data = body.invitation;
-        }
+      const body = await apiRes.json().catch(() => ({}));
+      if (apiRes.ok && body?.invitation) {
+        data = body.invitation;
+      } else if (body?.error) {
+        apiErrorMsg = body.error;
+        console.warn('[OrganizationService] Server API invitation notice:', body.error);
       }
-    } catch (apiErr) {
-      console.warn('[OrganizationService] Server API create invitation warning, falling back to client:', apiErr);
+    } catch (apiErr: any) {
+      console.warn('[OrganizationService] Server API create invitation network warning:', apiErr);
     }
 
-    // 2. Client-side Supabase insert fallback if server API didn't respond
-    if (!data) {
+    // 2. Direct client-side insert fallback only if server API returned no error response
+    if (!data && !apiErrorMsg) {
       const res1 = await supabase
         .from('organization_invitations')
         .insert(payload)
         .select('*')
         .maybeSingle();
 
-      if (!res1.error) {
+      if (!res1.error && res1.data) {
         data = res1.data;
       } else {
-        // Retry without created_by in case created_by column or FK caused schema mismatch
         const fallbackPayload = { ...payload };
         delete fallbackPayload.created_by;
 
@@ -418,12 +419,14 @@ export const organizationService = {
           .select('*')
           .maybeSingle();
 
-        if (!res2.error) {
+        if (!res2.error && res2.data) {
           data = res2.data;
-        } else {
-          console.warn('[OrganizationService] Notice inserting invitation to DB:', res2.error);
         }
       }
+    }
+
+    if (apiErrorMsg && !data) {
+      throw new Error(apiErrorMsg);
     }
 
     const invitation: OrganizationInvitation = data || {

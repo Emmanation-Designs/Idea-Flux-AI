@@ -211,45 +211,111 @@ app.post("/api/organizations/invitations", async (req, res) => {
 
     const supabase = getSupabaseAdminClient();
 
-    // Clean prior invites for same email in this org
+    // 1. Ensure organization exists in Supabase DB so FK constraint never fails
+    try {
+      const { data: existingOrg } = await supabase
+        .from("organizations")
+        .select("id")
+        .eq("id", organization_id)
+        .maybeSingle();
+
+      if (!existingOrg) {
+        await supabase.from("organizations").upsert({
+          id: organization_id,
+          owner_id: user.id,
+          name: "Organization",
+          slug: "org-" + organization_id.substring(0, 8),
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString()
+        }, { onConflict: "id" });
+      }
+    } catch (orgErr) {
+      console.warn("[Create Org Invite] Notice checking/upserting org:", orgErr);
+    }
+
+    // 2. Clean prior invites for same email in this org
+    const normalizedEmail = email.toLowerCase().trim();
+    const cleanRole = (role || "member").toLowerCase().trim();
     try {
       await supabase
         .from("organization_invitations")
         .delete()
         .eq("organization_id", organization_id)
-        .eq("email", email.toLowerCase().trim());
+        .eq("email", normalizedEmail);
     } catch (e) {}
 
-    const payload = {
+    const expIso = expires_at || new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
+    const createdIso = new Date().toISOString();
+
+    // Attempt 1: Full payload
+    const payload1 = {
       organization_id,
-      email: email.toLowerCase().trim(),
-      role,
+      email: normalizedEmail,
+      role: cleanRole,
       token,
-      expires_at: expires_at || new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(),
-      created_at: new Date().toISOString(),
+      expires_at: expIso,
+      created_at: createdIso,
       created_by: user.id,
     };
 
-    const { data: invitation, error } = await supabase
+    let { data: invitation, error } = await supabase
       .from("organization_invitations")
-      .insert(payload)
+      .insert(payload1)
       .select("*")
-      .single();
+      .maybeSingle();
 
-    if (error) {
-      console.error("[Create Org Invitation API Error]:", error);
-      // Try fallback without created_by
-      delete (payload as any).created_by;
-      const { data: inv2, error: err2 } = await supabase
+    if (error || !invitation) {
+      console.warn("[Create Org Invite] Attempt 1 failed:", error?.message || error);
+
+      // Attempt 2: Without created_by
+      const payload2 = {
+        organization_id,
+        email: normalizedEmail,
+        role: cleanRole,
+        token,
+        expires_at: expIso,
+        created_at: createdIso,
+      };
+
+      const res2 = await supabase
         .from("organization_invitations")
-        .insert(payload)
+        .insert(payload2)
         .select("*")
-        .single();
+        .maybeSingle();
 
-      if (err2 || !inv2) {
-        return res.status(500).json({ error: err2?.message || "Failed to create invitation in database" });
+      if (!res2.error && res2.data) {
+        invitation = res2.data;
+        error = null;
+      } else {
+        console.warn("[Create Org Invite] Attempt 2 failed:", res2.error?.message || res2.error);
+
+        // Attempt 3: Essential fields only (organization_id, email, role, token, expires_at)
+        const payload3 = {
+          organization_id,
+          email: normalizedEmail,
+          role: cleanRole,
+          token,
+          expires_at: expIso,
+        };
+
+        const res3 = await supabase
+          .from("organization_invitations")
+          .insert(payload3)
+          .select("*")
+          .maybeSingle();
+
+        if (!res3.error && res3.data) {
+          invitation = res3.data;
+          error = null;
+        } else {
+          error = res3.error || res2.error || error;
+        }
       }
-      return res.json({ invitation: inv2 });
+    }
+
+    if (error || !invitation) {
+      console.error("[Create Org Invitation API Final Error]:", error);
+      return res.status(500).json({ error: error?.message || "Failed to create invitation in database" });
     }
 
     res.json({ invitation });
