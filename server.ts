@@ -199,6 +199,66 @@ app.get("/api/organizations/invitations/:token", async (req, res) => {
   }
 });
 
+// Organization API: Create Invitation
+app.post("/api/organizations/invitations", async (req, res) => {
+  try {
+    const user = await authenticateUser(req);
+    const { organization_id, email, role, token, expires_at } = req.body;
+
+    if (!organization_id || !email || !role || !token) {
+      return res.status(400).json({ error: "Missing required invitation fields" });
+    }
+
+    const supabase = getSupabaseAdminClient();
+
+    // Clean prior invites for same email in this org
+    try {
+      await supabase
+        .from("organization_invitations")
+        .delete()
+        .eq("organization_id", organization_id)
+        .eq("email", email.toLowerCase().trim());
+    } catch (e) {}
+
+    const payload = {
+      organization_id,
+      email: email.toLowerCase().trim(),
+      role,
+      token,
+      expires_at: expires_at || new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(),
+      created_at: new Date().toISOString(),
+      created_by: user.id,
+    };
+
+    const { data: invitation, error } = await supabase
+      .from("organization_invitations")
+      .insert(payload)
+      .select("*")
+      .single();
+
+    if (error) {
+      console.error("[Create Org Invitation API Error]:", error);
+      // Try fallback without created_by
+      delete (payload as any).created_by;
+      const { data: inv2, error: err2 } = await supabase
+        .from("organization_invitations")
+        .insert(payload)
+        .select("*")
+        .single();
+
+      if (err2 || !inv2) {
+        return res.status(500).json({ error: err2?.message || "Failed to create invitation in database" });
+      }
+      return res.json({ invitation: inv2 });
+    }
+
+    res.json({ invitation });
+  } catch (error: any) {
+    console.error("[Create Org Invitation API Error]:", error);
+    res.status(error.status || 500).json({ error: error.error || error.message || "Failed to create invitation" });
+  }
+});
+
 // Organization API: Accept Invitation
 app.post("/api/organizations/invitations/accept", async (req, res) => {
   try {

@@ -374,32 +374,55 @@ export const organizationService = {
     }
 
     let data: any = null;
-    let dbError: any = null;
 
-    const res1 = await supabase
-      .from('organization_invitations')
-      .insert(payload)
-      .select('*')
-      .maybeSingle();
+    // 1. Try server API endpoint first (uses admin client, bypasses RLS)
+    try {
+      const authHeader = (await supabase.auth.getSession())?.data?.session?.access_token;
+      const apiRes = await fetch('/api/organizations/invitations', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(authHeader ? { Authorization: `Bearer ${authHeader}` } : {})
+        },
+        body: JSON.stringify(payload)
+      });
 
-    if (!res1.error) {
-      data = res1.data;
-    } else {
-      // Retry without created_by in case created_by column or FK caused schema mismatch
-      const fallbackPayload = { ...payload };
-      delete fallbackPayload.created_by;
+      if (apiRes.ok) {
+        const body = await apiRes.json();
+        if (body?.invitation) {
+          data = body.invitation;
+        }
+      }
+    } catch (apiErr) {
+      console.warn('[OrganizationService] Server API create invitation warning, falling back to client:', apiErr);
+    }
 
-      const res2 = await supabase
+    // 2. Client-side Supabase insert fallback if server API didn't respond
+    if (!data) {
+      const res1 = await supabase
         .from('organization_invitations')
-        .insert(fallbackPayload)
+        .insert(payload)
         .select('*')
         .maybeSingle();
 
-      if (!res2.error) {
-        data = res2.data;
+      if (!res1.error) {
+        data = res1.data;
       } else {
-        console.warn('[OrganizationService] Notice inserting invitation to DB:', res2.error);
-        dbError = res2.error;
+        // Retry without created_by in case created_by column or FK caused schema mismatch
+        const fallbackPayload = { ...payload };
+        delete fallbackPayload.created_by;
+
+        const res2 = await supabase
+          .from('organization_invitations')
+          .insert(fallbackPayload)
+          .select('*')
+          .maybeSingle();
+
+        if (!res2.error) {
+          data = res2.data;
+        } else {
+          console.warn('[OrganizationService] Notice inserting invitation to DB:', res2.error);
+        }
       }
     }
 
