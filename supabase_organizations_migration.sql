@@ -391,3 +391,39 @@ USING (
     public.is_org_member(auth.uid(), organization_id)
   )
 );
+
+-- ====================================================================
+-- USER USAGE TRACKING TABLE EXTENSIONS
+-- ====================================================================
+
+CREATE TABLE IF NOT EXISTS public.user_usage_tracking (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE UNIQUE,
+  chat_today INT DEFAULT 0,
+  image_generation_today INT DEFAULT 0,
+  image_edit_today INT DEFAULT 0,
+  image_analysis_today INT DEFAULT 0,
+  document_ai_today INT DEFAULT 0,
+  pdf_today INT DEFAULT 0,
+  ocr_today INT DEFAULT 0,
+  daily_ai_capacity_used INT DEFAULT 0,
+  tts_characters_used_monthly INT DEFAULT 0,
+  last_daily_reset TIMESTAMPTZ DEFAULT now(),
+  last_capacity_reset TIMESTAMPTZ DEFAULT now(),
+  last_monthly_reset TIMESTAMPTZ DEFAULT now(),
+  rewarded_bonus JSONB DEFAULT '{}'::jsonb,
+  created_at TIMESTAMPTZ DEFAULT now(),
+  updated_at TIMESTAMPTZ DEFAULT now()
+);
+
+ALTER TABLE public.user_usage_tracking ADD COLUMN IF NOT EXISTS daily_ai_capacity_used INT DEFAULT 0;
+ALTER TABLE public.user_usage_tracking ADD COLUMN IF NOT EXISTS last_capacity_reset TIMESTAMPTZ DEFAULT now();
+ALTER TABLE public.user_usage_tracking ADD COLUMN IF NOT EXISTS rewarded_bonus JSONB DEFAULT '{}'::jsonb;
+ALTER TABLE public.user_usage_tracking ADD COLUMN IF NOT EXISTS image_edit_today INT DEFAULT 0;
+ALTER TABLE public.user_usage_tracking ADD COLUMN IF NOT EXISTS image_analysis_today INT DEFAULT 0;
+ALTER TABLE public.user_usage_tracking ADD COLUMN IF NOT EXISTS document_ai_today INT DEFAULT 0;
+ALTER TABLE public.user_usage_tracking ADD COLUMN IF NOT EXISTS pdf_today INT DEFAULT 0;
+ALTER TABLE public.user_usage_tracking ADD COLUMN IF NOT EXISTS ocr_today INT DEFAULT 0;
+ALTER TABLE public.user_usage_tracking ADD COLUMN IF NOT EXISTS last_daily_reset TIMESTAMPTZ DEFAULT now();
+ALTER TABLE public.user_usage_tracking ADD COLUMN IF NOT EXISTS last_monthly_reset TIMESTAMPTZ DEFAULT now();
+

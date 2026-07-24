@@ -136,13 +136,26 @@ export async function getUserUsage(supabaseClient: any, userId: string): Promise
         .select()
         .maybeSingle();
 
-      if (insertError || !newData) {
-        if (insertError) {
-          console.error(`[UsageService] Error inserting tracking row for ${userId}:`, insertError.message);
+      if (!insertError && newData) {
+        data = newData;
+      } else {
+        // Fallback insert with minimal core fields if DB table is missing extended columns
+        const { data: minData, error: minErr } = await supabaseClient
+          .from('user_usage_tracking')
+          .insert({
+            user_id: userId,
+            last_daily_reset: nowIso,
+            last_monthly_reset: nowIso
+          })
+          .select()
+          .maybeSingle();
+
+        if (minErr) {
+          console.warn(`[UsageService] Notice inserting tracking row for ${userId}:`, minErr.message);
+          return fallbackUsage;
         }
-        return fallbackUsage;
+        data = minData;
       }
-      data = newData;
     }
 
     if (!data) return fallbackUsage;
@@ -201,7 +214,45 @@ export async function getUserUsage(supabaseClient: any, userId: string): Promise
       if (!updateError && updatedData) {
         data = updatedData;
       } else if (updateError) {
-        console.error(`[UsageService] Error updating lazy resets for ${userId}:`, updateError.message);
+        console.warn(`[UsageService] Full reset update notice for ${userId}, using fallback:`, updateError.message);
+        
+        // Fallback 1: Standard core fields only
+        const coreFields: any = {};
+        if (isDifferentDay) {
+          coreFields.chat_today = 0;
+          coreFields.image_generation_today = 0;
+          coreFields.daily_ai_capacity_used = 0;
+          coreFields.last_daily_reset = now.toISOString();
+        }
+        if (now >= oneMonthLater) {
+          coreFields.tts_characters_used_monthly = 0;
+          coreFields.last_monthly_reset = now.toISOString();
+        }
+
+        const { data: fallbackData, error: fallbackErr } = await supabaseClient
+          .from('user_usage_tracking')
+          .update(coreFields)
+          .eq('user_id', userId)
+          .select()
+          .maybeSingle();
+
+        if (!fallbackErr && fallbackData) {
+          data = fallbackData;
+        } else {
+          // Fallback 2: Timestamps only
+          const minFields: any = {};
+          if (isDifferentDay) minFields.last_daily_reset = now.toISOString();
+          if (now >= oneMonthLater) minFields.last_monthly_reset = now.toISOString();
+
+          const { data: minData } = await supabaseClient
+            .from('user_usage_tracking')
+            .update(minFields)
+            .eq('user_id', userId)
+            .select()
+            .maybeSingle();
+
+          if (minData) data = minData;
+        }
       }
     }
 
