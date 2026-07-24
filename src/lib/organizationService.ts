@@ -467,6 +467,20 @@ export const organizationService = {
    * Get invitation details directly by token
    */
   async getInvitationByToken(token: string): Promise<OrganizationInvitation | null> {
+    // 1. Try server API endpoint first (uses admin client, bypasses client RLS)
+    try {
+      const res = await fetch(`/api/organizations/invitations/${encodeURIComponent(token)}`);
+      if (res.ok) {
+        const body = await res.json();
+        if (body?.invitation) {
+          return body.invitation as OrganizationInvitation;
+        }
+      }
+    } catch (e) {
+      console.warn('[OrganizationService] Server API lookup warning, trying direct Supabase:', e);
+    }
+
+    // 2. Direct client lookup via Supabase
     const { data: invite, error } = await supabase
       .from('organization_invitations')
       .select('*')
