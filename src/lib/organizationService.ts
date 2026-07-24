@@ -542,7 +542,34 @@ export const organizationService = {
    * Accept an invitation using token
    */
   async acceptInvitation(token: string, userId: string, userEmail: string): Promise<{ organization_id: string }> {
-    // Lookup invitation by token
+    // 1. Try server API route first (uses admin client, bypasses client RLS)
+    try {
+      const authHeader = (await supabase.auth.getSession())?.data?.session?.access_token;
+      const res = await fetch('/api/organizations/invitations/accept', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(authHeader ? { Authorization: `Bearer ${authHeader}` } : {})
+        },
+        body: JSON.stringify({ token })
+      });
+
+      if (res.ok) {
+        const body = await res.json();
+        if (body?.organization_id) {
+          return { organization_id: body.organization_id };
+        }
+      } else {
+        const errBody = await res.json().catch(() => ({}));
+        if (errBody?.error) {
+          console.warn('[OrganizationService] Server API accept invitation warning:', errBody.error);
+        }
+      }
+    } catch (apiErr) {
+      console.warn('[OrganizationService] Server API accept invitation network error, trying client fallback:', apiErr);
+    }
+
+    // 2. Client-side fallback if server API is unreachable
     const { data: invite, error } = await supabase
       .from('organization_invitations')
       .select('*')
@@ -567,7 +594,7 @@ export const organizationService = {
       throw new Error('Invalid or expired invitation token');
     }
 
-    if (new Date(invite.expires_at) < new Date()) {
+    if (invite.expires_at && new Date(invite.expires_at) < new Date()) {
       throw new Error('This invitation has expired');
     }
 

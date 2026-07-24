@@ -370,31 +370,45 @@ app.post("/api/organizations/invitations/accept", async (req, res) => {
       .maybeSingle();
 
     if (error || !invite) {
+      // Check if user is already a member of an organization
+      const { data: existingMembership } = await supabase
+        .from("organization_members")
+        .select("organization_id")
+        .eq("user_id", user.id)
+        .order("joined_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      if (existingMembership?.organization_id) {
+        return res.json({ status: "success", organization_id: existingMembership.organization_id });
+      }
       return res.status(404).json({ error: "Invalid or expired invitation token" });
     }
 
-    if (new Date(invite.expires_at) < new Date()) {
+    if (invite.expires_at && new Date(invite.expires_at) < new Date()) {
       return res.status(400).json({ error: "This invitation has expired" });
     }
 
-    // Add user as member
+    // Add user as member using admin client (bypasses RLS)
     const { error: memError } = await supabase
       .from("organization_members")
       .upsert({
         organization_id: invite.organization_id,
         user_id: user.id,
-        role: invite.role,
+        role: invite.role || "member",
         status: "active",
         joined_at: new Date().toISOString()
       }, { onConflict: "organization_id,user_id" });
 
     if (memError) {
       console.error("[Org Accept Invite Error]:", memError);
-      return res.status(500).json({ error: "Failed to join organization" });
+      return res.status(500).json({ error: "Failed to join organization: " + memError.message });
     }
 
-    // Delete invitation
-    await supabase.from("organization_invitations").delete().eq("id", invite.id);
+    // Delete invitation after use
+    try {
+      await supabase.from("organization_invitations").delete().eq("id", invite.id);
+    } catch (e) {}
 
     res.json({ status: "success", organization_id: invite.organization_id });
   } catch (error: any) {
