@@ -1,4 +1,4 @@
-import { getModel, canUseModel, getDefaultModel, AIModel } from './modelCatalog';
+import { getModel, canUseModel, getDefaultModel, AIModel } from './modelCatalog.js';
 
 export type TaskType =
   | 'GENERAL_CHAT'
