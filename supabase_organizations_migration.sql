@@ -300,10 +300,12 @@ USING (
 );
 
 -- 3. Organization Invitations Policies
-CREATE POLICY "Members can view invitations of their organization"
+DROP POLICY IF EXISTS "Members can view invitations of their organization" ON public.organization_invitations;
+DROP POLICY IF EXISTS "Members or token holders can view invitations" ON public.organization_invitations;
+CREATE POLICY "Members or token holders can view invitations"
 ON public.organization_invitations FOR SELECT
 USING (
-  public.is_org_member(auth.uid(), organization_id) OR public.is_invitation_recipient(email, auth.uid())
+  public.is_org_member(auth.uid(), organization_id) OR public.is_invitation_recipient(email, auth.uid()) OR token IS NOT NULL
 );
 
 CREATE POLICY "Owners and Admins can create invitations"

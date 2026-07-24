@@ -55,7 +55,7 @@ function getSupabaseAdminClient(): any {
   }
 
   if (!isValidJWT) {
-    const anonKey = process.env.SUPABASE_ANON_KEY || process.env.VITE_SUPABASE_ANON_KEY;
+    const anonKey = process.env.SUPABASE_ANON_KEY || process.env.VITE_SUPABASE_ANON_KEY || "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Ind4ZXpmemhoemxhdWdndWZlY21tIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQyNTQxMjcsImV4cCI6MjA4OTgzMDEyN30.2nsDSFhOtm1Xs3RuZNDo74jGbBwd05E7lPP-FN5cd1Q";
     if (anonKey && anonKey.startsWith("eyJ") && anonKey.split(".").length === 3) {
       console.warn("[Supabase] SUPABASE_SERVICE_ROLE_KEY missing or invalid. Falling back to SUPABASE_ANON_KEY.");
       supabaseKey = anonKey;
