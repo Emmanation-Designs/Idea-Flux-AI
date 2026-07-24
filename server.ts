@@ -351,6 +351,54 @@ app.post("/api/organizations/invitations", async (req, res) => {
   }
 });
 
+// Organization API: Get Invitation by Token
+app.get("/api/organizations/invitations/:token", async (req, res) => {
+  try {
+    const { token } = req.params;
+    if (!token) {
+      return res.status(400).json({ error: "Invitation token is required" });
+    }
+
+    const supabase = getSupabaseAdminClient();
+    const { data: invite, error } = await supabase
+      .from("organization_invitations")
+      .select("*")
+      .eq("token", token)
+      .maybeSingle();
+
+    if (error || !invite) {
+      return res.status(404).json({ error: "Invitation not found or expired" });
+    }
+
+    let orgName = "Organization";
+    let orgLogo = null;
+
+    if (invite.organization_id) {
+      const { data: org } = await supabase
+        .from("organizations")
+        .select("name, logo_url")
+        .eq("id", invite.organization_id)
+        .maybeSingle();
+
+      if (org) {
+        orgName = org.name || "Organization";
+        orgLogo = org.logo_url || null;
+      }
+    }
+
+    res.json({
+      invitation: {
+        ...invite,
+        organization_name: orgName,
+        organization_logo: orgLogo,
+      },
+    });
+  } catch (error: any) {
+    console.error("[Get Org Invitation API Error]:", error);
+    res.status(500).json({ error: "Failed to fetch invitation details" });
+  }
+});
+
 // Organization API: Accept Invitation
 app.post("/api/organizations/invitations/accept", async (req, res) => {
   try {
