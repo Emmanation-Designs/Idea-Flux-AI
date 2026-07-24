@@ -371,6 +371,7 @@ export const organizationService = {
 
     if (currentUserId) {
       payload.created_by = currentUserId;
+      payload.invited_by = currentUserId;
     }
 
     let data: any = null;

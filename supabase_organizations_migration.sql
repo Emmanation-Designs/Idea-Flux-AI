@@ -41,6 +41,9 @@ CREATE TABLE IF NOT EXISTS public.organization_invitations (
 ALTER TABLE public.organization_invitations 
 ADD COLUMN IF NOT EXISTS created_by UUID REFERENCES auth.users(id) ON DELETE SET NULL;
 
+ALTER TABLE public.organization_invitations 
+ADD COLUMN IF NOT EXISTS invited_by UUID REFERENCES auth.users(id) ON DELETE SET NULL;
+
 -- 4. Extend Existing Projects Table
 ALTER TABLE public.projects 
 ADD COLUMN IF NOT EXISTS organization_id UUID NULL REFERENCES public.organizations(id) ON DELETE CASCADE;

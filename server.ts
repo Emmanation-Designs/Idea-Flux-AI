@@ -247,7 +247,7 @@ app.post("/api/organizations/invitations", async (req, res) => {
     const expIso = expires_at || new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
     const createdIso = new Date().toISOString();
 
-    // Attempt 1: Full payload
+    // Attempt 1: Full payload with invited_by and created_by
     const payload1 = {
       organization_id,
       email: normalizedEmail,
@@ -255,6 +255,7 @@ app.post("/api/organizations/invitations", async (req, res) => {
       token,
       expires_at: expIso,
       created_at: createdIso,
+      invited_by: user.id,
       created_by: user.id,
     };
 
@@ -267,7 +268,7 @@ app.post("/api/organizations/invitations", async (req, res) => {
     if (error || !invitation) {
       console.warn("[Create Org Invite] Attempt 1 failed:", error?.message || error);
 
-      // Attempt 2: Without created_by
+      // Attempt 2: invited_by only
       const payload2 = {
         organization_id,
         email: normalizedEmail,
@@ -275,6 +276,7 @@ app.post("/api/organizations/invitations", async (req, res) => {
         token,
         expires_at: expIso,
         created_at: createdIso,
+        invited_by: user.id,
       };
 
       const res2 = await supabase
@@ -289,13 +291,15 @@ app.post("/api/organizations/invitations", async (req, res) => {
       } else {
         console.warn("[Create Org Invite] Attempt 2 failed:", res2.error?.message || res2.error);
 
-        // Attempt 3: Essential fields only (organization_id, email, role, token, expires_at)
+        // Attempt 3: created_by only
         const payload3 = {
           organization_id,
           email: normalizedEmail,
           role: cleanRole,
           token,
           expires_at: expIso,
+          created_at: createdIso,
+          created_by: user.id,
         };
 
         const res3 = await supabase
@@ -308,7 +312,29 @@ app.post("/api/organizations/invitations", async (req, res) => {
           invitation = res3.data;
           error = null;
         } else {
-          error = res3.error || res2.error || error;
+          console.warn("[Create Org Invite] Attempt 3 failed:", res3.error?.message || res3.error);
+
+          // Attempt 4: basic fields only
+          const payload4 = {
+            organization_id,
+            email: normalizedEmail,
+            role: cleanRole,
+            token,
+            expires_at: expIso,
+          };
+
+          const res4 = await supabase
+            .from("organization_invitations")
+            .insert(payload4)
+            .select("*")
+            .maybeSingle();
+
+          if (!res4.error && res4.data) {
+            invitation = res4.data;
+            error = null;
+          } else {
+            error = res4.error || res3.error || res2.error || error;
+          }
         }
       }
     }
