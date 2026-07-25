@@ -549,7 +549,7 @@ export const BillingCenter: React.FC<BillingCenterProps> = ({
             <div className="p-4 bg-white dark:bg-zinc-950/40 border border-zinc-150 dark:border-zinc-900 rounded-2xl flex flex-col justify-between h-28 hover:border-zinc-250 dark:hover:border-zinc-800 transition-all shadow-sm">
               <div className="flex items-start justify-between">
                 <span className="text-xs font-bold text-zinc-800 dark:text-zinc-250">
-                  Voice Synthesis
+                  Text-to-Speech Studio
                 </span>
                 <span className={cn(
                   "text-[8px] font-black uppercase tracking-wider px-2 py-0.5 rounded-full border border-current bg-current/5",

@@ -586,7 +586,7 @@ export const TextToSpeechView = ({ profile, onUpgradeClick, onBack }: TextToSpee
             </button>
           )}
           <div>
-            <h1 className="text-sm font-semibold tracking-tight text-zinc-900 dark:text-zinc-100 uppercase">Text to Speech</h1>
+            <h1 className="text-sm font-semibold tracking-tight text-zinc-900 dark:text-zinc-100 uppercase">Text-to-Speech Studio</h1>
           </div>
         </div>
 

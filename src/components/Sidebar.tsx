@@ -228,7 +228,7 @@ export const Sidebar = ({
             )}
           >
             <Volume2 className="w-4 h-4" />
-            Voice Synthesis
+            Text-to-Speech Studio
           </button>
 
           <button 
