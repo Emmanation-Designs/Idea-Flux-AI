@@ -219,6 +219,19 @@ export const Sidebar = ({
           </button>
 
           <button 
+            onClick={() => handleAction(onOpenTTS)}
+            className={cn(
+              "w-full flex items-center gap-3 px-4 py-2.5 text-sm font-medium rounded-xl transition-all",
+              activeView === 'tts' 
+                ? "bg-zinc-200 dark:bg-zinc-800 text-zinc-900 dark:text-zinc-100 shadow-sm" 
+                : "text-zinc-500 hover:bg-zinc-100 dark:hover:bg-zinc-900"
+            )}
+          >
+            <Volume2 className="w-4 h-4" />
+            Voice Synthesis
+          </button>
+
+          <button 
             onClick={() => handleAction(onOpenApps)}
             className={cn(
               "w-full flex items-center gap-3 px-4 py-2.5 text-sm font-medium rounded-xl transition-all",
