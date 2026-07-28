@@ -38,7 +38,8 @@ export type CentralizedFeature =
   | 'pdf'
   | 'image_edit'
   | 'image_generation'
-  | 'tts';
+  | 'tts'
+  | 'video_generation';
 
 /**
  * Internal configurable warning threshold.
@@ -70,6 +71,8 @@ export function getFeatureCost(feature: string): number {
       return 8;
     case 'image_generation':
       return 10;
+    case 'video_generation':
+      return 30;
     default:
       return 1;
   }

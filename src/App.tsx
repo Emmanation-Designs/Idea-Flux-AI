@@ -30,6 +30,7 @@ import {
   Paperclip,
   File as FileIcon,
   Film,
+  Video,
   FileText,
   Sparkles,
   Clock,
@@ -214,6 +215,7 @@ import { DocumentExportCard } from './components/DocumentExportCard';
 import { UpgradeModal } from './components/UpgradeModal';
 import { AppsView } from './components/AppsView';
 import { TextToSpeechView } from './components/TextToSpeechView';
+import { VideoStudioView } from './components/VideoStudioView';
 import { OrganizationProvider } from './context/OrganizationContext';
 import { OrganizationSettings } from './components/OrganizationSettings';
 import { AcceptInvitationView } from './components/AcceptInvitationView';
@@ -438,7 +440,7 @@ export default function App() {
   }, [expandedImage]);
 
   const [streamingMessage, setStreamingMessage] = useState('');
-  const [activeView, setActiveView] = useState<'chat' | 'history' | 'apps' | 'images' | 'settings' | 'tts' | 'project' | 'projects' | 'org-settings'>('chat');
+  const [activeView, setActiveView] = useState<'chat' | 'history' | 'apps' | 'images' | 'settings' | 'tts' | 'video' | 'project' | 'projects' | 'org-settings'>('chat');
   const [inviteToken, setInviteToken] = useState<string | null>(() => {
     if (typeof window !== 'undefined') {
       const params = new URLSearchParams(window.location.search);
@@ -2346,6 +2348,7 @@ export default function App() {
           onOpenApps={() => setActiveView('apps')}
         onOpenImages={() => setActiveView('images')}
         onOpenTTS={() => setActiveView('tts')}
+        onOpenVideo={() => setActiveView('video')}
         onOpenUpgrade={() => setShowUpgradeModal(true)}
         onShowLegal={handleShowLegal}
         activeView={activeView}
@@ -2520,6 +2523,12 @@ export default function App() {
             </div>
           ) : activeView === 'tts' ? (
             <TextToSpeechView 
+              profile={profile}
+              onUpgradeClick={() => setShowUpgradeModal(true)}
+              onBack={() => setActiveView('chat')}
+            />
+          ) : activeView === 'video' ? (
+            <VideoStudioView 
               profile={profile}
               onUpgradeClick={() => setShowUpgradeModal(true)}
               onBack={() => setActiveView('chat')}

@@ -8,6 +8,7 @@ import crypto from "crypto";
 import { getModel, canUseModel, getDefaultModel, getAvailableModels, MODEL_MAP, INTERNAL_TO_API_MAP } from "./src/ai/modelCatalog.js";
 import { routeRequest } from "./src/ai/router.js";
 import { priorityQueue } from "./src/ai/priorityQueue.js";
+import { getVideoProvider } from "./src/ai/videoProviders.js";
 
 // Import Vite types only for type checking
 import type { ViteDevServer } from "vite";
@@ -1422,6 +1423,175 @@ app.get("/api/tools/text-to-speech/retrieve/:id", async (req, res) => {
     return res.status(500).json({ error: err?.message || "Failed to retrieve past audio track." });
   }
 });
+
+// Video Studio Generation Endpoint
+const handleVideoGeneration = async (req: express.Request, res: express.Response) => {
+  const requestId = crypto.randomUUID();
+  console.log(`[VideoStudio][Request: ${requestId}] Video generation request received`);
+
+  let user: any = null;
+  let supabase: any = null;
+
+  try {
+    user = await authenticateUser(req);
+    console.log(`[VideoStudio][Request: ${requestId}] Authenticated User: ${user.email} (ID: ${user.id})`);
+  } catch (err: any) {
+    console.error(`[VideoStudio][Request: ${requestId}] Authentication failed:`, err);
+    if (err.status) {
+      return res.status(err.status).json({ error: err.error });
+    }
+    return res.status(500).json({ error: "Failed to initialize request authorization." });
+  }
+
+  try {
+    supabase = getSupabaseAdminClient();
+  } catch (err: any) {
+    console.error(`[VideoStudio][Request: ${requestId}] Database client initialization failed:`, err.message);
+    return res.status(500).json({ error: `Database configuration error: ${err.message}` });
+  }
+
+  const {
+    prompt,
+    model = "sora-v1-hd",
+    duration = "10s",
+    resolution = "1080p",
+    aspectRatio = "16:9",
+    fps = "24 fps",
+    cameraMotion,
+    motionStrength
+  } = req.body || {};
+
+  if (!prompt || typeof prompt !== "string" || !prompt.trim()) {
+    console.error(`[VideoStudio][Request: ${requestId}] Validation failed: empty prompt`);
+    return res.status(400).json({ error: "A descriptive prompt is required for video generation." });
+  }
+
+  // 1. Check Subscriptions and Plan Limits using the Centralized Limit Engine
+  let allowed = true;
+  let reason = "";
+
+  try {
+    const limitResult = await checkLimit(supabase, user.id, 'video_generation', 1);
+    allowed = limitResult.allowed;
+    reason = limitResult.reason || "";
+  } catch (err: any) {
+    console.error(`[VideoStudio][Request: ${requestId}] Limit check exception:`, err.message);
+    allowed = false;
+    reason = "Failed to verify daily AI capacity limit.";
+  }
+
+  if (!allowed) {
+    console.warn(`[VideoStudio][Request: ${requestId}] Limit check rejected: ${reason}`);
+    return res.status(403).json({ error: reason || "Daily AI capacity exhausted. Please upgrade your plan." });
+  }
+
+  try {
+    // 2. Obtain Video Provider (OpenAI Sora)
+    const provider = getVideoProvider(model);
+    console.log(`[VideoStudio][Request: ${requestId}] Generating video with provider: ${provider.name}, model: ${model}`);
+
+    const result = await provider.generateVideo({
+      prompt,
+      model,
+      duration,
+      resolution,
+      aspectRatio,
+      fps,
+      cameraMotion,
+      motionStrength
+    });
+
+    // 3. Deduct AI Capacity via incrementUsage
+    await incrementUsage(supabase, user.id, 'video_generation', 1);
+    const remainingCapacity = await getRemainingCapacity(supabase, user.id);
+
+    // 4. Record generation in database (video_generations) with fallback
+    try {
+      await supabase.from("video_generations").insert({
+        user_id: user.id,
+        prompt,
+        selected_model: model,
+        provider: result.provider,
+        duration: result.duration,
+        resolution: result.resolution,
+        aspect_ratio: result.aspectRatio,
+        video_url: result.videoUrl,
+        generation_status: "completed",
+        created_at: result.createdAt,
+        metadata: {
+          fps,
+          camera_motion: cameraMotion,
+          motion_strength: motionStrength,
+          request_id: requestId
+        }
+      });
+    } catch (dbErr: any) {
+      console.warn(`[VideoStudio][Request: ${requestId}] Notice logging to video_generations table:`, dbErr?.message || dbErr);
+    }
+
+    return res.json({
+      success: true,
+      video: {
+        id: result.id,
+        videoUrl: result.videoUrl,
+        prompt: result.prompt,
+        model: result.modelUsed,
+        duration: result.duration,
+        resolution: result.resolution,
+        aspectRatio: result.aspectRatio,
+        createdAt: result.createdAt,
+        status: "completed"
+      },
+      remainingCapacity
+    });
+  } catch (genErr: any) {
+    console.error(`[VideoStudio][Request: ${requestId}] Generation error:`, genErr);
+    return res.status(500).json({ error: genErr?.message || "An error occurred while generating the video." });
+  }
+};
+
+app.post("/api/tools/video-studio", handleVideoGeneration);
+app.post("/api/video/generate", handleVideoGeneration);
+
+// Retrieve user's video generation history
+const handleGetVideoGenerations = async (req: express.Request, res: express.Response) => {
+  try {
+    const user = await authenticateUser(req);
+    const supabase = getSupabaseAdminClient();
+
+    const { data: items, error } = await supabase
+      .from("video_generations")
+      .select("*")
+      .eq("user_id", user.id)
+      .order("created_at", { ascending: false });
+
+    if (error) {
+      console.warn("[VideoStudio] Error querying video_generations:", error.message);
+      return res.json({ success: true, videos: [] });
+    }
+
+    return res.json({
+      success: true,
+      videos: (items || []).map((item: any) => ({
+        id: item.id,
+        videoUrl: item.video_url,
+        prompt: item.prompt,
+        model: item.selected_model,
+        duration: item.duration || '10s',
+        resolution: item.resolution || '1080p',
+        aspectRatio: item.aspect_ratio || '16:9',
+        createdAt: item.created_at,
+        status: item.generation_status || 'completed'
+      }))
+    });
+  } catch (err: any) {
+    if (err.status) return res.status(err.status).json({ error: err.error });
+    return res.json({ success: true, videos: [] });
+  }
+};
+
+app.get("/api/tools/video-studio/generations", handleGetVideoGenerations);
+app.get("/api/video/generations", handleGetVideoGenerations);
 
 // Support legacy endpoint
 app.post("/api/chat", async (req, res) => {

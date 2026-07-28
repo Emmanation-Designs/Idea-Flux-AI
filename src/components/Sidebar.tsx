@@ -22,7 +22,8 @@ import {
   Sliders,
   LifeBuoy,
   ShieldCheck,
-  Building2
+  Building2,
+  Video
 } from 'lucide-react';
 import React, { useState, useRef, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
@@ -44,6 +45,7 @@ export const Sidebar = ({
   onOpenApps,
   onOpenImages,
   onOpenTTS,
+  onOpenVideo,
   onOpenProjects,
   onLogout,
   onOpenUpgrade,
@@ -70,6 +72,7 @@ export const Sidebar = ({
   onOpenApps: () => void;
   onOpenImages: () => void;
   onOpenTTS: () => void;
+  onOpenVideo?: () => void;
   onOpenProjects?: () => void;
   onLogout: () => void;
   onOpenUpgrade?: () => void;
@@ -215,7 +218,7 @@ export const Sidebar = ({
             )}
           >
             <ImageIcon className="w-4 h-4" />
-            Images
+            Image Studio
           </button>
 
           <button 
@@ -229,6 +232,19 @@ export const Sidebar = ({
           >
             <Volume2 className="w-4 h-4" />
             Text-to-Speech Studio
+          </button>
+
+          <button 
+            onClick={() => handleAction(onOpenVideo)}
+            className={cn(
+              "w-full flex items-center gap-3 px-4 py-2.5 text-sm font-medium rounded-xl transition-all",
+              activeView === 'video' 
+                ? "bg-zinc-200 dark:bg-zinc-800 text-zinc-900 dark:text-zinc-100 shadow-sm" 
+                : "text-zinc-500 hover:bg-zinc-100 dark:hover:bg-zinc-900"
+            )}
+          >
+            <Video className="w-4 h-4" />
+            Video Studio
           </button>
 
           <button 
