@@ -331,6 +331,71 @@ export const VideoStudioView: React.FC<VideoStudioViewProps> = ({
         throw new Error(data.error || 'Failed to generate video.');
       }
 
+      // If video generation is still processing/generating on OpenAI
+      if ((data.video.status === 'generating' || data.video.status === 'queued') && !data.video.videoUrl) {
+        const videoId = data.video.id || data.video.providerJobId;
+        let pollCount = 0;
+        const maxPolls = 60; // Poll for up to 3 minutes (every 3s)
+
+        const pollInterval = setInterval(async () => {
+          pollCount++;
+          try {
+            const statusRes = await fetch(`/api/tools/video-studio/status/${videoId}`, {
+              headers: { Authorization: `Bearer ${sessionToken}` }
+            });
+            const statusData = await safeParseJsonResponse(statusRes);
+            
+            if (!statusRes.ok) {
+              clearInterval(pollInterval);
+              setGeneratingItems([]);
+              setIsGenerating(false);
+              toast.error(statusData.error || 'OpenAI Video generation failed during polling.');
+              return;
+            }
+
+            if (statusData.success && statusData.video) {
+              if (statusData.video.status === 'completed' && statusData.video.videoUrl) {
+                clearInterval(pollInterval);
+                setGenerationProgress(100);
+                const completedVideo: VideoGenerationItem = {
+                  id: statusData.video.id || videoId,
+                  created_at: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+                  prompt: statusData.video.prompt || prompt,
+                  quality: selectedQuality,
+                  model: statusData.video.model || (selectedQuality === 'super-creative' ? 'sora-1.0' : 'sora-1.0-turbo'),
+                  duration: statusData.video.duration || selectedDuration,
+                  resolution: statusData.video.resolution || selectedResolution,
+                  aspectRatio: statusData.video.aspectRatio || selectedAspectRatio,
+                  status: 'completed',
+                  videoUrl: statusData.video.videoUrl,
+                  thumbnailUrl: statusData.video.thumbnailUrl
+                };
+                setGeneratingItems([]);
+                setHistory((prev) => [completedVideo, ...prev]);
+                setCurrentProject(completedVideo);
+                setIsGenerating(false);
+                toast.success('Video generation complete!');
+              } else if (statusData.video.status === 'failed') {
+                clearInterval(pollInterval);
+                setGeneratingItems([]);
+                setIsGenerating(false);
+                toast.error(statusData.error || 'Video generation failed on OpenAI.');
+              }
+            }
+          } catch (pollErr: any) {
+            console.error('[VideoStudio] Polling error:', pollErr);
+          }
+
+          if (pollCount >= maxPolls) {
+            clearInterval(pollInterval);
+            setGeneratingItems([]);
+            setIsGenerating(false);
+            toast.error('Video generation timed out.');
+          }
+        }, 3000);
+        return;
+      }
+
       setGenerationProgress(100);
 
       const newVideo: VideoGenerationItem = {
@@ -350,6 +415,7 @@ export const VideoStudioView: React.FC<VideoStudioViewProps> = ({
       setGeneratingItems([]);
       setHistory((prev) => [newVideo, ...prev]);
       setCurrentProject(newVideo);
+      setIsGenerating(false);
       toast.success('Video generation complete!');
     } catch (err: any) {
       clearInterval(intervalTimer);

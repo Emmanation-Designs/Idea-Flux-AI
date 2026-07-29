@@ -1591,7 +1591,11 @@ const handleVideoGeneration = async (req: express.Request, res: express.Response
     });
   } catch (genErr: any) {
     console.error(`[VideoStudio][Request: ${requestId}] Generation error:`, genErr);
-    return res.status(500).json({ error: genErr?.message || "An error occurred while generating the video." });
+    const status = genErr?.status && typeof genErr.status === 'number' && genErr.status >= 400 && genErr.status < 600 ? genErr.status : 500;
+    return res.status(status).json({
+      error: genErr?.message || "An error occurred while generating the video.",
+      details: genErr?.details || null
+    });
   }
 };
 
@@ -1639,31 +1643,53 @@ const handlePollVideoStatus = async (req: express.Request, res: express.Response
     // Poll OpenAI provider for update
     const provider = getVideoProvider("openai");
     if (provider.pollVideoStatus && item.provider_job_id) {
-      const updatedResult = await provider.pollVideoStatus(item.provider_job_id);
-      if (updatedResult.status === 'completed' && updatedResult.videoUrl) {
-        await supabase
-          .from("video_generations")
-          .update({
-            video_url: updatedResult.videoUrl,
-            status: 'completed',
-            generation_status: 'completed',
-            completed_at: new Date().toISOString()
-          })
-          .eq("id", item.id);
+      try {
+        const updatedResult = await provider.pollVideoStatus(item.provider_job_id);
+        if (updatedResult.status === 'completed' && updatedResult.videoUrl) {
+          await supabase
+            .from("video_generations")
+            .update({
+              video_url: updatedResult.videoUrl,
+              status: 'completed',
+              generation_status: 'completed',
+              completed_at: new Date().toISOString()
+            })
+            .eq("id", item.id);
 
-        return res.json({
-          success: true,
-          video: {
-            id: item.id,
-            providerJobId: item.provider_job_id,
-            videoUrl: updatedResult.videoUrl,
-            thumbnailUrl: updatedResult.thumbnailUrl || item.thumbnail_url,
-            prompt: item.prompt,
-            quality: item.quality || 'creative',
-            status: 'completed',
-            createdAt: item.created_at,
-            completedAt: new Date().toISOString()
-          }
+          return res.json({
+            success: true,
+            video: {
+              id: item.id,
+              providerJobId: item.provider_job_id,
+              videoUrl: updatedResult.videoUrl,
+              thumbnailUrl: updatedResult.thumbnailUrl || item.thumbnail_url,
+              prompt: item.prompt,
+              quality: item.quality || 'creative',
+              status: 'completed',
+              createdAt: item.created_at,
+              completedAt: new Date().toISOString()
+            }
+          });
+        } else if (updatedResult.status === 'failed') {
+          await supabase
+            .from("video_generations")
+            .update({
+              status: 'failed',
+              generation_status: 'failed'
+            })
+            .eq("id", item.id);
+
+          return res.status(400).json({
+            error: updatedResult.error || "OpenAI video generation failed.",
+            status: 'failed'
+          });
+        }
+      } catch (pollErr: any) {
+        console.error(`[VideoStudio] Polling error for job ${item.provider_job_id}:`, pollErr);
+        const pollStatus = pollErr?.status && typeof pollErr.status === 'number' && pollErr.status >= 400 && pollErr.status < 600 ? pollErr.status : 500;
+        return res.status(pollStatus).json({
+          error: pollErr?.message || "Failed to poll video generation status.",
+          details: pollErr?.details || null
         });
       }
     }
@@ -1680,7 +1706,7 @@ const handlePollVideoStatus = async (req: express.Request, res: express.Response
       }
     });
   } catch (err: any) {
-    if (err.status) return res.status(err.status).json({ error: err.error });
+    if (err.status) return res.status(err.status).json({ error: err.error || err.message });
     return res.status(500).json({ error: "Failed to poll video generation status." });
   }
 };

@@ -32,6 +32,7 @@ export interface VideoGenerationResult {
   completedAt?: string;
   generationTimeMs?: number;
   costEstimateUsd: number;
+  error?: string;
 }
 
 export interface VideoProvider {
@@ -62,6 +63,12 @@ export class OpenAISoraProvider implements VideoProvider {
 
   async generateVideo(params: VideoGenerationParams): Promise<VideoGenerationResult> {
     const apiKey = process.env.OPENAI_API_KEY;
+    if (!apiKey || apiKey.includes("your_openai") || apiKey.includes("placeholder")) {
+      const err: any = new Error("OPENAI_API_KEY environment variable is missing or not configured on the server.");
+      err.status = 400;
+      throw err;
+    }
+
     const isSuperCreative = params.quality === 'super-creative' || params.quality === 'super_creative';
     const quality: 'creative' | 'super-creative' = isSuperCreative ? 'super-creative' : 'creative';
     
@@ -75,8 +82,6 @@ export class OpenAISoraProvider implements VideoProvider {
     
     // Cost estimation calculation (Creative: ~$0.10, Super Creative: ~$0.35)
     const costEstimateUsd = isSuperCreative ? 0.35 : 0.10;
-    
-    const genId = `sora-${Date.now()}-${Math.random().toString(36).substring(2, 8)}`;
     const createdAt = new Date().toISOString();
 
     // Construct prompt including negative prompt if provided
@@ -85,127 +90,62 @@ export class OpenAISoraProvider implements VideoProvider {
       fullPrompt += `\n\n[Negative prompt / Do not include: ${params.negativePrompt.trim()}]`;
     }
 
-    if (apiKey && !apiKey.includes("your_openai") && !apiKey.includes("placeholder")) {
+    const payload: any = {
+      model: openAIModel,
+      prompt: fullPrompt,
+      size,
+      duration: durationSec,
+    };
+
+    if (params.negativePrompt) {
+      payload.negative_prompt = params.negativePrompt;
+    }
+
+    if (params.inputImage) {
+      payload.input_image = params.inputImage;
+    }
+
+    // Official REST fetch to OpenAI Video generation endpoint
+    const res = await fetch("https://api.openai.com/v1/videos", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${apiKey}`
+      },
+      body: JSON.stringify(payload)
+    });
+
+    if (!res.ok) {
+      let errBody: any = null;
       try {
-        const openai = new OpenAI({ apiKey });
-        
-        // Use OpenAI Video Generation API
-        if ((openai as any).videos?.generate) {
-          const payload: any = {
-            model: openAIModel,
-            prompt: fullPrompt,
-            size,
-            duration: durationSec,
-          };
-
-          if (params.negativePrompt) {
-            payload.negative_prompt = params.negativePrompt;
-          }
-
-          if (params.inputImage) {
-            payload.input_image = params.inputImage;
-          }
-
-          const response = await (openai as any).videos.generate(payload);
-          
-          if (response) {
-            const videoUrl = response.data?.[0]?.url || response.url || response.output_url;
-            const status = response.status || (videoUrl ? 'completed' : 'generating');
-            const providerJobId = response.id || response.job_id || genId;
-
-            return {
-              id: genId,
-              providerJobId,
-              videoUrl: videoUrl || undefined,
-              thumbnailUrl: response.thumbnail_url || response.data?.[0]?.thumbnail_url,
-              prompt: params.prompt,
-              negativePrompt: params.negativePrompt,
-              duration,
-              resolution,
-              aspectRatio,
-              quality,
-              modelUsed: openAIModel,
-              provider: 'openai',
-              status: status === 'succeeded' || status === 'completed' ? 'completed' : (status as any),
-              createdAt,
-              completedAt: videoUrl ? new Date().toISOString() : undefined,
-              costEstimateUsd,
-            };
-          }
-        } else {
-          // Direct REST fetch to official OpenAI Video endpoint
-          const payload: any = {
-            model: openAIModel,
-            prompt: fullPrompt,
-            size,
-            duration: durationSec,
-          };
-          if (params.negativePrompt) payload.negative_prompt = params.negativePrompt;
-          if (params.inputImage) payload.input_image = params.inputImage;
-
-          const res = await fetch("https://api.openai.com/v1/videos", {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-              "Authorization": `Bearer ${apiKey}`
-            },
-            body: JSON.stringify(payload)
-          });
-
-          if (res.ok) {
-            const data = await res.json();
-            const videoUrl = data.data?.[0]?.url || data.video_url || data.url;
-            const providerJobId = data.id || data.job_id || genId;
-            const status = data.status || (videoUrl ? 'completed' : 'generating');
-
-            return {
-              id: genId,
-              providerJobId,
-              videoUrl: videoUrl || undefined,
-              thumbnailUrl: data.thumbnail_url || data.data?.[0]?.thumbnail_url,
-              prompt: params.prompt,
-              negativePrompt: params.negativePrompt,
-              duration,
-              resolution,
-              aspectRatio,
-              quality,
-              modelUsed: openAIModel,
-              provider: 'openai',
-              status: status === 'succeeded' ? 'completed' : (status as any),
-              createdAt,
-              completedAt: videoUrl ? new Date().toISOString() : undefined,
-              costEstimateUsd,
-            };
-          } else {
-            const errData = await res.json().catch(() => ({}));
-            console.warn("[OpenAISoraProvider] OpenAI API error:", res.status, errData);
-          }
-        }
-      } catch (err: any) {
-        console.warn("[OpenAISoraProvider] Direct API call notice:", err?.message || err);
+        errBody = await res.json();
+      } catch {
+        const text = await res.text().catch(() => '');
+        errBody = { message: text || `HTTP ${res.status} ${res.statusText}` };
       }
+      const message = errBody?.error?.message || errBody?.message || `OpenAI Video API returned HTTP ${res.status}`;
+      const err: any = new Error(`OpenAI Video API Error (${res.status}): ${message}`);
+      err.status = res.status;
+      err.details = errBody;
+      throw err;
     }
 
-    // High quality sample video fallbacks if API key is in sandbox mode or not supplied
-    const SAMPLE_SORA_VIDEOS = [
-      "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4",
-      "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerEscapes.mp4",
-      "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerFun.mp4",
-      "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerJoyrides.mp4"
-    ];
-    
-    let hash = 0;
-    for (let i = 0; i < params.prompt.length; i++) {
-      hash = (hash << 5) - hash + params.prompt.charCodeAt(i);
-      hash |= 0;
+    const data = await res.json();
+    const videoUrl = data.data?.[0]?.url || data.video_url || data.url;
+    const providerJobId = data.id || data.job_id;
+
+    if (!providerJobId && !videoUrl) {
+      throw new Error("OpenAI Video API response did not contain a valid job ID or video URL.");
     }
-    const selectedUrl = SAMPLE_SORA_VIDEOS[Math.abs(hash) % SAMPLE_SORA_VIDEOS.length];
+
+    const rawStatus = data.status || (videoUrl ? 'completed' : 'generating');
+    const isCompleted = rawStatus === 'succeeded' || rawStatus === 'completed';
 
     return {
-      id: genId,
-      providerJobId: `job-${genId}`,
-      videoUrl: selectedUrl,
-      thumbnailUrl: `https://images.unsplash.com/photo-1579783902614-a3fb3927b675?auto=format&fit=crop&w=800&q=80`,
+      id: providerJobId || `openai-${Date.now()}`,
+      providerJobId: providerJobId || `openai-${Date.now()}`,
+      videoUrl: videoUrl || undefined,
+      thumbnailUrl: data.thumbnail_url || data.data?.[0]?.thumbnail_url,
       prompt: params.prompt,
       negativePrompt: params.negativePrompt,
       duration,
@@ -213,64 +153,66 @@ export class OpenAISoraProvider implements VideoProvider {
       aspectRatio,
       quality,
       modelUsed: openAIModel,
-      provider: "openai",
-      status: "completed",
+      provider: 'openai',
+      status: isCompleted ? 'completed' : 'generating',
       createdAt,
-      completedAt: new Date().toISOString(),
+      completedAt: isCompleted ? new Date().toISOString() : undefined,
       costEstimateUsd,
     };
   }
 
   async pollVideoStatus(jobId: string): Promise<VideoGenerationResult> {
     const apiKey = process.env.OPENAI_API_KEY;
-    if (apiKey && !apiKey.includes("your_openai") && !apiKey.includes("placeholder")) {
-      try {
-        const res = await fetch(`https://api.openai.com/v1/videos/${jobId}`, {
-          headers: {
-            "Authorization": `Bearer ${apiKey}`
-          }
-        });
-        if (res.ok) {
-          const data = await res.json();
-          const videoUrl = data.data?.[0]?.url || data.video_url || data.url;
-          const status = data.status === 'succeeded' ? 'completed' : data.status || 'completed';
-
-          return {
-            id: jobId,
-            providerJobId: jobId,
-            videoUrl,
-            thumbnailUrl: data.thumbnail_url,
-            prompt: data.prompt || '',
-            duration: data.duration ? `${data.duration}s` : '10s',
-            resolution: '1080p',
-            aspectRatio: '16:9',
-            quality: data.model?.includes('turbo') ? 'creative' : 'super-creative',
-            modelUsed: data.model || 'sora-1.0-turbo',
-            provider: 'openai',
-            status: status as any,
-            createdAt: data.created_at || new Date().toISOString(),
-            completedAt: videoUrl ? new Date().toISOString() : undefined,
-            costEstimateUsd: data.model?.includes('turbo') ? 0.10 : 0.35
-          };
-        }
-      } catch (err) {
-        console.warn("[OpenAISoraProvider] Polling error:", err);
-      }
+    if (!apiKey || apiKey.includes("your_openai") || apiKey.includes("placeholder")) {
+      const err: any = new Error("OPENAI_API_KEY is missing or not configured on the server.");
+      err.status = 400;
+      throw err;
     }
+
+    const res = await fetch(`https://api.openai.com/v1/videos/${jobId}`, {
+      headers: {
+        "Authorization": `Bearer ${apiKey}`
+      }
+    });
+
+    if (!res.ok) {
+      let errBody: any = null;
+      try {
+        errBody = await res.json();
+      } catch {
+        const text = await res.text().catch(() => '');
+        errBody = { message: text || `HTTP ${res.status} ${res.statusText}` };
+      }
+      const message = errBody?.error?.message || errBody?.message || `OpenAI Video Polling returned HTTP ${res.status}`;
+      const err: any = new Error(`OpenAI Video Polling Error (${res.status}): ${message}`);
+      err.status = res.status;
+      err.details = errBody;
+      throw err;
+    }
+
+    const data = await res.json();
+    const videoUrl = data.data?.[0]?.url || data.video_url || data.url;
+    const rawStatus = data.status || (videoUrl ? 'completed' : 'generating');
+    const isCompleted = rawStatus === 'succeeded' || rawStatus === 'completed';
+    const isFailed = rawStatus === 'failed' || rawStatus === 'cancelled';
 
     return {
       id: jobId,
       providerJobId: jobId,
-      status: "completed",
-      prompt: "",
-      duration: "10s",
-      resolution: "1080p",
-      aspectRatio: "16:9",
-      quality: "creative",
-      modelUsed: "sora-1.0-turbo",
-      provider: "openai",
-      createdAt: new Date().toISOString(),
-      costEstimateUsd: 0.10
+      videoUrl: videoUrl || undefined,
+      thumbnailUrl: data.thumbnail_url,
+      prompt: data.prompt || '',
+      duration: data.duration ? `${data.duration}s` : '10s',
+      resolution: '1080p',
+      aspectRatio: '16:9',
+      quality: data.model?.includes('turbo') ? 'creative' : 'super-creative',
+      modelUsed: data.model || 'sora-1.0-turbo',
+      provider: 'openai',
+      status: isFailed ? 'failed' : (isCompleted ? 'completed' : 'generating'),
+      error: data.error?.message || data.error || (isFailed ? 'Video generation failed' : undefined),
+      createdAt: data.created_at || new Date().toISOString(),
+      completedAt: isCompleted ? new Date().toISOString() : undefined,
+      costEstimateUsd: data.model?.includes('turbo') ? 0.10 : 0.35
     };
   }
 }
