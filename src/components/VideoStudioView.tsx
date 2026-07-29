@@ -97,7 +97,7 @@ const HERO_SLIDES = [
   {
     id: 2,
     title: "Cinematic 4K scenes generated in seconds.",
-    subtitle: "Turn text prompts into high-definition realistic motion videos with OpenAI Sora engine.",
+    subtitle: "Turn text prompts into high-definition realistic motion videos with Trelvix AI Video Engine.",
     bgUrl: "https://images.unsplash.com/photo-1518709268805-4e9042af9f23?auto=format&fit=crop&w=1600&q=80",
     tag: "Create a scene",
     tagIcon: "🎬"
@@ -121,6 +121,18 @@ const PixelFlowerIcon = () => (
     />
   </svg>
 );
+
+async function safeParseJsonResponse(res: Response) {
+  const text = await res.text();
+  try {
+    return JSON.parse(text);
+  } catch {
+    if (!res.ok) {
+      throw new Error(`Server request failed with status ${res.status}`);
+    }
+    throw new Error('Received unexpected non-JSON response from server.');
+  }
+}
 
 export const VideoStudioView: React.FC<VideoStudioViewProps> = ({
   profile,
@@ -198,7 +210,7 @@ export const VideoStudioView: React.FC<VideoStudioViewProps> = ({
         const res = await fetch('/api/tools/video-studio/generations', {
           headers: { Authorization: `Bearer ${token}` }
         });
-        const data = await res.json();
+        const data = await safeParseJsonResponse(res);
         if (data?.success && Array.isArray(data.videos) && isMounted) {
           const apiVideos: VideoGenerationItem[] = data.videos.map((v: any) => ({
             id: v.id,
@@ -310,7 +322,7 @@ export const VideoStudioView: React.FC<VideoStudioViewProps> = ({
       });
 
       clearInterval(intervalTimer);
-      const data = await response.json();
+      const data = await safeParseJsonResponse(response);
 
       if (!response.ok || !data.success) {
         if (data.code === 'UPGRADE_REQUIRED' || data.code === 'PRO_REQUIRED') {
@@ -395,7 +407,7 @@ export const VideoStudioView: React.FC<VideoStudioViewProps> = ({
           type: 'image'
         })
       });
-      const data = await res.json();
+      const data = await safeParseJsonResponse(res);
       let imageUrl = data.image_url || data.imageUrl || data.url;
       if (!imageUrl) {
         imageUrl = 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=800&q=80';
@@ -461,7 +473,7 @@ export const VideoStudioView: React.FC<VideoStudioViewProps> = ({
           type: 'image'
         })
       });
-      const data = await res.json();
+      const data = await safeParseJsonResponse(res);
       let imageUrl = data.image_url || data.imageUrl || data.url;
       if (!imageUrl) {
         imageUrl = 'https://images.unsplash.com/photo-1518709268805-4e9042af9f23?auto=format&fit=crop&w=800&q=80';
@@ -951,7 +963,7 @@ export const VideoStudioView: React.FC<VideoStudioViewProps> = ({
                           <div className="z-10 flex flex-col items-center gap-3 p-6 text-center">
                             <RefreshCw className="w-8 h-8 text-emerald-500 animate-spin" />
                             <span className="text-xs font-bold text-zinc-700 dark:text-zinc-300 animate-pulse">
-                              OpenAI Sora rendering frames...
+                              Rendering cinematic video frames...
                             </span>
                           </div>
                         </div>
@@ -1375,7 +1387,7 @@ export const VideoStudioView: React.FC<VideoStudioViewProps> = ({
                     <div className="space-y-1.5">
                       <label className="text-[10px] font-bold uppercase tracking-wider text-zinc-500 dark:text-zinc-400 flex items-center justify-between">
                         <span>Quality Engine</span>
-                        <span className="text-emerald-500 font-mono text-[10px]">OpenAI Sora</span>
+                        <span className="text-emerald-500 font-mono text-[10px]">Trelvix AI</span>
                       </label>
                       <div className="grid grid-cols-2 gap-2 bg-zinc-100 dark:bg-zinc-950 p-1 rounded-2xl border border-zinc-200 dark:border-zinc-800">
                         <button

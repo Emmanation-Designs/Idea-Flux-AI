@@ -183,7 +183,7 @@ export async function fetchLibraryItems(): Promise<{
               url: audioUrl,
               fileFormat: 'MP3',
               prompt: meta.original_text || textContent,
-              modelUsed: meta.voice_name || row.selected_model || row.selected_voice || 'ElevenLabs / OpenAI',
+              modelUsed: meta.voice_name || row.selected_model || row.selected_voice || 'Trelvix Voice',
               originatingFeature: 'Text to Speech',
               generatorType: 'AI Voice'
             });
@@ -220,7 +220,7 @@ export async function fetchLibraryItems(): Promise<{
               resolution: row.resolution || '1080p',
               fileFormat: 'MP4',
               prompt: row.prompt,
-              modelUsed: row.selected_model || 'OpenAI Sora',
+              modelUsed: row.selected_model || 'Trelvix Video',
               originatingFeature: 'Video Studio',
               generatorType: 'AI Video'
             });
