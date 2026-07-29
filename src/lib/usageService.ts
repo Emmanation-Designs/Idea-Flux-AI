@@ -39,7 +39,9 @@ export type CentralizedFeature =
   | 'image_edit'
   | 'image_generation'
   | 'tts'
-  | 'video_generation';
+  | 'video_generation'
+  | 'video_generation_creative'
+  | 'video_generation_super_creative';
 
 /**
  * Internal configurable warning threshold.
@@ -71,8 +73,15 @@ export function getFeatureCost(feature: string): number {
       return 8;
     case 'image_generation':
       return 10;
+    case 'video_generation_creative':
+    case 'creative':
+      return 15;
+    case 'video_generation_super_creative':
+    case 'super_creative':
+    case 'super-creative':
+      return 45;
     case 'video_generation':
-      return 30;
+      return 20;
     default:
       return 1;
   }
@@ -288,6 +297,7 @@ export async function getUserUsage(supabaseClient: any, userId: string): Promise
 export interface CheckResult {
   allowed: boolean;
   reason?: string;
+  code?: string;
   current: number;
   limit: number;
 }
@@ -299,12 +309,37 @@ export async function checkLimit(
   supabaseClient: any,
   userId: string,
   feature: string,
-  incrementAmount: number = 1
+  incrementAmount: number = 1,
+  options?: { quality?: string }
 ): Promise<CheckResult> {
   const subscription = await getSubscription(supabaseClient, userId);
   const plan = (subscription.current_plan || 'free').toLowerCase() as PlanId;
   const catalogLimits = getCatalogPlanLimits(plan);
   const usage = await getUserUsage(supabaseClient, userId);
+
+  // VIDEO GENERATION ACCESS RULES
+  if (feature.startsWith('video_generation') || feature === 'video') {
+    if (plan === 'free') {
+      return {
+        allowed: false,
+        reason: "Free users cannot generate videos. Please upgrade to a Plus or Pro plan.",
+        code: "UPGRADE_REQUIRED",
+        current: usage.daily_ai_capacity_used ?? 0,
+        limit: 100
+      };
+    }
+
+    const requestedQuality = options?.quality || (feature.includes('super') ? 'super-creative' : 'creative');
+    if ((requestedQuality === 'super-creative' || requestedQuality === 'super_creative') && plan === 'plus') {
+      return {
+        allowed: false,
+        reason: "Super Creative video quality requires a Pro plan. Please upgrade to Pro.",
+        code: "PRO_REQUIRED",
+        current: usage.daily_ai_capacity_used ?? 0,
+        limit: 2000
+      };
+    }
+  }
 
   if (feature === 'tts') {
     const current = usage.tts_characters_used_monthly;

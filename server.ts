@@ -1452,10 +1452,13 @@ const handleVideoGeneration = async (req: express.Request, res: express.Response
 
   const {
     prompt,
-    model = "sora-v1-hd",
+    negativePrompt,
+    quality = "creative",
+    model = "sora-1.0-turbo",
     duration = "10s",
     resolution = "1080p",
     aspectRatio = "16:9",
+    inputImage,
     fps = "24 fps",
     cameraMotion,
     motionStrength
@@ -1466,14 +1469,21 @@ const handleVideoGeneration = async (req: express.Request, res: express.Response
     return res.status(400).json({ error: "A descriptive prompt is required for video generation." });
   }
 
-  // 1. Check Subscriptions and Plan Limits using the Centralized Limit Engine
+  // Determine feature key based on quality ('creative' vs 'super-creative')
+  const isSuperCreative = quality === 'super-creative' || quality === 'super_creative';
+  const resolvedQuality: 'creative' | 'super-creative' = isSuperCreative ? 'super-creative' : 'creative';
+  const featureKey = isSuperCreative ? 'video_generation_super_creative' : 'video_generation_creative';
+
+  // 1. Check Subscriptions and Plan Limits using Centralized Limit Engine
   let allowed = true;
   let reason = "";
+  let errorCode = "";
 
   try {
-    const limitResult = await checkLimit(supabase, user.id, 'video_generation', 1);
+    const limitResult = await checkLimit(supabase, user.id, featureKey, 1, { quality: resolvedQuality });
     allowed = limitResult.allowed;
     reason = limitResult.reason || "";
+    errorCode = limitResult.code || "";
   } catch (err: any) {
     console.error(`[VideoStudio][Request: ${requestId}] Limit check exception:`, err.message);
     allowed = false;
@@ -1482,49 +1492,78 @@ const handleVideoGeneration = async (req: express.Request, res: express.Response
 
   if (!allowed) {
     console.warn(`[VideoStudio][Request: ${requestId}] Limit check rejected: ${reason}`);
-    return res.status(403).json({ error: reason || "Daily AI capacity exhausted. Please upgrade your plan." });
+    return res.status(403).json({ 
+      error: reason || "Daily AI capacity exhausted. Please upgrade your plan.",
+      code: errorCode || "CAPACITY_EXHAUSTED"
+    });
   }
 
   try {
     // 2. Obtain Video Provider (OpenAI Sora)
-    const provider = getVideoProvider(model);
-    console.log(`[VideoStudio][Request: ${requestId}] Generating video with provider: ${provider.name}, model: ${model}`);
+    const provider = getVideoProvider("openai");
+    console.log(`[VideoStudio][Request: ${requestId}] Generating video with provider: ${provider.name}, quality: ${resolvedQuality}`);
 
+    const startTime = Date.now();
     const result = await provider.generateVideo({
       prompt,
-      model,
+      negativePrompt,
+      quality: resolvedQuality,
       duration,
       resolution,
       aspectRatio,
       fps,
       cameraMotion,
-      motionStrength
+      motionStrength,
+      inputImage
     });
+    const generationTimeMs = Date.now() - startTime;
 
     // 3. Deduct AI Capacity via incrementUsage
-    await incrementUsage(supabase, user.id, 'video_generation', 1);
+    await incrementUsage(supabase, user.id, featureKey, 1);
     const remainingCapacity = await getRemainingCapacity(supabase, user.id);
 
-    // 4. Record generation in database (video_generations) with fallback
+    // 4. Record generation in database (video_generations) with complete fields
+    let dbRecordId = result.id;
     try {
-      await supabase.from("video_generations").insert({
+      const insertData = {
         user_id: user.id,
-        prompt,
-        selected_model: model,
+        prompt: result.prompt,
+        negative_prompt: result.negativePrompt || negativePrompt || null,
+        quality: resolvedQuality,
+        selected_model: result.modelUsed,
         provider: result.provider,
+        provider_job_id: result.providerJobId,
         duration: result.duration,
         resolution: result.resolution,
         aspect_ratio: result.aspectRatio,
-        video_url: result.videoUrl,
-        generation_status: "completed",
+        video_url: result.videoUrl || null,
+        thumbnail_url: result.thumbnailUrl || null,
+        status: result.status || "completed",
+        generation_status: result.status || "completed",
         created_at: result.createdAt,
+        completed_at: result.completedAt || (result.status === 'completed' ? new Date().toISOString() : null),
+        generation_time: result.generationTimeMs || generationTimeMs,
+        cost_estimate: result.costEstimateUsd,
+        input_image_url: inputImage || null,
         metadata: {
           fps,
           camera_motion: cameraMotion,
           motion_strength: motionStrength,
           request_id: requestId
         }
-      });
+      };
+
+      const { data: inserted, error: dbErr } = await supabase
+        .from("video_generations")
+        .insert(insertData)
+        .select("id")
+        .maybeSingle();
+
+      if (inserted?.id) {
+        dbRecordId = inserted.id;
+      } else if (dbErr) {
+        console.warn(`[VideoStudio][Request: ${requestId}] Notice logging to video_generations table:`, dbErr?.message || dbErr);
+      }
     } catch (dbErr: any) {
       console.warn(`[VideoStudio][Request: ${requestId}] Notice logging to video_generations table:`, dbErr?.message || dbErr);
     }
@@ -1532,15 +1571,21 @@ const handleVideoGeneration = async (req: express.Request, res: express.Response
     return res.json({
       success: true,
       video: {
-        id: result.id,
+        id: dbRecordId,
+        providerJobId: result.providerJobId,
         videoUrl: result.videoUrl,
+        thumbnailUrl: result.thumbnailUrl,
         prompt: result.prompt,
+        negativePrompt: result.negativePrompt,
+        quality: resolvedQuality,
         model: result.modelUsed,
         duration: result.duration,
         resolution: result.resolution,
         aspectRatio: result.aspectRatio,
+        costEstimate: result.costEstimateUsd,
+        generationTimeMs,
         createdAt: result.createdAt,
-        status: "completed"
+        status: result.status || "completed"
       },
       remainingCapacity
     });
@@ -1552,6 +1597,124 @@ const handleVideoGeneration = async (req: express.Request, res: express.Response
 
 app.post("/api/tools/video-studio", handleVideoGeneration);
 app.post("/api/video/generate", handleVideoGeneration);
+
+// Poll video generation status for async jobs
+const handlePollVideoStatus = async (req: express.Request, res: express.Response) => {
+  try {
+    const user = await authenticateUser(req);
+    const supabase = getSupabaseAdminClient();
+    const id = req.params.id;
+
+    const { data: item, error } = await supabase
+      .from("video_generations")
+      .select("*")
+      .or(`id.eq.${id},provider_job_id.eq.${id}`)
+      .eq("user_id", user.id)
+      .maybeSingle();
+
+    if (error || !item) {
+      return res.status(404).json({ error: "Video generation record not found." });
+    }
+
+    if (item.status === 'completed' || item.generation_status === 'completed' || item.video_url) {
+      return res.json({
+        success: true,
+        video: {
+          id: item.id,
+          providerJobId: item.provider_job_id,
+          videoUrl: item.video_url,
+          thumbnailUrl: item.thumbnail_url,
+          prompt: item.prompt,
+          quality: item.quality || 'creative',
+          model: item.selected_model,
+          duration: item.duration,
+          aspectRatio: item.aspect_ratio,
+          status: 'completed',
+          createdAt: item.created_at,
+          completedAt: item.completed_at
+        }
+      });
+    }
+
+    // Poll OpenAI provider for update
+    const provider = getVideoProvider("openai");
+    if (provider.pollVideoStatus && item.provider_job_id) {
+      const updatedResult = await provider.pollVideoStatus(item.provider_job_id);
+      if (updatedResult.status === 'completed' && updatedResult.videoUrl) {
+        await supabase
+          .from("video_generations")
+          .update({
+            video_url: updatedResult.videoUrl,
+            status: 'completed',
+            generation_status: 'completed',
+            completed_at: new Date().toISOString()
+          })
+          .eq("id", item.id);
+
+        return res.json({
+          success: true,
+          video: {
+            id: item.id,
+            providerJobId: item.provider_job_id,
+            videoUrl: updatedResult.videoUrl,
+            thumbnailUrl: updatedResult.thumbnailUrl || item.thumbnail_url,
+            prompt: item.prompt,
+            quality: item.quality || 'creative',
+            status: 'completed',
+            createdAt: item.created_at,
+            completedAt: new Date().toISOString()
+          }
+        });
+      }
+    }
+
+    return res.json({
+      success: true,
+      video: {
+        id: item.id,
+        providerJobId: item.provider_job_id,
+        status: item.status || item.generation_status || 'generating',
+        prompt: item.prompt,
+        quality: item.quality || 'creative',
+        createdAt: item.created_at
+      }
+    });
+  } catch (err: any) {
+    if (err.status) return res.status(err.status).json({ error: err.error });
+    return res.status(500).json({ error: "Failed to poll video generation status." });
+  }
+};
+
+app.get("/api/tools/video-studio/status/:id", handlePollVideoStatus);
+app.get("/api/video/status/:id", handlePollVideoStatus);
+
+// Delete a generated video
+const handleDeleteVideo = async (req: express.Request, res: express.Response) => {
+  try {
+    const user = await authenticateUser(req);
+    const supabase = getSupabaseAdminClient();
+    const id = req.params.id;
+
+    const { error } = await supabase
+      .from("video_generations")
+      .delete()
+      .eq("id", id)
+      .eq("user_id", user.id);
+
+    if (error) {
+      console.warn("[VideoStudio] Delete error:", error.message);
+      return res.status(500).json({ error: "Failed to delete video record." });
+    }
+
+    return res.json({ success: true, message: "Video deleted successfully." });
+  } catch (err: any) {
+    if (err.status) return res.status(err.status).json({ error: err.error });
+    return res.status(500).json({ error: "An error occurred while deleting video." });
+  }
+};
+
+app.delete("/api/tools/video-studio/:id", handleDeleteVideo);
+app.delete("/api/video/:id", handleDeleteVideo);
 
 // Retrieve user's video generation history
 const handleGetVideoGenerations = async (req: express.Request, res: express.Response) => {
@@ -1574,14 +1737,20 @@ const handleGetVideoGenerations = async (req: express.Request, res: express.Resp
       success: true,
       videos: (items || []).map((item: any) => ({
         id: item.id,
+        providerJobId: item.provider_job_id,
         videoUrl: item.video_url,
+        thumbnailUrl: item.thumbnail_url,
         prompt: item.prompt,
+        negativePrompt: item.negative_prompt,
+        quality: item.quality || 'creative',
         model: item.selected_model,
         duration: item.duration || '10s',
         resolution: item.resolution || '1080p',
         aspectRatio: item.aspect_ratio || '16:9',
         createdAt: item.created_at,
-        status: item.generation_status || 'completed'
+        completedAt: item.completed_at,
+        costEstimate: item.cost_estimate || 0.10,
+        status: item.status || item.generation_status || 'completed'
       }))
     });
   } catch (err: any) {

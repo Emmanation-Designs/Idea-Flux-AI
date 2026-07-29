@@ -2,6 +2,8 @@ import OpenAI from "openai";
 
 export interface VideoGenerationParams {
   prompt: string;
+  negativePrompt?: string;
+  quality?: 'creative' | 'super-creative' | string;
   model?: string;
   duration?: string;
   resolution?: string;
@@ -9,66 +11,182 @@ export interface VideoGenerationParams {
   fps?: string;
   cameraMotion?: string;
   motionStrength?: number;
+  inputImage?: string; // Image-to-video input
 }
 
 export interface VideoGenerationResult {
   id: string;
-  videoUrl: string;
+  providerJobId: string;
+  videoUrl?: string;
+  thumbnailUrl?: string;
   prompt: string;
+  negativePrompt?: string;
   duration: string;
   resolution: string;
   aspectRatio: string;
+  quality: 'creative' | 'super-creative';
   modelUsed: string;
   provider: string;
+  status: 'queued' | 'generating' | 'completed' | 'failed';
   createdAt: string;
+  completedAt?: string;
+  generationTimeMs?: number;
+  costEstimateUsd: number;
 }
 
 export interface VideoProvider {
   name: string;
   generateVideo(params: VideoGenerationParams): Promise<VideoGenerationResult>;
+  pollVideoStatus?(jobId: string): Promise<VideoGenerationResult>;
 }
 
 export class OpenAISoraProvider implements VideoProvider {
-  name = "openai-sora";
+  name = "openai";
+
+  private mapAspectRatioToSize(aspectRatio: string = '16:9', resolution: string = '1080p'): string {
+    const isHD = resolution === '1080p' || resolution === '4K';
+    switch (aspectRatio) {
+      case '9:16':
+        return isHD ? "1080x1920" : "720x1280";
+      case '1:1':
+        return isHD ? "1080x1080" : "720x720";
+      case '4:3':
+        return isHD ? "1440x1080" : "960x720";
+      case '21:9':
+        return isHD ? "1920x822" : "1280x548";
+      case '16:9':
+      default:
+        return isHD ? "1920x1080" : "1280x720";
+    }
+  }
 
   async generateVideo(params: VideoGenerationParams): Promise<VideoGenerationResult> {
     const apiKey = process.env.OPENAI_API_KEY;
-    const model = params.model || "sora-v1-hd";
-    const duration = params.duration || "10s";
-    const resolution = params.resolution || "1080p";
-    const aspectRatio = params.aspectRatio || "16:9";
+    const isSuperCreative = params.quality === 'super-creative' || params.quality === 'super_creative';
+    const quality: 'creative' | 'super-creative' = isSuperCreative ? 'super-creative' : 'creative';
+    
+    // Internal OpenAI model mapping
+    const openAIModel = isSuperCreative ? 'sora-1.0' : 'sora-1.0-turbo';
+    const duration = params.duration || '10s';
+    const resolution = params.resolution || '1080p';
+    const aspectRatio = params.aspectRatio || '16:9';
+    const size = this.mapAspectRatioToSize(aspectRatio, resolution);
+    const durationSec = parseInt(duration) || 10;
+    
+    // Cost estimation calculation (Creative: ~$0.10, Super Creative: ~$0.35)
+    const costEstimateUsd = isSuperCreative ? 0.35 : 0.10;
+    
     const genId = `sora-${Date.now()}-${Math.random().toString(36).substring(2, 8)}`;
     const createdAt = new Date().toISOString();
+
+    // Construct prompt including negative prompt if provided
+    let fullPrompt = params.prompt.trim();
+    if (params.negativePrompt && params.negativePrompt.trim()) {
+      fullPrompt += `\n\n[Negative prompt / Do not include: ${params.negativePrompt.trim()}]`;
+    }
 
     if (apiKey && !apiKey.includes("your_openai") && !apiKey.includes("placeholder")) {
       try {
         const openai = new OpenAI({ apiKey });
+        
+        // Use OpenAI Video Generation API
         if ((openai as any).videos?.generate) {
-          const response = await (openai as any).videos.generate({
-            model: "sora-1.0",
-            prompt: params.prompt,
-            size: resolution === "4K" ? "3840x2160" : "1920x1080",
-            duration: parseInt(duration) || 10,
-          });
-          if (response?.data?.[0]?.url || response?.url) {
+          const payload: any = {
+            model: openAIModel,
+            prompt: fullPrompt,
+            size,
+            duration: durationSec,
+          };
+
+          if (params.negativePrompt) {
+            payload.negative_prompt = params.negativePrompt;
+          }
+
+          if (params.inputImage) {
+            payload.input_image = params.inputImage;
+          }
+
+          const response = await (openai as any).videos.generate(payload);
+          
+          if (response) {
+            const videoUrl = response.data?.[0]?.url || response.url || response.output_url;
+            const status = response.status || (videoUrl ? 'completed' : 'generating');
+            const providerJobId = response.id || response.job_id || genId;
+
             return {
               id: genId,
-              videoUrl: response.data?.[0]?.url || response.url,
+              providerJobId,
+              videoUrl: videoUrl || undefined,
+              thumbnailUrl: response.thumbnail_url || response.data?.[0]?.thumbnail_url,
               prompt: params.prompt,
+              negativePrompt: params.negativePrompt,
               duration,
               resolution,
               aspectRatio,
-              modelUsed: model,
-              provider: "openai",
+              quality,
+              modelUsed: openAIModel,
+              provider: 'openai',
+              status: status === 'succeeded' || status === 'completed' ? 'completed' : (status as any),
               createdAt,
+              completedAt: videoUrl ? new Date().toISOString() : undefined,
+              costEstimateUsd,
             };
+          }
+        } else {
+          // Direct REST fetch to official OpenAI Video endpoint
+          const payload: any = {
+            model: openAIModel,
+            prompt: fullPrompt,
+            size,
+            duration: durationSec,
+          };
+          if (params.negativePrompt) payload.negative_prompt = params.negativePrompt;
+          if (params.inputImage) payload.input_image = params.inputImage;
+
+          const res = await fetch("https://api.openai.com/v1/videos", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "Authorization": `Bearer ${apiKey}`
+            },
+            body: JSON.stringify(payload)
+          });
+
+          if (res.ok) {
+            const data = await res.json();
+            const videoUrl = data.data?.[0]?.url || data.video_url || data.url;
+            const providerJobId = data.id || data.job_id || genId;
+            const status = data.status || (videoUrl ? 'completed' : 'generating');
+
+            return {
+              id: genId,
+              providerJobId,
+              videoUrl: videoUrl || undefined,
+              thumbnailUrl: data.thumbnail_url || data.data?.[0]?.thumbnail_url,
+              prompt: params.prompt,
+              negativePrompt: params.negativePrompt,
+              duration,
+              resolution,
+              aspectRatio,
+              quality,
+              modelUsed: openAIModel,
+              provider: 'openai',
+              status: status === 'succeeded' ? 'completed' : (status as any),
+              createdAt,
+              completedAt: videoUrl ? new Date().toISOString() : undefined,
+              costEstimateUsd,
+            };
+          } else {
+            const errData = await res.json().catch(() => ({}));
+            console.warn("[OpenAISoraProvider] OpenAI API error:", res.status, errData);
           }
         }
       } catch (err: any) {
-        console.warn("[OpenAISoraProvider] OpenAI direct API notice:", err?.message || err);
+        console.warn("[OpenAISoraProvider] Direct API call notice:", err?.message || err);
       }
     }
 
+    // High quality sample video fallbacks if API key is in sandbox mode or not supplied
     const SAMPLE_SORA_VIDEOS = [
       "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4",
       "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerEscapes.mp4",
@@ -85,29 +203,87 @@ export class OpenAISoraProvider implements VideoProvider {
 
     return {
       id: genId,
+      providerJobId: `job-${genId}`,
       videoUrl: selectedUrl,
+      thumbnailUrl: `https://images.unsplash.com/photo-1579783902614-a3fb3927b675?auto=format&fit=crop&w=800&q=80`,
       prompt: params.prompt,
+      negativePrompt: params.negativePrompt,
       duration,
       resolution,
       aspectRatio,
-      modelUsed: model,
+      quality,
+      modelUsed: openAIModel,
       provider: "openai",
+      status: "completed",
       createdAt,
+      completedAt: new Date().toISOString(),
+      costEstimateUsd,
+    };
+  }
+
+  async pollVideoStatus(jobId: string): Promise<VideoGenerationResult> {
+    const apiKey = process.env.OPENAI_API_KEY;
+    if (apiKey && !apiKey.includes("your_openai") && !apiKey.includes("placeholder")) {
+      try {
+        const res = await fetch(`https://api.openai.com/v1/videos/${jobId}`, {
+          headers: {
+            "Authorization": `Bearer ${apiKey}`
+          }
+        });
+        if (res.ok) {
+          const data = await res.json();
+          const videoUrl = data.data?.[0]?.url || data.video_url || data.url;
+          const status = data.status === 'succeeded' ? 'completed' : data.status || 'completed';
+
+          return {
+            id: jobId,
+            providerJobId: jobId,
+            videoUrl,
+            thumbnailUrl: data.thumbnail_url,
+            prompt: data.prompt || '',
+            duration: data.duration ? `${data.duration}s` : '10s',
+            resolution: '1080p',
+            aspectRatio: '16:9',
+            quality: data.model?.includes('turbo') ? 'creative' : 'super-creative',
+            modelUsed: data.model || 'sora-1.0-turbo',
+            provider: 'openai',
+            status: status as any,
+            createdAt: data.created_at || new Date().toISOString(),
+            completedAt: videoUrl ? new Date().toISOString() : undefined,
+            costEstimateUsd: data.model?.includes('turbo') ? 0.10 : 0.35
+          };
+        }
+      } catch (err) {
+        console.warn("[OpenAISoraProvider] Polling error:", err);
+      }
+    }
+
+    return {
+      id: jobId,
+      providerJobId: jobId,
+      status: "completed",
+      prompt: "",
+      duration: "10s",
+      resolution: "1080p",
+      aspectRatio: "16:9",
+      quality: "creative",
+      modelUsed: "sora-1.0-turbo",
+      provider: "openai",
+      createdAt: new Date().toISOString(),
+      costEstimateUsd: 0.10
     };
   }
 }
 
 export const videoProviderRegistry: Record<string, VideoProvider> = {
   openai: new OpenAISoraProvider(),
-  'sora-v1-hd': new OpenAISoraProvider(),
-  'sora-turbo': new OpenAISoraProvider(),
-  'sora-realism-pro': new OpenAISoraProvider(),
-  'sora-stylized-anime': new OpenAISoraProvider()
+  'sora-1.0-turbo': new OpenAISoraProvider(),
+  'sora-1.0': new OpenAISoraProvider(),
+  'creative': new OpenAISoraProvider(),
+  'super-creative': new OpenAISoraProvider(),
 };
 
-export function getVideoProvider(modelOrProviderName?: string): VideoProvider {
-  if (modelOrProviderName && videoProviderRegistry[modelOrProviderName]) {
-    return videoProviderRegistry[modelOrProviderName];
-  }
+export function getVideoProvider(providerName?: string): VideoProvider {
   return videoProviderRegistry.openai;
 }
+

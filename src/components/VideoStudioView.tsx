@@ -50,24 +50,18 @@ interface VideoGenerationItem {
   thumbnailUrl?: string;
 }
 
-const SORA_MODELS = [
+const QUALITY_OPTIONS = [
   { 
-    id: 'sora-v1-hd', 
-    name: 'OpenAI Sora v1.0', 
-    badge: 'Cinematic HD',
-    desc: 'Flagship model for highest physical accuracy, complex motion, and cinematic lighting.' 
+    id: 'creative', 
+    name: 'Creative', 
+    badge: 'Good Quality • Fast',
+    desc: 'Faster generation, lower AI capacity cost, high motion fluidness.' 
   },
   { 
-    id: 'sora-turbo', 
-    name: 'OpenAI Sora Turbo', 
-    badge: 'Fast Render',
-    desc: 'Optimized for rapid generation and quick visual experimentation with lower latency.' 
-  },
-  { 
-    id: 'sora-realism-pro', 
-    name: 'OpenAI Sora Realism Pro', 
-    badge: 'Photorealistic',
-    desc: 'Ultra-high detail photorealism tailored for studio-grade landscape and character rendering.' 
+    id: 'super-creative', 
+    name: 'Super Creative', 
+    badge: 'Pro • Highest Quality',
+    desc: 'Ultra-high visual fidelity, cinematic lighting, complex physical realism.' 
   }
 ];
 
@@ -100,12 +94,14 @@ export const VideoStudioView: React.FC<VideoStudioViewProps> = ({
   const isPlusOrPro = profile?.plan === 'plus' || profile?.plan === 'pro';
 
   const [prompt, setPrompt] = useState('');
-  const [selectedModel, setSelectedModel] = useState('sora-v1-hd');
-  const [selectedDuration, setSelectedDuration] = useState('6s');
+  const [negativePrompt, setNegativePrompt] = useState('');
+  const [selectedQuality, setSelectedQuality] = useState<'creative' | 'super-creative'>('creative');
+  const [selectedDuration, setSelectedDuration] = useState('10s');
   const [selectedResolution, setSelectedResolution] = useState('1080p');
-  const [selectedAspectRatio, setSelectedAspectRatio] = useState('9:16');
+  const [selectedAspectRatio, setSelectedAspectRatio] = useState('16:9');
+  const [inputImage, setInputImage] = useState<string | null>(null);
   const [creationType, setCreationType] = useState<'video' | 'image' | 'audio'>('video');
-  const [outputCount, setOutputCount] = useState('x2');
+  const [outputCount, setOutputCount] = useState('x1');
 
   // UI Popover & Modal States
   const [showFlowSettingsPopover, setShowFlowSettingsPopover] = useState(false);
@@ -130,19 +126,7 @@ export const VideoStudioView: React.FC<VideoStudioViewProps> = ({
   // Video History & Active Video
   const [activeVideo, setActiveVideo] = useState<VideoGenerationItem | null>(null);
 
-  const [history, setHistory] = useState<VideoGenerationItem[]>([
-    {
-      id: 'sora-demo-1',
-      created_at: new Date().toISOString(),
-      prompt: 'A neon-lit cyberpunk street in Tokyo during a rainstorm, reflections on wet pavement, cinematic 8k',
-      model: 'sora-v1-hd',
-      duration: '6s',
-      resolution: '1080p',
-      aspectRatio: '9:16',
-      status: 'completed',
-      videoUrl: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4'
-    }
-  ]);
+  const [history, setHistory] = useState<VideoGenerationItem[]>([]);
 
   // Load user's video generation history on mount
   useEffect(() => {
@@ -162,19 +146,16 @@ export const VideoStudioView: React.FC<VideoStudioViewProps> = ({
             id: v.id,
             created_at: v.createdAt || new Date().toISOString(),
             prompt: v.prompt,
-            model: v.model || 'sora-v1-hd',
-            duration: v.duration || '6s',
+            model: v.model || (v.quality === 'super-creative' ? 'sora-1.0' : 'sora-1.0-turbo'),
+            duration: v.duration || '10s',
             resolution: v.resolution || '1080p',
-            aspectRatio: v.aspectRatio || '9:16',
-            status: 'completed',
-            videoUrl: v.videoUrl
+            aspectRatio: v.aspectRatio || '16:9',
+            status: v.status || 'completed',
+            videoUrl: v.videoUrl,
+            thumbnailUrl: v.thumbnailUrl
           }));
 
-          setHistory(prev => {
-            const existingIds = new Set(prev.map(p => p.id));
-            const fresh = apiVideos.filter(v => !existingIds.has(v.id));
-            return [...fresh, ...prev];
-          });
+          setHistory(apiVideos);
         }
       } catch (err) {
         console.warn('Could not load video history:', err);
@@ -186,6 +167,13 @@ export const VideoStudioView: React.FC<VideoStudioViewProps> = ({
 
   const handleGenerate = async () => {
     if (!isPlusOrPro) {
+      toast.error('Video generation is available on Plus and Pro plans.');
+      onUpgradeClick?.();
+      return;
+    }
+
+    if (selectedQuality === 'super-creative' && profile?.plan !== 'pro') {
+      toast.error('Super Creative quality requires a Pro plan. Please upgrade to Pro.');
       onUpgradeClick?.();
       return;
     }
@@ -225,13 +213,15 @@ export const VideoStudioView: React.FC<VideoStudioViewProps> = ({
         },
         body: JSON.stringify({
           prompt,
-          model: selectedModel,
+          negativePrompt,
+          quality: selectedQuality,
           duration: selectedDuration,
           resolution: selectedResolution,
           aspectRatio: selectedAspectRatio,
           fps: fps,
           cameraMotion,
-          motionStrength
+          motionStrength,
+          inputImage
         })
       });
 
@@ -240,6 +230,9 @@ export const VideoStudioView: React.FC<VideoStudioViewProps> = ({
       const data = await response.json();
 
       if (!response.ok || !data.success) {
+        if (data.code === 'UPGRADE_REQUIRED' || data.code === 'PRO_REQUIRED') {
+          onUpgradeClick?.();
+        }
         throw new Error(data.error || 'Failed to generate video.');
       }
 
@@ -250,12 +243,13 @@ export const VideoStudioView: React.FC<VideoStudioViewProps> = ({
         id: data.video.id || `v-${Date.now()}`,
         created_at: data.video.createdAt || new Date().toISOString(),
         prompt: data.video.prompt || prompt,
-        model: data.video.model || selectedModel,
+        model: data.video.model || (selectedQuality === 'super-creative' ? 'sora-1.0' : 'sora-1.0-turbo'),
         duration: data.video.duration || selectedDuration,
         resolution: data.video.resolution || selectedResolution,
         aspectRatio: data.video.aspectRatio || selectedAspectRatio,
-        status: 'completed',
-        videoUrl: data.video.videoUrl
+        status: data.video.status || 'completed',
+        videoUrl: data.video.videoUrl,
+        thumbnailUrl: data.video.thumbnailUrl
       };
 
       setHistory(prev => [newVideo, ...prev]);
@@ -583,35 +577,50 @@ export const VideoStudioView: React.FC<VideoStudioViewProps> = ({
 
               </div>
 
-              {/* 4. MODEL SELECTION */}
+              {/* 4. QUALITY SELECTION */}
               <div className="space-y-1.5 pt-1 border-t border-zinc-800/80">
                 <label className="text-[10px] font-bold text-zinc-400 uppercase tracking-wider">
-                  Model Engine
+                  Quality Engine
                 </label>
                 <div className="grid grid-cols-1 gap-1">
-                  {SORA_MODELS.map((model) => (
+                  {QUALITY_OPTIONS.map((opt) => (
                     <button
-                      key={model.id}
+                      key={opt.id}
                       type="button"
-                      onClick={() => setSelectedModel(model.id)}
-                      className={`p-2 rounded-xl border text-left transition-all flex items-center justify-between ${
-                        selectedModel === model.id
+                      onClick={() => setSelectedQuality(opt.id as any)}
+                      className={`p-2.5 rounded-xl border text-left transition-all flex items-center justify-between ${
+                        selectedQuality === opt.id
                           ? 'bg-indigo-950/40 border-indigo-500/60 text-white'
                           : 'bg-zinc-950 border-zinc-800 text-zinc-400 hover:border-zinc-700'
                       }`}
                     >
                       <div>
                         <div className="text-xs font-bold flex items-center gap-2">
-                          <span>{model.name}</span>
-                          <span className="text-[9px] px-1.5 py-0.2 rounded bg-zinc-800 text-indigo-400 font-mono uppercase">
-                            {model.badge}
+                          <span>{opt.name}</span>
+                          <span className="text-[9px] px-1.5 py-0.5 rounded bg-zinc-800 text-indigo-400 font-mono uppercase">
+                            {opt.badge}
                           </span>
                         </div>
+                        <p className="text-[10px] text-zinc-500 mt-0.5">{opt.desc}</p>
                       </div>
-                      {selectedModel === model.id && <Check className="w-3.5 h-3.5 text-indigo-400 shrink-0" />}
+                      {selectedQuality === opt.id && <Check className="w-3.5 h-3.5 text-indigo-400 shrink-0" />}
                     </button>
                   ))}
                 </div>
+              </div>
+
+              {/* 5. NEGATIVE PROMPT */}
+              <div className="space-y-1.5 pt-1 border-t border-zinc-800/80">
+                <label className="text-[10px] font-bold text-zinc-400 uppercase tracking-wider">
+                  Negative Prompt (Optional)
+                </label>
+                <input
+                  type="text"
+                  value={negativePrompt}
+                  onChange={(e) => setNegativePrompt(e.target.value)}
+                  placeholder="e.g., blurry, distorted, low resolution..."
+                  className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-2.5 py-1.5 text-xs text-zinc-200 placeholder-zinc-600 focus:outline-none focus:border-zinc-700"
+                />
               </div>
 
             </motion.div>
