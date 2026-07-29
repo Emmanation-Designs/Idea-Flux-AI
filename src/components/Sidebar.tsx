@@ -46,6 +46,7 @@ export const Sidebar = ({
   onOpenImages,
   onOpenTTS,
   onOpenVideo,
+  onOpenLibrary,
   onOpenProjects,
   onLogout,
   onOpenUpgrade,
@@ -73,6 +74,7 @@ export const Sidebar = ({
   onOpenImages: () => void;
   onOpenTTS: () => void;
   onOpenVideo?: () => void;
+  onOpenLibrary?: () => void;
   onOpenProjects?: () => void;
   onLogout: () => void;
   onOpenUpgrade?: () => void;
@@ -245,6 +247,19 @@ export const Sidebar = ({
           >
             <Video className="w-4 h-4" />
             Video Studio
+          </button>
+
+          <button 
+            onClick={() => handleAction(onOpenLibrary)}
+            className={cn(
+              "w-full flex items-center gap-3 px-4 py-2.5 text-sm font-medium rounded-xl transition-all",
+              activeView === 'library' 
+                ? "bg-zinc-200 dark:bg-zinc-800 text-zinc-900 dark:text-zinc-100 shadow-sm" 
+                : "text-zinc-500 hover:bg-zinc-100 dark:hover:bg-zinc-900"
+            )}
+          >
+            <Folder className="w-4 h-4" />
+            Library
           </button>
 
           <button 

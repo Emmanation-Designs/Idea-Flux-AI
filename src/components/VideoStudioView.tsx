@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { 
   Video, 
   Film, 
@@ -8,26 +8,22 @@ import {
   Download, 
   Lock, 
   Crown, 
-  Zap, 
-  Sliders, 
   Clock, 
-  Monitor, 
-  Maximize2, 
   ChevronDown, 
   Check, 
   ArrowLeft, 
-  Copy, 
   RefreshCw, 
-  Info, 
   X, 
-  Clapperboard, 
-  Wand2, 
-  Share2,
-  Trash2,
-  Maximize,
+  Folder,
+  Search,
+  Plus,
+  ArrowRight,
+  SlidersHorizontal,
+  Image as ImageIcon,
+  Music,
+  Settings2,
   Volume2,
-  VolumeX,
-  Folder
+  VolumeX
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import type { Profile } from '../types';
@@ -76,21 +72,25 @@ const SORA_MODELS = [
 ];
 
 const ASPECT_RATIOS = [
-  { id: '16:9', label: '16:9', name: 'Widescreen', iconClass: 'w-5 h-3 border-2 border-current rounded-sm' },
-  { id: '9:16', label: '9:16', name: 'Portrait', iconClass: 'w-3 h-5 border-2 border-current rounded-sm' },
-  { id: '1:1', label: '1:1', name: 'Square', iconClass: 'w-4 h-4 border-2 border-current rounded-sm' },
-  { id: '21:9', label: '21:9', name: 'Cinematic', iconClass: 'w-6 h-2.5 border-2 border-current rounded-sm' },
+  { id: '16:9', label: '16:9', name: 'Widescreen', icon: '🖥️' },
+  { id: '9:16', label: '9:16', name: 'Portrait', icon: '📱' },
+  { id: '1:1', label: '1:1', name: 'Square', icon: '⏹️' },
+  { id: '21:9', label: '21:9', name: 'Cinematic', icon: '🎬' },
 ];
 
-const DURATIONS = ['5s', '10s', '15s', '20s'];
+const DURATIONS = ['5s', '6s', '10s', '15s', '20s'];
 const RESOLUTIONS = ['720p', '1080p', '4K'];
+const OUTPUT_COUNTS = ['x1', 'x2', 'x4'];
 
-const SAMPLE_PROMPTS = [
-  'A neon-lit cyberpunk street in Tokyo during a rainstorm, reflections on wet pavement, cinematic 8k',
-  'FPV drone flight through a dense golden autumn forest with morning mist drifting between trees',
-  'Slow-motion macro shot of an intricate glass hummingbird hovering over a glowing lotus flower',
-  'Futuristic electric sports car drifting smoothly around a mountain cliffside at sunset'
-];
+// Pixel Flower Graphic inspired by Google Flow AI
+const PixelFlowerIcon = () => (
+  <svg width="64" height="64" viewBox="0 0 24 24" fill="none" className="mx-auto text-zinc-100 dark:text-zinc-200">
+    <path 
+      d="M10 2h4v2h-4V2zm-2 2h2v2H8V4zm8 0h-2v2h2V4zm-8 2H6v2h2V6zm10 0h-2v2h2V6zm-2 2H8v8h8V8zm-6 2h4v4h-4v-4zm-4 0H4v4h2v-4zm14 0h-2v4h2v-4zm-4 6H8v2h8v-2zm-6 2H8v2h2v-2zm8 0h-2v2h2v-2zm-6 2h4v2h-4v-2z" 
+      fill="currentColor"
+    />
+  </svg>
+);
 
 export const VideoStudioView: React.FC<VideoStudioViewProps> = ({
   profile,
@@ -101,39 +101,44 @@ export const VideoStudioView: React.FC<VideoStudioViewProps> = ({
 
   const [prompt, setPrompt] = useState('');
   const [selectedModel, setSelectedModel] = useState('sora-v1-hd');
-  const [selectedDuration, setSelectedDuration] = useState('10s');
+  const [selectedDuration, setSelectedDuration] = useState('6s');
   const [selectedResolution, setSelectedResolution] = useState('1080p');
-  const [selectedAspectRatio, setSelectedAspectRatio] = useState('16:9');
-  
-  // Advanced Settings
-  const [showAdvanced, setShowAdvanced] = useState(false);
-  const [fps, setFps] = useState('24 fps');
-  const [cameraMotion, setCameraMotion] = useState('Smooth Pan');
-  const [motionStrength, setMotionStrength] = useState(0.7);
+  const [selectedAspectRatio, setSelectedAspectRatio] = useState('9:16');
+  const [creationType, setCreationType] = useState<'video' | 'image' | 'audio'>('video');
+  const [outputCount, setOutputCount] = useState('x2');
 
-  // Dropdown states
-  const [showModelDropdown, setShowModelDropdown] = useState(false);
+  // UI Popover & Modal States
+  const [showFlowSettingsPopover, setShowFlowSettingsPopover] = useState(false);
+  const [showHistoryDrawer, setShowHistoryDrawer] = useState(false);
   const [showLibraryModal, setShowLibraryModal] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
+
+  // Advanced camera settings
+  const [fps] = useState('24 fps');
+  const [cameraMotion] = useState('Smooth Pan');
+  const [motionStrength] = useState(0.7);
 
   // Generation & playback state
   const [isGenerating, setIsGenerating] = useState(false);
   const [generationProgress, setGenerationProgress] = useState(0);
-  const [generationPhase, setGenerationPhase] = useState<string>('Initializing');
-  
-  const [activeVideo, setActiveVideo] = useState<VideoGenerationItem | null>(null);
+  const [generationPhase, setGenerationPhase] = useState('');
   const [isPlaying, setIsPlaying] = useState(false);
-  const [isMuted, setIsMuted] = useState(true);
+  const [isMuted, setIsMuted] = useState(false);
 
-  // Mock initial history
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Video History & Active Video
+  const [activeVideo, setActiveVideo] = useState<VideoGenerationItem | null>(null);
+
   const [history, setHistory] = useState<VideoGenerationItem[]>([
     {
-      id: 'v-1',
-      created_at: new Date(Date.now() - 3600000).toISOString(),
-      prompt: 'A majestic blue whale gliding gracefully through an etherial starry galaxy in deep space',
+      id: 'sora-demo-1',
+      created_at: new Date().toISOString(),
+      prompt: 'A neon-lit cyberpunk street in Tokyo during a rainstorm, reflections on wet pavement, cinematic 8k',
       model: 'sora-v1-hd',
-      duration: '10s',
+      duration: '6s',
       resolution: '1080p',
-      aspectRatio: '16:9',
+      aspectRatio: '9:16',
       status: 'completed',
       videoUrl: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4'
     }
@@ -158,9 +163,9 @@ export const VideoStudioView: React.FC<VideoStudioViewProps> = ({
             created_at: v.createdAt || new Date().toISOString(),
             prompt: v.prompt,
             model: v.model || 'sora-v1-hd',
-            duration: v.duration || '10s',
+            duration: v.duration || '6s',
             resolution: v.resolution || '1080p',
-            aspectRatio: v.aspectRatio || '16:9',
+            aspectRatio: v.aspectRatio || '9:16',
             status: 'completed',
             videoUrl: v.videoUrl
           }));
@@ -179,16 +184,6 @@ export const VideoStudioView: React.FC<VideoStudioViewProps> = ({
     return () => { isMounted = false; };
   }, []);
 
-  const handleEnhancePrompt = () => {
-    if (!prompt.trim()) {
-      setPrompt(SAMPLE_PROMPTS[Math.floor(Math.random() * SAMPLE_PROMPTS.length)]);
-      toast.success('Sample prompt inserted');
-      return;
-    }
-    setPrompt(prev => `${prev.trim()}, 8k resolution, photorealistic, cinematic volumetric lighting, dynamic camera angle, shallow depth of field`);
-    toast.success('Prompt enhanced with cinematic keywords');
-  };
-
   const handleGenerate = async () => {
     if (!isPlusOrPro) {
       onUpgradeClick?.();
@@ -196,11 +191,12 @@ export const VideoStudioView: React.FC<VideoStudioViewProps> = ({
     }
 
     if (!prompt.trim()) {
-      toast.error('Please enter a prompt to generate video');
+      toast.error('Please enter a prompt before generating');
       return;
     }
 
     setIsGenerating(true);
+    setShowFlowSettingsPopover(false);
     setGenerationProgress(10);
     setGenerationPhase('Authenticating & verifying AI Capacity...');
 
@@ -275,283 +271,231 @@ export const VideoStudioView: React.FC<VideoStudioViewProps> = ({
     }
   };
 
-  const currentModelObj = SORA_MODELS.find(m => m.id === selectedModel) || SORA_MODELS[0];
+  const getAspectIcon = (ratio: string) => {
+    switch (ratio) {
+      case '9:16': return '📱';
+      case '16:9': return '🖥️';
+      case '1:1': return '⏹️';
+      case '21:9': return '🎬';
+      default: return '📱';
+    }
+  };
 
   return (
-    <div className="flex-1 flex flex-col min-h-screen bg-zinc-50 dark:bg-zinc-950 text-zinc-900 dark:text-zinc-100 transition-colors">
+    <div className="flex-1 flex flex-col h-screen bg-zinc-950 text-zinc-100 overflow-hidden relative font-sans select-none">
       
-      {/* HEADER BAR */}
-      <header className="sticky top-0 z-30 flex items-center justify-between px-6 py-4 bg-white/80 dark:bg-zinc-900/80 backdrop-blur-md border-b border-zinc-200 dark:border-zinc-800/80">
-        <div className="flex items-center gap-4">
+      {/* 1. TOP HEADER BAR (Google Flow Style) */}
+      <header className="sticky top-0 z-40 flex items-center justify-between px-6 py-4 bg-zinc-950/90 backdrop-blur-md border-b border-zinc-900/60">
+        <div className="flex items-center gap-3">
           {onBack && (
             <button
               onClick={onBack}
-              className="p-2 -ml-2 rounded-xl text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-100 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-all"
+              className="p-2.5 rounded-full text-zinc-400 hover:text-white hover:bg-zinc-900 transition-all"
               title="Return to Chat"
             >
               <ArrowLeft className="w-5 h-5" />
             </button>
           )}
 
-          <div>
-            <div className="flex items-center gap-2">
-              <h1 className="text-lg font-bold tracking-tight text-zinc-900 dark:text-zinc-100">
-                Video Studio
-              </h1>
-              <span className="px-2 py-0.5 text-[10px] font-black uppercase tracking-widest bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 border border-indigo-500/20 rounded-full">
-                Sora AI
-              </span>
-            </div>
-            <p className="text-xs text-zinc-500 dark:text-zinc-400 font-medium mt-0.5">
-              Create cinematic AI videos powered by OpenAI Sora.
-            </p>
+          <div className="flex items-center gap-2">
+            <span className="text-sm font-bold tracking-tight text-white">
+              Google Flow Studio
+            </span>
+            <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-indigo-500/20 text-indigo-400 border border-indigo-500/30">
+              Sora AI
+            </span>
           </div>
         </div>
 
-        <div className="flex items-center gap-3">
+        {/* SEARCH BAR CENTER */}
+        <div className="hidden md:flex items-center relative w-full max-w-sm">
+          <Search className="w-4 h-4 absolute left-3.5 text-zinc-500" />
+          <input
+            type="text"
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            placeholder="Search prompts..."
+            className="w-full pl-10 pr-4 py-2 bg-zinc-900 border border-zinc-800 rounded-full text-xs text-zinc-200 placeholder-zinc-500 focus:outline-none focus:ring-1 focus:ring-zinc-700 transition-all"
+          />
+        </div>
+
+        {/* TOP RIGHT CONTROLS */}
+        <div className="flex items-center gap-2.5">
           <button
-            onClick={() => setShowLibraryModal(true)}
-            className="flex items-center gap-1.5 px-3 py-1.5 bg-zinc-100 dark:bg-zinc-800 hover:bg-zinc-200 dark:hover:bg-zinc-700 text-zinc-800 dark:text-zinc-200 rounded-xl text-xs font-semibold shadow-xs transition-all border border-zinc-200 dark:border-zinc-700/60"
-            title="Open Media Library"
+            onClick={() => setShowHistoryDrawer(!showHistoryDrawer)}
+            className="p-2.5 bg-zinc-900 hover:bg-zinc-800 text-zinc-300 rounded-full transition-all border border-zinc-800"
+            title="Generations History"
           >
-            <Folder className="w-3.5 h-3.5 text-indigo-500" />
-            <span>Library</span>
+            <SlidersHorizontal className="w-4 h-4" />
           </button>
 
           {!isPlusOrPro && (
             <button
               onClick={onUpgradeClick}
-              className="flex items-center gap-1.5 px-3 py-1.5 bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-600 hover:to-orange-600 text-white rounded-xl text-xs font-semibold shadow-sm transition-all"
+              className="flex items-center gap-1.5 px-3.5 py-1.5 bg-gradient-to-r from-amber-500 to-amber-600 text-zinc-950 rounded-full text-xs font-bold shadow-sm transition-all hover:brightness-110"
             >
-              <Crown className="w-3.5 h-3.5" />
-              <span>Upgrade to Plus</span>
+              <Crown className="w-3.5 h-3.5 fill-current" />
+              <span>Upgrade</span>
             </button>
           )}
-
-          <div className="hidden sm:flex items-center gap-2 px-3 py-1.5 rounded-xl bg-zinc-100 dark:bg-zinc-800/60 text-xs font-semibold text-zinc-600 dark:text-zinc-300">
-            <Clapperboard className="w-3.5 h-3.5 text-indigo-500" />
-            <span>OpenAI Sora Integration</span>
-          </div>
         </div>
       </header>
 
-      {/* MAIN CONTENT WORKSPACE */}
-      <main className="flex-1 max-w-7xl w-full mx-auto p-4 sm:p-6 lg:p-8 space-y-8">
+      {/* 2. MAIN STAGE / CANVAS AREA */}
+      <main className="flex-1 relative flex flex-col items-center justify-center p-6 overflow-hidden">
         
-        {/* FREE TIER UPGRADE BANNER (if free user) */}
-        {!isPlusOrPro && (
-          <motion.div 
-            initial={{ opacity: 0, y: -10 }}
-            animate={{ opacity: 1, y: 0 }}
-            className="p-6 rounded-2xl bg-gradient-to-r from-indigo-900/10 via-purple-900/10 to-pink-900/10 border border-indigo-500/20 dark:border-indigo-500/30 backdrop-blur-sm relative overflow-hidden flex flex-col md:flex-row items-start md:items-center justify-between gap-6"
-          >
-            <div className="space-y-2 max-w-2xl z-10">
-              <div className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase tracking-widest bg-amber-500/20 text-amber-600 dark:text-amber-400 border border-amber-500/30">
-                <Crown className="w-3 h-3" />
-                <span>Plus & Pro Exclusive Studio</span>
-              </div>
-              <h2 className="text-xl font-bold text-zinc-900 dark:text-zinc-100 tracking-tight">
-                Unlock OpenAI Sora Cinematic Video Generation
-              </h2>
-              <p className="text-sm text-zinc-600 dark:text-zinc-300 leading-relaxed">
-                Video Studio requires a <strong className="text-indigo-600 dark:text-indigo-400 font-semibold">Plus</strong> or <strong className="text-indigo-600 dark:text-indigo-400 font-semibold">Pro</strong> membership. You can explore the prompt interface below, but video synthesis is locked for Free accounts.
-              </p>
+        {activeVideo?.videoUrl ? (
+          /* ACTIVE VIDEO CANVAS PLAYER */
+          <div className="relative w-full max-w-2xl aspect-video rounded-3xl bg-black border border-zinc-800/80 overflow-hidden shadow-2xl flex items-center justify-center group">
+            <video
+              src={activeVideo.videoUrl}
+              className="w-full h-full object-cover"
+              controls={false}
+              autoPlay={isPlaying}
+              loop
+              muted={isMuted}
+            />
+
+            {/* OVERLAY PLAYBACK CONTROLS */}
+            <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-4 backdrop-blur-xs">
+              <button
+                onClick={() => setIsPlaying(!isPlaying)}
+                className="p-4 rounded-full bg-white/20 backdrop-blur-md text-white hover:bg-white/30 transition-all hover:scale-110"
+              >
+                {isPlaying ? <Pause className="w-7 h-7" /> : <Play className="w-7 h-7 ml-0.5" />}
+              </button>
+
+              <button
+                onClick={() => setIsMuted(!isMuted)}
+                className="p-4 rounded-full bg-white/20 backdrop-blur-md text-white hover:bg-white/30 transition-all hover:scale-110"
+              >
+                {isMuted ? <VolumeX className="w-6 h-6" /> : <Volume2 className="w-6 h-6" />}
+              </button>
             </div>
 
-            <button
-              onClick={onUpgradeClick}
-              className="z-10 shrink-0 px-6 py-3 bg-gradient-to-r from-indigo-600 via-purple-600 to-pink-600 hover:from-indigo-500 hover:to-pink-500 text-white font-semibold text-sm rounded-xl shadow-lg shadow-indigo-500/20 flex items-center gap-2 hover:scale-[1.02] active:scale-[0.98] transition-all"
-            >
-              <Sparkles className="w-4 h-4" />
-              <span>Upgrade Plan Now</span>
-            </button>
+            {/* TOP METADATA BADGE */}
+            <div className="absolute top-4 left-4 px-3 py-1 rounded-xl bg-black/60 backdrop-blur-md text-[11px] font-bold text-zinc-200 border border-white/10 uppercase tracking-wider flex items-center gap-2">
+              <span>{activeVideo.duration}</span>
+              <span>•</span>
+              <span>{getAspectIcon(activeVideo.aspectRatio)} {activeVideo.aspectRatio}</span>
+              <span>•</span>
+              <span className="text-indigo-400 font-mono">{activeVideo.resolution}</span>
+            </div>
 
-            <div className="absolute -right-12 -bottom-12 w-48 h-48 bg-indigo-500/10 dark:bg-indigo-500/20 rounded-full blur-3xl pointer-events-none" />
-          </motion.div>
+            {/* TOP RIGHT CLOSE / DESELECT */}
+            <button
+              onClick={() => setActiveVideo(null)}
+              className="absolute top-4 right-4 p-2 rounded-xl bg-black/60 hover:bg-black/80 backdrop-blur-md text-zinc-400 hover:text-white transition-colors"
+              title="Clear Canvas"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+        ) : (
+          /* EMPTY STAGE: GOOGLE FLOW PIXEL GRAPHIC & DROP AREA */
+          <div 
+            onClick={() => fileInputRef.current?.click()}
+            className="flex flex-col items-center justify-center text-center space-y-4 max-w-md p-8 cursor-pointer rounded-3xl hover:bg-zinc-900/30 transition-all group"
+          >
+            <input
+              type="file"
+              ref={fileInputRef}
+              className="hidden"
+              multiple
+              accept="video/*,image/*,audio/*"
+              onChange={() => toast.success('Media added to Library!')}
+            />
+
+            <div className="p-4 rounded-3xl bg-transparent group-hover:scale-105 transition-transform">
+              <PixelFlowerIcon />
+            </div>
+
+            <div className="space-y-1">
+              <h2 className="text-xl sm:text-2xl font-bold tracking-tight text-zinc-200 group-hover:text-white transition-colors">
+                Start creating or drop media
+              </h2>
+            </div>
+          </div>
         )}
 
-        {/* GOOGLE FLOW INSPIRED TWO-COLUMN LAYOUT */}
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
-          
-          {/* LEFT COLUMN: PROMPT & CONTROLS */}
-          <div className="lg:col-span-7 space-y-6">
-            
-            {/* PROMPT CONTAINER CARD */}
-            <div className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-2xl p-5 sm:p-6 shadow-sm hover:border-indigo-500/30 transition-all space-y-4">
-              <div className="flex items-center justify-between">
-                <label className="text-xs font-bold uppercase tracking-wider text-zinc-500 dark:text-zinc-400 flex items-center gap-1.5">
-                  <Wand2 className="w-3.5 h-3.5 text-indigo-500" />
-                  <span>Video Description Prompt</span>
-                </label>
+      </main>
 
+      {/* 3. FLOATING BOTTOM PROMPT BAR & SETTINGS PILL (EXACT GOOGLE FLOW STYLE) */}
+      <div className="sticky bottom-6 z-40 px-4 sm:px-6 max-w-2xl mx-auto w-full">
+        
+        {/* GOOGLE FLOW SETTINGS POPOVER DROPDOWN MENU */}
+        <AnimatePresence>
+          {showFlowSettingsPopover && (
+            <motion.div
+              initial={{ opacity: 0, y: 12, scale: 0.98 }}
+              animate={{ opacity: 1, y: 0, scale: 1 }}
+              exit={{ opacity: 0, y: 12, scale: 0.98 }}
+              className="absolute bottom-full mb-3 left-0 right-0 mx-auto w-full max-w-md bg-zinc-900/95 border border-zinc-800 rounded-3xl shadow-2xl p-5 space-y-4 z-50 text-zinc-100 backdrop-blur-xl"
+            >
+              <div className="flex items-center justify-between border-b border-zinc-800/80 pb-2.5">
+                <span className="text-xs font-bold uppercase tracking-wider text-zinc-400 flex items-center gap-1.5">
+                  <Settings2 className="w-4 h-4 text-indigo-400" />
+                  <span>Google Flow Settings</span>
+                </span>
                 <button
-                  type="button"
-                  onClick={handleEnhancePrompt}
-                  className="flex items-center gap-1.5 text-xs font-semibold text-indigo-600 dark:text-indigo-400 hover:text-indigo-700 dark:hover:text-indigo-300 transition-colors"
+                  onClick={() => setShowFlowSettingsPopover(false)}
+                  className="p-1 text-zinc-500 hover:text-zinc-200 rounded-lg transition-colors"
                 >
-                  <Sparkles className="w-3.5 h-3.5" />
-                  <span>Magic Enhance</span>
+                  <X className="w-4 h-4" />
                 </button>
               </div>
 
-              <div className="relative">
-                <textarea
-                  value={prompt}
-                  onChange={(e) => setPrompt(e.target.value)}
-                  placeholder="Describe the video you want to generate..."
-                  rows={4}
-                  className="w-full bg-zinc-50 dark:bg-zinc-950/80 border border-zinc-200 dark:border-zinc-800 rounded-xl p-4 text-sm text-zinc-900 dark:text-zinc-100 placeholder-zinc-400 dark:placeholder-zinc-600 focus:outline-none focus:ring-2 focus:ring-indigo-500/50 focus:border-indigo-500 transition-all resize-none leading-relaxed"
-                />
-              </div>
-
-              {/* QUICK PROMPT SUGGESTIONS */}
-              <div className="space-y-2 pt-1">
-                <span className="text-[11px] font-semibold text-zinc-400 dark:text-zinc-500">
-                  Quick Ideas:
-                </span>
-                <div className="flex flex-wrap gap-1.5">
-                  {SAMPLE_PROMPTS.map((sample, idx) => (
-                    <button
-                      key={idx}
-                      type="button"
-                      onClick={() => setPrompt(sample)}
-                      className="text-[11px] px-2.5 py-1 rounded-lg bg-zinc-100 dark:bg-zinc-800/80 hover:bg-indigo-50 dark:hover:bg-indigo-950/40 text-zinc-600 dark:text-zinc-400 hover:text-indigo-600 dark:hover:text-indigo-300 transition-all text-left truncate max-w-[280px]"
-                    >
-                      {sample}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            </div>
-
-            {/* CONTROLS CARD */}
-            <div className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-2xl p-5 sm:p-6 shadow-sm space-y-6">
-              <div className="flex items-center justify-between border-b border-zinc-100 dark:border-zinc-800/60 pb-3">
-                <h3 className="text-xs font-bold uppercase tracking-wider text-zinc-500 dark:text-zinc-400 flex items-center gap-1.5">
-                  <Sliders className="w-3.5 h-3.5 text-indigo-500" />
-                  <span>Sora Generation Parameters</span>
-                </h3>
-                <span className="text-xs text-zinc-400 font-mono">OpenAI Sora API</span>
-              </div>
-
-              {/* 1. SORA MODEL SELECTOR */}
-              <div className="space-y-2">
-                <label className="text-xs font-semibold text-zinc-700 dark:text-zinc-300">
-                  Model Engine
+              {/* 1. CREATION TYPE */}
+              <div className="space-y-1.5">
+                <label className="text-[10px] font-bold text-zinc-400 uppercase tracking-wider">
+                  Type
                 </label>
-                <div className="relative">
-                  <button
-                    type="button"
-                    onClick={() => setShowModelDropdown(!showModelDropdown)}
-                    className="w-full flex items-center justify-between p-3 rounded-xl bg-zinc-50 dark:bg-zinc-950 border border-zinc-200 dark:border-zinc-800 text-left hover:border-indigo-500/50 transition-all"
-                  >
-                    <div>
-                      <div className="flex items-center gap-2">
-                        <span className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">
-                          {currentModelObj.name}
-                        </span>
-                        <span className="px-2 py-0.5 text-[9px] font-bold uppercase tracking-wider bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 rounded-md">
-                          {currentModelObj.badge}
-                        </span>
-                      </div>
-                      <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-0.5">
-                        {currentModelObj.desc}
-                      </p>
-                    </div>
-                    <ChevronDown className="w-4 h-4 text-zinc-400 shrink-0 ml-2" />
-                  </button>
-
-                  <AnimatePresence>
-                    {showModelDropdown && (
-                      <motion.div
-                        initial={{ opacity: 0, y: 5 }}
-                        animate={{ opacity: 1, y: 0 }}
-                        exit={{ opacity: 0, y: 5 }}
-                        className="absolute top-full left-0 right-0 mt-2 z-20 bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-xl shadow-xl overflow-hidden p-1 space-y-1"
-                      >
-                        {SORA_MODELS.map((model) => (
-                          <button
-                            key={model.id}
-                            type="button"
-                            onClick={() => {
-                              setSelectedModel(model.id);
-                              setShowModelDropdown(false);
-                            }}
-                            className={`w-full text-left p-3 rounded-lg transition-all flex items-start justify-between ${
-                              selectedModel === model.id
-                                ? 'bg-indigo-50 dark:bg-indigo-950/40 text-indigo-900 dark:text-indigo-100 font-medium'
-                                : 'hover:bg-zinc-100 dark:hover:bg-zinc-800 text-zinc-700 dark:text-zinc-300'
-                            }`}
-                          >
-                            <div>
-                              <div className="flex items-center gap-2">
-                                <span className="text-xs font-bold">{model.name}</span>
-                                <span className="px-1.5 py-0.5 text-[8px] font-black uppercase bg-zinc-200 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-300 rounded">
-                                  {model.badge}
-                                </span>
-                              </div>
-                              <p className="text-[11px] text-zinc-500 dark:text-zinc-400 mt-0.5">
-                                {model.desc}
-                              </p>
-                            </div>
-                            {selectedModel === model.id && (
-                              <Check className="w-4 h-4 text-indigo-600 dark:text-indigo-400 shrink-0 mt-1" />
-                            )}
-                          </button>
-                        ))}
-                      </motion.div>
-                    )}
-                  </AnimatePresence>
-                </div>
-              </div>
-
-              {/* 2. ASPECT RATIO SELECTOR */}
-              <div className="space-y-2">
-                <label className="text-xs font-semibold text-zinc-700 dark:text-zinc-300">
-                  Aspect Ratio
-                </label>
-                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-                  {ASPECT_RATIOS.map((ratio) => {
-                    const isSelected = selectedAspectRatio === ratio.id;
+                <div className="grid grid-cols-3 gap-1.5 bg-zinc-950 p-1 rounded-2xl border border-zinc-800/80">
+                  {[
+                    { id: 'video', label: 'Video', icon: Film },
+                    { id: 'image', label: 'Image', icon: ImageIcon },
+                    { id: 'audio', label: 'Audio', icon: Music },
+                  ].map((item) => {
+                    const Icon = item.icon;
+                    const isSelected = creationType === item.id;
                     return (
                       <button
-                        key={ratio.id}
+                        key={item.id}
                         type="button"
-                        onClick={() => setSelectedAspectRatio(ratio.id)}
-                        className={`flex flex-col items-center justify-center p-3 rounded-xl border transition-all text-center ${
+                        onClick={() => setCreationType(item.id as any)}
+                        className={`flex items-center justify-center gap-1.5 py-2 text-xs font-bold rounded-xl transition-all ${
                           isSelected
-                            ? 'bg-indigo-50/80 dark:bg-indigo-950/50 border-indigo-500 text-indigo-600 dark:text-indigo-400 shadow-sm'
-                            : 'bg-zinc-50 dark:bg-zinc-950/60 border-zinc-200 dark:border-zinc-800 text-zinc-600 dark:text-zinc-400 hover:border-zinc-300 dark:hover:border-zinc-700'
+                            ? 'bg-zinc-800 text-white shadow-sm'
+                            : 'text-zinc-400 hover:text-zinc-200'
                         }`}
                       >
-                        <div className={`${ratio.iconClass} mb-1.5 ${isSelected ? 'text-indigo-600 dark:text-indigo-400' : 'text-zinc-400'}`} />
-                        <span className="text-xs font-bold">{ratio.id}</span>
-                        <span className="text-[10px] text-zinc-400">{ratio.name}</span>
+                        <Icon className="w-3.5 h-3.5" />
+                        <span>{item.label}</span>
                       </button>
                     );
                   })}
                 </div>
               </div>
 
-              {/* 3. DURATION & RESOLUTION GRID */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              {/* 2. DURATION & ASPECT RATIO */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 
                 {/* DURATION */}
-                <div className="space-y-2">
-                  <label className="text-xs font-semibold text-zinc-700 dark:text-zinc-300 flex items-center gap-1.5">
-                    <Clock className="w-3.5 h-3.5 text-zinc-400" />
+                <div className="space-y-1.5">
+                  <label className="text-[10px] font-bold text-zinc-400 uppercase tracking-wider flex items-center justify-between">
                     <span>Duration</span>
+                    <span className="text-indigo-400 font-mono">{selectedDuration}</span>
                   </label>
-                  <div className="grid grid-cols-4 gap-1.5 bg-zinc-50 dark:bg-zinc-950 p-1 rounded-xl border border-zinc-200 dark:border-zinc-800">
+                  <div className="grid grid-cols-5 gap-1 bg-zinc-950 p-1 rounded-2xl border border-zinc-800/80">
                     {DURATIONS.map((dur) => (
                       <button
                         key={dur}
                         type="button"
                         onClick={() => setSelectedDuration(dur)}
-                        className={`py-1.5 text-xs font-bold rounded-lg transition-all ${
+                        className={`py-1.5 text-[11px] font-bold rounded-xl transition-all ${
                           selectedDuration === dur
-                            ? 'bg-white dark:bg-zinc-800 text-zinc-900 dark:text-zinc-100 shadow-sm'
-                            : 'text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-100'
+                            ? 'bg-indigo-600 text-white shadow-sm'
+                            : 'text-zinc-400 hover:text-zinc-200'
                         }`}
                       >
                         {dur}
@@ -560,22 +504,75 @@ export const VideoStudioView: React.FC<VideoStudioViewProps> = ({
                   </div>
                 </div>
 
-                {/* RESOLUTION */}
-                <div className="space-y-2">
-                  <label className="text-xs font-semibold text-zinc-700 dark:text-zinc-300 flex items-center gap-1.5">
-                    <Monitor className="w-3.5 h-3.5 text-zinc-400" />
-                    <span>Resolution</span>
+                {/* ASPECT RATIO */}
+                <div className="space-y-1.5">
+                  <label className="text-[10px] font-bold text-zinc-400 uppercase tracking-wider flex items-center justify-between">
+                    <span>Aspect Ratio</span>
+                    <span className="text-indigo-400 font-mono">{selectedAspectRatio}</span>
                   </label>
-                  <div className="grid grid-cols-3 gap-1.5 bg-zinc-50 dark:bg-zinc-950 p-1 rounded-xl border border-zinc-200 dark:border-zinc-800">
+                  <div className="grid grid-cols-4 gap-1 bg-zinc-950 p-1 rounded-2xl border border-zinc-800/80">
+                    {ASPECT_RATIOS.map((ratio) => (
+                      <button
+                        key={ratio.id}
+                        type="button"
+                        onClick={() => setSelectedAspectRatio(ratio.id)}
+                        className={`py-1.5 text-[10px] font-bold rounded-xl transition-all flex items-center justify-center gap-1 ${
+                          selectedAspectRatio === ratio.id
+                            ? 'bg-indigo-600 text-white shadow-sm'
+                            : 'text-zinc-400 hover:text-zinc-200'
+                        }`}
+                        title={ratio.name}
+                      >
+                        <span>{ratio.icon}</span>
+                        <span>{ratio.id}</span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+              </div>
+
+              {/* 3. OUTPUT GENERATIONS & RESOLUTION */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                
+                {/* OUTPUT COUNT */}
+                <div className="space-y-1.5">
+                  <label className="text-[10px] font-bold text-zinc-400 uppercase tracking-wider">
+                    Output Count
+                  </label>
+                  <div className="grid grid-cols-3 gap-1 bg-zinc-950 p-1 rounded-2xl border border-zinc-800/80">
+                    {OUTPUT_COUNTS.map((cnt) => (
+                      <button
+                        key={cnt}
+                        type="button"
+                        onClick={() => setOutputCount(cnt)}
+                        className={`py-1.5 text-xs font-bold rounded-xl transition-all ${
+                          outputCount === cnt
+                            ? 'bg-zinc-800 text-white shadow-sm'
+                            : 'text-zinc-400 hover:text-zinc-200'
+                        }`}
+                      >
+                        {cnt}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* RESOLUTION */}
+                <div className="space-y-1.5">
+                  <label className="text-[10px] font-bold text-zinc-400 uppercase tracking-wider">
+                    Resolution
+                  </label>
+                  <div className="grid grid-cols-3 gap-1 bg-zinc-950 p-1 rounded-2xl border border-zinc-800/80">
                     {RESOLUTIONS.map((res) => (
                       <button
                         key={res}
                         type="button"
                         onClick={() => setSelectedResolution(res)}
-                        className={`py-1.5 text-xs font-bold rounded-lg transition-all ${
+                        className={`py-1.5 text-[11px] font-bold rounded-xl transition-all ${
                           selectedResolution === res
-                            ? 'bg-white dark:bg-zinc-800 text-zinc-900 dark:text-zinc-100 shadow-sm'
-                            : 'text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-100'
+                            ? 'bg-zinc-800 text-white shadow-sm'
+                            : 'text-zinc-400 hover:text-zinc-200'
                         }`}
                       >
                         {res}
@@ -583,329 +580,186 @@ export const VideoStudioView: React.FC<VideoStudioViewProps> = ({
                     ))}
                   </div>
                 </div>
+
               </div>
 
-              {/* ADVANCED COLLAPSIBLE CONTROLS */}
-              <div className="pt-2 border-t border-zinc-100 dark:border-zinc-800/60">
-                <button
-                  type="button"
-                  onClick={() => setShowAdvanced(!showAdvanced)}
-                  className="flex items-center justify-between w-full text-xs font-semibold text-zinc-500 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-zinc-100 transition-colors py-1"
-                >
-                  <span className="flex items-center gap-1.5">
-                    <Sliders className="w-3.5 h-3.5" />
-                    <span>Advanced Camera & Frame Controls</span>
-                  </span>
-                  <ChevronDown className={`w-3.5 h-3.5 transition-transform ${showAdvanced ? 'rotate-180' : ''}`} />
-                </button>
-
-                <AnimatePresence>
-                  {showAdvanced && (
-                    <motion.div
-                      initial={{ height: 0, opacity: 0 }}
-                      animate={{ height: 'auto', opacity: 1 }}
-                      exit={{ height: 0, opacity: 0 }}
-                      className="overflow-hidden space-y-4 pt-4"
+              {/* 4. MODEL SELECTION */}
+              <div className="space-y-1.5 pt-1 border-t border-zinc-800/80">
+                <label className="text-[10px] font-bold text-zinc-400 uppercase tracking-wider">
+                  Model Engine
+                </label>
+                <div className="grid grid-cols-1 gap-1">
+                  {SORA_MODELS.map((model) => (
+                    <button
+                      key={model.id}
+                      type="button"
+                      onClick={() => setSelectedModel(model.id)}
+                      className={`p-2 rounded-xl border text-left transition-all flex items-center justify-between ${
+                        selectedModel === model.id
+                          ? 'bg-indigo-950/40 border-indigo-500/60 text-white'
+                          : 'bg-zinc-950 border-zinc-800 text-zinc-400 hover:border-zinc-700'
+                      }`}
                     >
-                      <div className="grid grid-cols-2 gap-4">
-                        <div>
-                          <label className="text-[11px] font-semibold text-zinc-500 dark:text-zinc-400">
-                            Frame Rate
-                          </label>
-                          <select
-                            value={fps}
-                            onChange={(e) => setFps(e.target.value)}
-                            className="w-full mt-1 bg-zinc-50 dark:bg-zinc-950 border border-zinc-200 dark:border-zinc-800 rounded-lg p-2 text-xs font-medium focus:outline-none"
-                          >
-                            <option value="24 fps">24 fps (Cinematic)</option>
-                            <option value="30 fps">30 fps (Standard)</option>
-                            <option value="60 fps">60 fps (Smooth)</option>
-                          </select>
-                        </div>
-
-                        <div>
-                          <label className="text-[11px] font-semibold text-zinc-500 dark:text-zinc-400">
-                            Camera Motion
-                          </label>
-                          <select
-                            value={cameraMotion}
-                            onChange={(e) => setCameraMotion(e.target.value)}
-                            className="w-full mt-1 bg-zinc-50 dark:bg-zinc-950 border border-zinc-200 dark:border-zinc-800 rounded-lg p-2 text-xs font-medium focus:outline-none"
-                          >
-                            <option value="Smooth Pan">Smooth Pan</option>
-                            <option value="FPV Flythrough">FPV Flythrough</option>
-                            <option value="Slow Zoom In">Slow Zoom In</option>
-                            <option value="Orbit Tracking">Orbit Tracking</option>
-                            <option value="Static Tripod">Static Tripod</option>
-                          </select>
-                        </div>
-                      </div>
-
                       <div>
-                        <div className="flex justify-between text-[11px] font-semibold text-zinc-500 dark:text-zinc-400 mb-1">
-                          <span>Motion Strength</span>
-                          <span className="font-mono text-indigo-500">{Math.round(motionStrength * 100)}%</span>
+                        <div className="text-xs font-bold flex items-center gap-2">
+                          <span>{model.name}</span>
+                          <span className="text-[9px] px-1.5 py-0.2 rounded bg-zinc-800 text-indigo-400 font-mono uppercase">
+                            {model.badge}
+                          </span>
                         </div>
-                        <input
-                          type="range"
-                          min="0.1"
-                          max="1.0"
-                          step="0.05"
-                          value={motionStrength}
-                          onChange={(e) => setMotionStrength(parseFloat(e.target.value))}
-                          className="w-full accent-indigo-600"
-                        />
                       </div>
-                    </motion.div>
-                  )}
-                </AnimatePresence>
-              </div>
-
-              {/* GENERATE BUTTON */}
-              <div className="pt-2">
-                <button
-                  type="button"
-                  onClick={handleGenerate}
-                  disabled={isGenerating}
-                  className={`w-full py-4 px-6 rounded-2xl font-bold text-sm shadow-xl flex items-center justify-center gap-2.5 transition-all ${
-                    !isPlusOrPro
-                      ? 'bg-zinc-200 dark:bg-zinc-800 text-zinc-500 dark:text-zinc-400 hover:bg-zinc-300 dark:hover:bg-zinc-700 cursor-pointer'
-                      : isGenerating
-                      ? 'bg-indigo-600 text-white cursor-wait opacity-90'
-                      : 'bg-gradient-to-r from-indigo-600 via-purple-600 to-pink-600 hover:from-indigo-500 hover:to-pink-500 text-white shadow-indigo-500/25 hover:shadow-indigo-500/35 hover:scale-[1.01] active:scale-[0.99]'
-                  }`}
-                >
-                  {!isPlusOrPro ? (
-                    <>
-                      <Lock className="w-4 h-4 text-amber-500" />
-                      <span>Upgrade to Plus/Pro to Generate</span>
-                    </>
-                  ) : isGenerating ? (
-                    <>
-                      <RefreshCw className="w-4 h-4 animate-spin" />
-                      <span>Generating Video ({generationProgress}%)</span>
-                    </>
-                  ) : (
-                    <>
-                      <Sparkles className="w-4 h-4" />
-                      <span>Generate Cinematic Video</span>
-                    </>
-                  )}
-                </button>
-              </div>
-
-              {/* GENERATION PROGRESS BAR */}
-              {isGenerating && (
-                <div className="space-y-2 pt-2">
-                  <div className="flex justify-between text-xs font-semibold text-zinc-500 dark:text-zinc-400">
-                    <span className="animate-pulse">{generationPhase}</span>
-                    <span className="font-mono">{generationProgress}%</span>
-                  </div>
-                  <div className="w-full bg-zinc-100 dark:bg-zinc-800 h-2 rounded-full overflow-hidden">
-                    <motion.div
-                      className="bg-gradient-to-r from-indigo-500 via-purple-500 to-pink-500 h-full rounded-full"
-                      initial={{ width: '0%' }}
-                      animate={{ width: `${generationProgress}%` }}
-                      transition={{ duration: 0.3 }}
-                    />
-                  </div>
+                      {selectedModel === model.id && <Check className="w-3.5 h-3.5 text-indigo-400 shrink-0" />}
+                    </button>
+                  ))}
                 </div>
-              )}
+              </div>
 
+            </motion.div>
+          )}
+        </AnimatePresence>
+
+        {/* FLOATING PROMPT CARD CONTAINER */}
+        <div className="bg-zinc-900/90 backdrop-blur-xl border border-zinc-800/90 rounded-3xl p-4 shadow-2xl flex flex-col space-y-3 relative group focus-within:border-zinc-700 transition-all">
+          
+          <textarea
+            value={prompt}
+            onChange={(e) => setPrompt(e.target.value)}
+            placeholder="What do you want to create?"
+            rows={2}
+            className="w-full bg-transparent text-sm text-zinc-100 placeholder-zinc-500 focus:outline-none resize-none leading-relaxed px-2"
+          />
+
+          {/* PROGRESS BAR IF GENERATING */}
+          {isGenerating && (
+            <div className="space-y-1.5 px-2">
+              <div className="flex justify-between text-[11px] font-semibold text-zinc-400">
+                <span className="animate-pulse">{generationPhase}</span>
+                <span className="font-mono text-indigo-400">{generationProgress}%</span>
+              </div>
+              <div className="w-full bg-zinc-800 h-1.5 rounded-full overflow-hidden">
+                <motion.div
+                  className="bg-gradient-to-r from-indigo-500 to-purple-500 h-full rounded-full"
+                  animate={{ width: `${generationProgress}%` }}
+                />
+              </div>
             </div>
-          </div>
+          )}
 
-          {/* RIGHT COLUMN: PREVIEW & HISTORY SHOWCASE */}
-          <div className="lg:col-span-5 space-y-6">
+          {/* BOTTOM CONTROLS ROW */}
+          <div className="flex items-center justify-between pt-1 border-t border-zinc-800/50">
             
-            {/* CANVAS PREVIEW CARD */}
-            <div className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-2xl p-5 shadow-sm space-y-4">
-              <div className="flex items-center justify-between border-b border-zinc-100 dark:border-zinc-800/60 pb-3">
-                <h3 className="text-xs font-bold uppercase tracking-wider text-zinc-500 dark:text-zinc-400 flex items-center gap-1.5">
-                  <Film className="w-3.5 h-3.5 text-indigo-500" />
-                  <span>Studio Player Canvas</span>
-                </h3>
-                {activeVideo && (
-                  <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-600 dark:text-emerald-400">
-                    Ready
-                  </span>
-                )}
+            {/* LEFT CONTROLS: + Attachment & Agent Pill */}
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => fileInputRef.current?.click()}
+                className="p-2.5 rounded-full bg-zinc-800/80 hover:bg-zinc-700/80 text-zinc-300 hover:text-white transition-all"
+                title="Attach or Drop Media"
+              >
+                <Plus className="w-4 h-4" />
+              </button>
+
+              <div className="px-3.5 py-1.5 rounded-full bg-zinc-800/80 text-zinc-300 text-xs font-semibold flex items-center gap-1.5">
+                <span>Agent</span>
               </div>
-
-              {/* VIDEO PLAYER CONTAINER */}
-              <div className="relative aspect-video bg-zinc-950 rounded-xl overflow-hidden border border-zinc-800 flex items-center justify-center group">
-                {activeVideo?.videoUrl ? (
-                  <div className="relative w-full h-full flex items-center justify-center">
-                    <video
-                      src={activeVideo.videoUrl}
-                      className="w-full h-full object-cover"
-                      controls={false}
-                      autoPlay={isPlaying}
-                      loop
-                      muted={isMuted}
-                    />
-
-                    {/* OVERLAY PLAY CONTROLS */}
-                    <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-4">
-                      <button
-                        onClick={() => setIsPlaying(!isPlaying)}
-                        className="p-3 rounded-full bg-white/20 backdrop-blur-md text-white hover:bg-white/40 transition-all hover:scale-110"
-                      >
-                        {isPlaying ? <Pause className="w-6 h-6" /> : <Play className="w-6 h-6 ml-0.5" />}
-                      </button>
-
-                      <button
-                        onClick={() => setIsMuted(!isMuted)}
-                        className="p-3 rounded-full bg-white/20 backdrop-blur-md text-white hover:bg-white/40 transition-all hover:scale-110"
-                      >
-                        {isMuted ? <VolumeX className="w-5 h-5" /> : <Volume2 className="w-5 h-5" />}
-                      </button>
-                    </div>
-
-                    {/* BADGES ON VIDEO */}
-                    <div className="absolute top-3 left-3 px-2.5 py-1 rounded-lg bg-black/60 backdrop-blur-md text-[10px] font-bold text-white tracking-wider uppercase">
-                      {activeVideo.resolution} • {activeVideo.aspectRatio}
-                    </div>
-                  </div>
-                ) : (
-                  <div className="text-center p-8 space-y-3">
-                    <div className="w-12 h-12 rounded-2xl bg-zinc-900 border border-zinc-800 flex items-center justify-center mx-auto text-zinc-600 dark:text-zinc-500">
-                      <Video className="w-6 h-6" />
-                    </div>
-                    <p className="text-xs font-semibold text-zinc-400">
-                      Generated video preview will appear here
-                    </p>
-                    <p className="text-[11px] text-zinc-600 max-w-xs mx-auto">
-                      Enter a prompt and select your parameters to create a video with OpenAI Sora.
-                    </p>
-                  </div>
-                )}
-              </div>
-
-              {/* ACTIVE VIDEO DETAILS & ACTIONS */}
-              {activeVideo && (
-                <div className="space-y-3 pt-2">
-                  <p className="text-xs text-zinc-700 dark:text-zinc-300 font-medium leading-relaxed bg-zinc-50 dark:bg-zinc-950 p-3 rounded-xl border border-zinc-200 dark:border-zinc-800/80">
-                    &ldquo;{activeVideo.prompt}&rdquo;
-                  </p>
-
-                  <div className="flex items-center justify-between text-xs pt-1">
-                    <span className="text-zinc-400 font-mono text-[11px]">
-                      Sora v1.0 • {activeVideo.duration}
-                    </span>
-
-                    <div className="flex items-center gap-2">
-                      <button
-                        onClick={() => {
-                          navigator.clipboard.writeText(activeVideo.prompt);
-                          toast.success('Prompt copied to clipboard');
-                        }}
-                        className="p-2 rounded-lg bg-zinc-100 dark:bg-zinc-800 hover:bg-zinc-200 dark:hover:bg-zinc-700 text-zinc-600 dark:text-zinc-300 transition-all"
-                        title="Copy Prompt"
-                      >
-                        <Copy className="w-3.5 h-3.5" />
-                      </button>
-
-                      <button
-                        onClick={() => {
-                          toast.info('Downloading MP4 video file...');
-                        }}
-                        className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white font-semibold text-xs transition-all shadow-sm"
-                      >
-                        <Download className="w-3.5 h-3.5" />
-                        <span>Export MP4</span>
-                      </button>
-                    </div>
-                  </div>
-                </div>
-              )}
             </div>
 
-            {/* RECENT GENERATIONS HISTORY */}
-            <div className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-2xl p-5 shadow-sm space-y-4">
-              <h3 className="text-xs font-bold uppercase tracking-wider text-zinc-500 dark:text-zinc-400 flex items-center gap-1.5">
-                <Clock className="w-3.5 h-3.5 text-indigo-500" />
-                <span>Recent Studio Generations</span>
-              </h3>
+            {/* RIGHT CONTROLS: GOOGLE FLOW SETTINGS PILL & SUBMIT ARROW */}
+            <div className="flex items-center gap-2">
+              
+              {/* GOOGLE FLOW SETTINGS PILL BUTTON: "Video · 6s  📱 x2" */}
+              <button
+                type="button"
+                onClick={() => setShowFlowSettingsPopover(!showFlowSettingsPopover)}
+                className={`px-3.5 py-1.5 rounded-full text-xs font-semibold flex items-center gap-1.5 transition-all border ${
+                  showFlowSettingsPopover
+                    ? 'bg-indigo-600 text-white border-indigo-500 shadow-sm'
+                    : 'bg-zinc-800/90 hover:bg-zinc-700/90 text-zinc-200 border-zinc-700/60'
+                }`}
+              >
+                <span className="capitalize">Video</span>
+                <span>•</span>
+                <span>{selectedDuration}</span>
+                <span className="text-sm">{getAspectIcon(selectedAspectRatio)}</span>
+                <span className="text-zinc-400 font-mono text-[11px]">{outputCount}</span>
+              </button>
 
-              <div className="space-y-2">
-                {history.map((item) => (
-                  <div
-                    key={item.id}
-                    onClick={() => {
-                      setActiveVideo(item);
-                      setIsPlaying(true);
-                    }}
-                    className={`p-3 rounded-xl border transition-all cursor-pointer flex items-center gap-3 ${
-                      activeVideo?.id === item.id
-                        ? 'bg-indigo-50/70 dark:bg-indigo-950/40 border-indigo-500/50'
-                        : 'bg-zinc-50 dark:bg-zinc-950 border-zinc-200 dark:border-zinc-800/80 hover:border-zinc-300 dark:hover:border-zinc-700'
-                    }`}
-                  >
-                    <div className="w-12 h-12 shrink-0 rounded-lg bg-zinc-900 flex items-center justify-center text-indigo-400 relative overflow-hidden">
-                      <Film className="w-5 h-5" />
-                      <div className="absolute inset-0 bg-black/20 flex items-center justify-center">
-                        <Play className="w-3.5 h-3.5 text-white" />
-                      </div>
-                    </div>
+              {/* SUBMIT ARROW BUTTON */}
+              <button
+                type="button"
+                onClick={handleGenerate}
+                disabled={isGenerating}
+                className={`p-2.5 rounded-full transition-all shadow-md flex items-center justify-center ${
+                  isGenerating
+                    ? 'bg-zinc-800 text-zinc-500 cursor-wait'
+                    : 'bg-zinc-800 hover:bg-zinc-700 text-zinc-200 hover:text-white hover:scale-105 active:scale-95'
+                }`}
+                title="Generate Video"
+              >
+                {isGenerating ? (
+                  <RefreshCw className="w-4 h-4 animate-spin" />
+                ) : (
+                  <ArrowRight className="w-4 h-4" />
+                )}
+              </button>
 
-                    <div className="flex-1 min-w-0">
-                      <p className="text-xs font-semibold text-zinc-900 dark:text-zinc-100 truncate">
-                        {item.prompt}
-                      </p>
-                      <div className="flex items-center gap-2 mt-1 text-[10px] text-zinc-500 dark:text-zinc-400">
-                        <span>{item.duration}</span>
-                        <span>•</span>
-                        <span>{item.resolution}</span>
-                        <span>•</span>
-                        <span className="uppercase">{item.aspectRatio}</span>
-                      </div>
-                    </div>
-                  </div>
-                ))}
-              </div>
             </div>
 
           </div>
 
         </div>
 
-      </main>
+      </div>
 
-      {/* MEDIA LIBRARY MODAL */}
-      <LibraryModal
-        isOpen={showLibraryModal}
-        onClose={() => setShowLibraryModal(false)}
-        extraGeneratedFiles={history.map((item): MediaFileItem => ({
-          id: item.id,
-          name: item.prompt.slice(0, 40) + '...',
-          type: 'video',
-          category: 'generated',
-          createdAt: item.created_at,
-          url: item.videoUrl,
-          duration: item.duration,
-          resolution: item.resolution,
-          fileFormat: 'MP4',
-          modelUsed: 'OpenAI Sora',
-          prompt: item.prompt
-        }))}
-        onSelectFile={(selected) => {
-          if (selected.type === 'video' && selected.url) {
-            setActiveVideo({
-              id: selected.id,
-              created_at: selected.createdAt,
-              prompt: selected.prompt || selected.name,
-              model: selected.modelUsed || 'Sora AI',
-              duration: selected.duration || '10s',
-              resolution: selected.resolution || '1080p',
-              aspectRatio: '16:9',
-              status: 'completed',
-              videoUrl: selected.url
-            });
-            setIsPlaying(true);
-          }
-        }}
-      />
+      {/* RECENT HISTORY DRAWER (SIDE OVERLAY) */}
+      <AnimatePresence>
+        {showHistoryDrawer && (
+          <motion.div
+            initial={{ opacity: 0, x: 300 }}
+            animate={{ opacity: 1, x: 0 }}
+            exit={{ opacity: 0, x: 300 }}
+            className="fixed top-0 right-0 bottom-0 w-80 bg-zinc-900 border-l border-zinc-800 p-6 z-50 overflow-y-auto shadow-2xl flex flex-col space-y-4"
+          >
+            <div className="flex items-center justify-between border-b border-zinc-800 pb-3">
+              <h3 className="text-sm font-bold text-white flex items-center gap-2">
+                <Clock className="w-4 h-4 text-indigo-400" />
+                <span>Generations History</span>
+              </h3>
+              <button
+                onClick={() => setShowHistoryDrawer(false)}
+                className="p-1 text-zinc-400 hover:text-white rounded-lg"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="space-y-2 flex-1">
+              {history.map((item) => (
+                <div
+                  key={item.id}
+                  onClick={() => {
+                    setActiveVideo(item);
+                    setIsPlaying(true);
+                    setShowHistoryDrawer(false);
+                  }}
+                  className={`p-3 rounded-2xl border transition-all cursor-pointer space-y-1.5 ${
+                    activeVideo?.id === item.id
+                      ? 'bg-indigo-950/40 border-indigo-500/50 text-white'
+                      : 'bg-zinc-950 border-zinc-800 text-zinc-400 hover:border-zinc-700 hover:text-zinc-200'
+                  }`}
+                >
+                  <p className="text-xs font-semibold line-clamp-2">{item.prompt}</p>
+                  <div className="flex items-center justify-between text-[10px] text-zinc-500 font-mono">
+                    <span>{item.duration} • {item.resolution}</span>
+                    <span className="uppercase">{item.aspectRatio}</span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
     </div>
   );
 };

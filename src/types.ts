@@ -143,3 +143,27 @@ export interface UserMemory {
   archived: boolean;
 }
 
+export type MediaType = 'video' | 'image' | 'speech' | 'audio' | 'document' | 'other';
+export type LibrarySection = 'uploaded' | 'generated';
+
+export interface MediaFileItem {
+  id: string;
+  name: string;
+  type: MediaType;
+  category: LibrarySection;
+  createdAt: string;
+  size?: string;
+  url?: string;
+  thumbnailUrl?: string;
+  duration?: string;
+  resolution?: string;
+  prompt?: string;
+  modelUsed?: string;
+  fileFormat?: string;
+  originatingFeature?: string; // Vision, PDF, Video Studio, Chat, OCR, Workspace, etc.
+  generatorType?: string; // AI Image, AI Voice, AI Video, etc.
+  mimeType?: string;
+  filePath?: string;
+  shareableUrl?: string;
+}
+
