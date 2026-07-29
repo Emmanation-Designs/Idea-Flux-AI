@@ -216,6 +216,7 @@ import { UpgradeModal } from './components/UpgradeModal';
 import { AppsView } from './components/AppsView';
 import { TextToSpeechView } from './components/TextToSpeechView';
 import { VideoStudioView } from './components/VideoStudioView';
+import { SupportModal } from './components/SupportModal';
 import { LibraryView } from './components/LibraryView';
 import { OrganizationProvider } from './context/OrganizationContext';
 import { OrganizationSettings } from './components/OrganizationSettings';
@@ -405,6 +406,8 @@ export default function App() {
     }
   }, [profile?.plan, selectedModelId]);
   const [showSettings, setShowSettings] = useState<boolean | 'account' | 'personality' | 'billing' | 'display' | 'legal' | 'support'>(false);
+  const [showSupportModal, setShowSupportModal] = useState(false);
+  const [supportInitialProblem, setSupportInitialProblem] = useState<string>('Video Studio Issue');
   const [showContextForm, setShowContextForm] = useState<ConversationType | null>(null);
   const [showLegal, setShowLegal] = useState<'about' | 'privacy' | 'terms' | null>(null);
 
@@ -2534,6 +2537,13 @@ export default function App() {
               profile={profile}
               onUpgradeClick={() => setShowUpgradeModal(true)}
               onBack={() => setActiveView('chat')}
+              onOpenSupport={(initialProblem) => {
+                setSupportInitialProblem(initialProblem || 'Video Studio Issue');
+                setShowSupportModal(true);
+              }}
+              onOpenProfile={() => {
+                setShowSettings('account');
+              }}
             />
           ) : activeView === 'library' ? (
             <LibraryView 
@@ -3464,6 +3474,13 @@ export default function App() {
             onToggleTheme={() => setIsDarkMode(!isDarkMode)}
             imageSpeed={imageSpeed}
             onToggleImageSpeed={handleToggleImageSpeed}
+          />
+        )}
+        {showSupportModal && (
+          <SupportModal 
+            profile={profile} 
+            initialProblemTitle={supportInitialProblem}
+            onClose={() => setShowSupportModal(false)} 
           />
         )}
         {showContextForm && (

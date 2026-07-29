@@ -773,6 +773,32 @@ export const Settings = (props: {
                       </div>
 
                       <div className="space-y-1.5">
+                        <label className="text-[11px] font-bold text-zinc-700 dark:text-zinc-300">Problem Title / App Feature</label>
+                        <select
+                          name="problem_title"
+                          defaultValue="Video Studio Issue"
+                          className="w-full bg-zinc-50 dark:bg-zinc-950 border border-zinc-200 dark:border-zinc-800 rounded-xl px-3.5 py-2.5 text-xs font-bold text-zinc-900 dark:text-zinc-100 focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 outline-none cursor-pointer"
+                        >
+                          {[
+                            'Video Studio Issue',
+                            'AI Chat & Reasoning Assistant',
+                            'Image Studio & Generation',
+                            'Text-to-Speech (TTS) & Voice Synthesis',
+                            'Character Consistency & Scene Studio',
+                            'Library & Media Storage',
+                            'Apps & Custom Extensions',
+                            'Billing & Credit Subscriptions',
+                            'Account, Auth & Security',
+                            'General Inquiry & Feedback'
+                          ].map((feat) => (
+                            <option key={feat} value={feat}>
+                              {feat}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+
+                      <div className="space-y-1.5">
                         <label className="text-[11px] font-bold text-zinc-700 dark:text-zinc-300">Message / Issue Details</label>
                         <textarea
                           name="message"

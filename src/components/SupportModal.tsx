@@ -6,18 +6,34 @@ import type { Profile } from '../types';
 
 export const SupportModal = ({ 
   profile,
+  initialProblemTitle = 'Video Studio Issue',
   onClose 
 }: { 
   profile?: Profile | null;
+  initialProblemTitle?: string;
   onClose: () => void;
 }) => {
   const [supportName, setSupportName] = useState(profile?.name || profile?.email?.split('@')[0] || '');
   const [supportEmail, setSupportEmail] = useState(profile?.email || '');
-  const [category, setCategory] = useState<'general' | 'technical' | 'billing' | 'feedback'>('general');
+  const [problemTitle, setProblemTitle] = useState(initialProblemTitle);
+  const [category, setCategory] = useState<'technical' | 'billing' | 'feature' | 'general'>('technical');
   const [supportMessage, setSupportMessage] = useState('');
   const [copied, setCopied] = useState(false);
 
   const officialEmail = 'ingeniumvirtualassistant@zohomail.com';
+
+  const FEATURE_OPTIONS = [
+    'Video Studio Issue',
+    'AI Chat & Reasoning Assistant',
+    'Image Studio & Generation',
+    'Text-to-Speech (TTS) & Voice Synthesis',
+    'Character Consistency & Scene Studio',
+    'Library & Media Storage',
+    'Apps & Custom Extensions',
+    'Billing & Credit Subscriptions',
+    'Account, Auth & Security',
+    'General Inquiry & Feedback'
+  ];
 
   const handleCopyEmail = () => {
     navigator.clipboard.writeText(officialEmail);
@@ -33,15 +49,8 @@ export const SupportModal = ({
       return;
     }
 
-    const categoryLabels = {
-      general: 'General Inquiry',
-      technical: 'Technical Support',
-      billing: 'Billing & Subscriptions',
-      feedback: 'Feature Request & Feedback'
-    };
-
-    const subject = `[${categoryLabels[category]}] Support Request from ${supportName || 'User'}`;
-    const body = `Name: ${supportName}\nEmail: ${supportEmail}\nCategory: ${categoryLabels[category]}\n\nMessage:\n${supportMessage}`;
+    const subject = `[${problemTitle}] Support Request from ${supportName || 'User'}`;
+    const body = `Name: ${supportName}\nEmail: ${supportEmail}\nFeature / Problem Title: ${problemTitle}\nCategory: ${category}\n\nMessage Details:\n${supportMessage}`;
 
     const mailtoUrl = `mailto:${officialEmail}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
 
@@ -145,18 +154,37 @@ export const SupportModal = ({
               </div>
             </div>
 
+            {/* Problem Title / App Feature Selection Dropdown */}
+            <div className="space-y-1.5">
+              <label className="text-xs font-bold text-zinc-700 dark:text-zinc-300 flex items-center gap-1.5">
+                <HelpCircle className="w-3.5 h-3.5 text-emerald-500" />
+                <span>Problem Title / App Feature</span>
+              </label>
+              <select
+                value={problemTitle}
+                onChange={(e) => setProblemTitle(e.target.value)}
+                className="w-full px-4 py-2.5 bg-zinc-50 dark:bg-zinc-950 border border-zinc-200 dark:border-zinc-800 rounded-xl text-xs font-bold text-zinc-900 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 transition-all cursor-pointer"
+              >
+                {FEATURE_OPTIONS.map((feat) => (
+                  <option key={feat} value={feat}>
+                    {feat}
+                  </option>
+                ))}
+              </select>
+            </div>
+
             {/* Category selection */}
             <div className="space-y-1.5">
               <label className="text-xs font-bold text-zinc-700 dark:text-zinc-300 flex items-center gap-1.5">
                 <HelpCircle className="w-3.5 h-3.5 text-zinc-400" />
-                <span>Issue Category</span>
+                <span>Issue Type</span>
               </label>
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
                 {[
-                  { id: 'general', label: 'General' },
                   { id: 'technical', label: 'Technical' },
                   { id: 'billing', label: 'Billing' },
-                  { id: 'feedback', label: 'Feedback' },
+                  { id: 'feature', label: 'Feature Request' },
+                  { id: 'general', label: 'General' },
                 ].map((item) => (
                   <button
                     key={item.id}
