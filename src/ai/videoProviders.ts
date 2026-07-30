@@ -46,19 +46,18 @@ export class OpenAISoraProvider implements VideoProvider {
 
   private mapAspectRatioToSize(aspectRatio: string = '16:9', resolution: string = '1080p'): string {
     const isHD = resolution === '1080p' || resolution === '4K';
-    switch (aspectRatio) {
-      case '9:16':
-        return isHD ? "1080x1920" : "720x1280";
-      case '1:1':
-        return isHD ? "1080x1080" : "720x720";
-      case '4:3':
-        return isHD ? "1440x1080" : "960x720";
-      case '21:9':
-        return isHD ? "1920x822" : "1280x548";
-      case '16:9':
-      default:
-        return isHD ? "1920x1080" : "1280x720";
+    if (aspectRatio === '9:16') {
+      return isHD ? "1024x1792" : "720x1280";
     }
+    return isHD ? "1792x1024" : "1280x720";
+  }
+
+  private mapSecondsEnum(duration?: string): "4" | "8" | "12" {
+    if (!duration) return "4";
+    const num = parseInt(duration);
+    if (isNaN(num) || num <= 4) return "4";
+    if (num <= 8) return "8";
+    return "12";
   }
 
   async generateVideo(params: VideoGenerationParams): Promise<VideoGenerationResult> {
@@ -72,15 +71,14 @@ export class OpenAISoraProvider implements VideoProvider {
     const isSuperCreative = params.quality === 'super-creative' || params.quality === 'super_creative';
     const quality: 'creative' | 'super-creative' = isSuperCreative ? 'super-creative' : 'creative';
     
-    // Internal OpenAI model mapping
-    const openAIModel = isSuperCreative ? 'sora-1.0' : 'sora-1.0-turbo';
-    const duration = params.duration || '10s';
+    // Internal OpenAI model mapping strictly per documentation
+    const openAIModel = isSuperCreative ? 'sora-2-pro' : 'sora-2';
+    const secondsEnum = this.mapSecondsEnum(params.duration);
     const resolution = params.resolution || '1080p';
     const aspectRatio = params.aspectRatio || '16:9';
     const size = this.mapAspectRatioToSize(aspectRatio, resolution);
-    const durationSec = parseInt(duration) || 10;
     
-    // Cost estimation calculation (Creative: ~$0.10, Super Creative: ~$0.35)
+    // Cost estimation calculation (Creative sora-2: ~$0.10, Super Creative sora-2-pro: ~$0.35)
     const costEstimateUsd = isSuperCreative ? 0.35 : 0.10;
     const createdAt = new Date().toISOString();
 
@@ -91,17 +89,17 @@ export class OpenAISoraProvider implements VideoProvider {
     }
 
     const payload: any = {
-      model: openAIModel,
       prompt: fullPrompt,
+      model: openAIModel,
+      seconds: secondsEnum,
       size,
-      seconds: durationSec,
     };
 
     if (params.inputImage) {
-      payload.input_image = params.inputImage;
+      payload.input_reference = { image_url: params.inputImage };
     }
 
-    // Official REST fetch to OpenAI Video generation endpoint
+    // Official REST fetch to OpenAI Video generation endpoint POST /v1/videos
     const res = await fetch("https://api.openai.com/v1/videos", {
       method: "POST",
       headers: {
@@ -127,24 +125,24 @@ export class OpenAISoraProvider implements VideoProvider {
     }
 
     const data = await res.json();
-    const videoUrl = data.data?.[0]?.url || data.video_url || data.url;
-    const providerJobId = data.id || data.job_id;
+    const providerJobId = data.id;
 
-    if (!providerJobId && !videoUrl) {
-      throw new Error("OpenAI Video API response did not contain a valid job ID or video URL.");
+    if (!providerJobId) {
+      throw new Error("OpenAI Video API response did not contain a valid job ID.");
     }
 
-    const rawStatus = data.status || (videoUrl ? 'completed' : 'generating');
-    const isCompleted = rawStatus === 'succeeded' || rawStatus === 'completed';
+    const rawStatus = data.status || 'queued';
+    const isCompleted = rawStatus === 'completed';
+    const videoUrl = data.video_url || data.url || (isCompleted ? `/api/tools/video-studio/content/${providerJobId}` : undefined);
 
     return {
-      id: providerJobId || `openai-${Date.now()}`,
-      providerJobId: providerJobId || `openai-${Date.now()}`,
+      id: providerJobId,
+      providerJobId: providerJobId,
       videoUrl: videoUrl || undefined,
-      thumbnailUrl: data.thumbnail_url || data.data?.[0]?.thumbnail_url,
+      thumbnailUrl: data.thumbnail_url || (isCompleted ? `/api/tools/video-studio/content/${providerJobId}?variant=thumbnail` : undefined),
       prompt: params.prompt,
       negativePrompt: params.negativePrompt,
-      duration,
+      duration: `${secondsEnum}s`,
       resolution,
       aspectRatio,
       quality,
@@ -187,36 +185,38 @@ export class OpenAISoraProvider implements VideoProvider {
     }
 
     const data = await res.json();
-    const videoUrl = data.data?.[0]?.url || data.video_url || data.url;
-    const rawStatus = data.status || (videoUrl ? 'completed' : 'generating');
-    const isCompleted = rawStatus === 'succeeded' || rawStatus === 'completed';
-    const isFailed = rawStatus === 'failed' || rawStatus === 'cancelled';
+    const rawStatus = data.status || 'queued';
+    const isCompleted = rawStatus === 'completed';
+    const isFailed = rawStatus === 'failed';
+
+    const videoUrl = data.video_url || data.url || (isCompleted ? `/api/tools/video-studio/content/${jobId}` : undefined);
+    const thumbnailUrl = data.thumbnail_url || (isCompleted ? `/api/tools/video-studio/content/${jobId}?variant=thumbnail` : undefined);
 
     return {
       id: jobId,
       providerJobId: jobId,
       videoUrl: videoUrl || undefined,
-      thumbnailUrl: data.thumbnail_url,
+      thumbnailUrl,
       prompt: data.prompt || '',
-      duration: data.duration ? `${data.duration}s` : '10s',
+      duration: data.seconds ? `${data.seconds}s` : '4s',
       resolution: '1080p',
       aspectRatio: '16:9',
-      quality: data.model?.includes('turbo') ? 'creative' : 'super-creative',
-      modelUsed: data.model || 'sora-1.0-turbo',
+      quality: data.model?.includes('pro') ? 'super-creative' : 'creative',
+      modelUsed: data.model || 'sora-2',
       provider: 'openai',
       status: isFailed ? 'failed' : (isCompleted ? 'completed' : 'generating'),
-      error: data.error?.message || data.error || (isFailed ? 'Video generation failed' : undefined),
-      createdAt: data.created_at || new Date().toISOString(),
-      completedAt: isCompleted ? new Date().toISOString() : undefined,
-      costEstimateUsd: data.model?.includes('turbo') ? 0.10 : 0.35
+      error: data.error?.message || (isFailed ? 'Video generation failed' : undefined),
+      createdAt: data.created_at ? new Date(data.created_at * 1000).toISOString() : new Date().toISOString(),
+      completedAt: data.completed_at ? new Date(data.completed_at * 1000).toISOString() : (isCompleted ? new Date().toISOString() : undefined),
+      costEstimateUsd: data.model?.includes('pro') ? 0.35 : 0.10
     };
   }
 }
 
 export const videoProviderRegistry: Record<string, VideoProvider> = {
   openai: new OpenAISoraProvider(),
-  'sora-1.0-turbo': new OpenAISoraProvider(),
-  'sora-1.0': new OpenAISoraProvider(),
+  'sora-2': new OpenAISoraProvider(),
+  'sora-2-pro': new OpenAISoraProvider(),
   'creative': new OpenAISoraProvider(),
   'super-creative': new OpenAISoraProvider(),
 };

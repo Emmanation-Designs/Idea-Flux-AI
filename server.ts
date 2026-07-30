@@ -1714,6 +1714,36 @@ const handlePollVideoStatus = async (req: express.Request, res: express.Response
 app.get("/api/tools/video-studio/status/:id", handlePollVideoStatus);
 app.get("/api/video/status/:id", handlePollVideoStatus);
 
+// Proxy downloadable video content or thumbnail from OpenAI GET /videos/{id}/content
+const handleVideoContentProxy = async (req: express.Request, res: express.Response) => {
+  try {
+    const apiKey = process.env.OPENAI_API_KEY;
+    if (!apiKey) {
+      return res.status(500).send("OPENAI_API_KEY is missing on server.");
+    }
+    const id = req.params.id;
+    const variant = req.query.variant ? String(req.query.variant) : 'video';
+    const response = await fetch(`https://api.openai.com/v1/videos/${id}/content?variant=${variant}`, {
+      headers: {
+        "Authorization": `Bearer ${apiKey}`
+      }
+    });
+    if (!response.ok) {
+      return res.status(response.status).send(`Failed to fetch video content from OpenAI: ${response.statusText}`);
+    }
+    const contentType = response.headers.get("content-type") || (variant === 'thumbnail' ? 'image/png' : 'video/mp4');
+    res.setHeader("Content-Type", contentType);
+    const arrayBuffer = await response.arrayBuffer();
+    return res.send(Buffer.from(arrayBuffer));
+  } catch (err: any) {
+    console.error("[VideoStudio] Error proxying video content:", err);
+    return res.status(500).send("Error streaming video content.");
+  }
+};
+
+app.get("/api/tools/video-studio/content/:id", handleVideoContentProxy);
+app.get("/api/video/content/:id", handleVideoContentProxy);
+
 // Delete a generated video
 const handleDeleteVideo = async (req: express.Request, res: express.Response) => {
   try {
