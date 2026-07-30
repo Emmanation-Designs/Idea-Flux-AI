@@ -1609,23 +1609,37 @@ const handlePollVideoStatus = async (req: express.Request, res: express.Response
     const supabase = getSupabaseAdminClient();
     const id = req.params.id;
 
-    const { data: item, error } = await supabase
-      .from("video_generations")
-      .select("*")
-      .or(`id.eq.${id},provider_job_id.eq.${id}`)
-      .eq("user_id", user.id)
-      .maybeSingle();
+    let item: any = null;
+    const isUuid = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(id);
 
-    if (error || !item) {
-      return res.status(404).json({ error: "Video generation record not found." });
+    if (isUuid) {
+      const { data } = await supabase
+        .from("video_generations")
+        .select("*")
+        .eq("id", id)
+        .eq("user_id", user.id)
+        .maybeSingle();
+      item = data;
     }
 
-    if (item.status === 'completed' || item.generation_status === 'completed' || item.video_url) {
+    if (!item) {
+      const { data } = await supabase
+        .from("video_generations")
+        .select("*")
+        .eq("provider_job_id", id)
+        .eq("user_id", user.id)
+        .maybeSingle();
+      item = data;
+    }
+
+    const providerJobId = item?.provider_job_id || id;
+
+    if (item && (item.status === 'completed' || item.generation_status === 'completed') && item.video_url) {
       return res.json({
         success: true,
         video: {
           id: item.id,
-          providerJobId: item.provider_job_id,
+          providerJobId: item.provider_job_id || id,
           videoUrl: item.video_url,
           thumbnailUrl: item.thumbnail_url,
           prompt: item.prompt,
@@ -1642,56 +1656,68 @@ const handlePollVideoStatus = async (req: express.Request, res: express.Response
 
     // Poll OpenAI provider for update
     const provider = getVideoProvider("openai");
-    if (provider.pollVideoStatus && item.provider_job_id) {
+    if (provider.pollVideoStatus && providerJobId) {
       try {
-        const updatedResult = await provider.pollVideoStatus(item.provider_job_id);
-        if (updatedResult.status === 'completed' && updatedResult.videoUrl) {
-          await supabase
-            .from("video_generations")
-            .update({
-              video_url: updatedResult.videoUrl,
-              status: 'completed',
-              generation_status: 'completed',
-              completed_at: new Date().toISOString()
-            })
-            .eq("id", item.id);
+        const updatedResult = await provider.pollVideoStatus(providerJobId);
+        if (item) {
+          if (updatedResult.status === 'completed' && updatedResult.videoUrl) {
+            await supabase
+              .from("video_generations")
+              .update({
+                video_url: updatedResult.videoUrl,
+                thumbnail_url: updatedResult.thumbnailUrl || item.thumbnail_url,
+                status: 'completed',
+                generation_status: 'completed',
+                completed_at: new Date().toISOString()
+              })
+              .eq("id", item.id);
+          } else if (updatedResult.status === 'failed') {
+            await supabase
+              .from("video_generations")
+              .update({
+                status: 'failed',
+                generation_status: 'failed'
+              })
+              .eq("id", item.id);
+          }
+        }
 
-          return res.json({
-            success: true,
-            video: {
-              id: item.id,
-              providerJobId: item.provider_job_id,
-              videoUrl: updatedResult.videoUrl,
-              thumbnailUrl: updatedResult.thumbnailUrl || item.thumbnail_url,
-              prompt: item.prompt,
-              quality: item.quality || 'creative',
-              status: 'completed',
-              createdAt: item.created_at,
-              completedAt: new Date().toISOString()
-            }
-          });
-        } else if (updatedResult.status === 'failed') {
-          await supabase
-            .from("video_generations")
-            .update({
-              status: 'failed',
-              generation_status: 'failed'
-            })
-            .eq("id", item.id);
-
+        if (updatedResult.status === 'failed') {
           return res.status(400).json({
             error: updatedResult.error || "OpenAI video generation failed.",
             status: 'failed'
           });
         }
+
+        return res.json({
+          success: true,
+          video: {
+            id: item?.id || providerJobId,
+            providerJobId: providerJobId,
+            videoUrl: updatedResult.videoUrl,
+            thumbnailUrl: updatedResult.thumbnailUrl || item?.thumbnail_url,
+            prompt: updatedResult.prompt || item?.prompt || '',
+            quality: item?.quality || 'creative',
+            status: updatedResult.status || 'generating',
+            createdAt: item?.created_at || updatedResult.createdAt,
+            completedAt: updatedResult.completedAt
+          }
+        });
       } catch (pollErr: any) {
-        console.error(`[VideoStudio] Polling error for job ${item.provider_job_id}:`, pollErr);
+        console.error(`[VideoStudio] Polling error for job ${providerJobId}:`, pollErr);
+        if (!item) {
+          return res.status(404).json({ error: "Video generation record not found." });
+        }
         const pollStatus = pollErr?.status && typeof pollErr.status === 'number' && pollErr.status >= 400 && pollErr.status < 600 ? pollErr.status : 500;
         return res.status(pollStatus).json({
           error: pollErr?.message || "Failed to poll video generation status.",
           details: pollErr?.details || null
         });
       }
+    }
+
+    if (!item) {
+      return res.status(404).json({ error: "Video generation record not found." });
     }
 
     return res.json({

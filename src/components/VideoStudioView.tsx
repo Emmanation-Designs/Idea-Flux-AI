@@ -218,7 +218,7 @@ export const VideoStudioView: React.FC<VideoStudioViewProps> = ({
             prompt: v.prompt,
             negativePrompt: v.negativePrompt,
             quality: v.quality || 'creative',
-            model: v.model || (v.quality === 'super-creative' ? 'sora-1.0' : 'sora-1.0-turbo'),
+            model: v.model || (v.quality === 'super-creative' ? 'sora-2-pro' : 'sora-2'),
             duration: v.duration || '6s',
             resolution: v.resolution || '1080p',
             aspectRatio: v.aspectRatio || '9:16',
@@ -280,7 +280,7 @@ export const VideoStudioView: React.FC<VideoStudioViewProps> = ({
       id: `gen-temp-${Date.now()}-${idx}`,
       created_at: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
       prompt,
-      model: selectedQuality === 'super-creative' ? 'sora-1.0' : 'sora-1.0-turbo',
+      model: selectedQuality === 'super-creative' ? 'sora-2-pro' : 'sora-2',
       duration: selectedDuration,
       resolution: selectedResolution,
       aspectRatio: selectedAspectRatio,
@@ -333,14 +333,15 @@ export const VideoStudioView: React.FC<VideoStudioViewProps> = ({
 
       // If video generation is still processing/generating on OpenAI
       if ((data.video.status === 'generating' || data.video.status === 'queued') && !data.video.videoUrl) {
-        const videoId = data.video.id || data.video.providerJobId;
+        const providerJobId = data.video.providerJobId || data.video.id;
+        const dbId = data.video.id;
         let pollCount = 0;
         const maxPolls = 60; // Poll for up to 3 minutes (every 3s)
 
         const pollInterval = setInterval(async () => {
           pollCount++;
           try {
-            const statusRes = await fetch(`/api/tools/video-studio/status/${videoId}`, {
+            const statusRes = await fetch(`/api/tools/video-studio/status/${providerJobId}`, {
               headers: { Authorization: `Bearer ${sessionToken}` }
             });
             const statusData = await safeParseJsonResponse(statusRes);
@@ -358,11 +359,11 @@ export const VideoStudioView: React.FC<VideoStudioViewProps> = ({
                 clearInterval(pollInterval);
                 setGenerationProgress(100);
                 const completedVideo: VideoGenerationItem = {
-                  id: statusData.video.id || videoId,
+                  id: dbId || statusData.video.id,
                   created_at: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
                   prompt: statusData.video.prompt || prompt,
                   quality: selectedQuality,
-                  model: statusData.video.model || (selectedQuality === 'super-creative' ? 'sora-1.0' : 'sora-1.0-turbo'),
+                  model: statusData.video.model || (selectedQuality === 'super-creative' ? 'sora-2-pro' : 'sora-2'),
                   duration: statusData.video.duration || selectedDuration,
                   resolution: statusData.video.resolution || selectedResolution,
                   aspectRatio: statusData.video.aspectRatio || selectedAspectRatio,
@@ -403,7 +404,7 @@ export const VideoStudioView: React.FC<VideoStudioViewProps> = ({
         created_at: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
         prompt: data.video.prompt || prompt,
         quality: selectedQuality,
-        model: data.video.model || (selectedQuality === 'super-creative' ? 'sora-1.0' : 'sora-1.0-turbo'),
+        model: data.video.model || (selectedQuality === 'super-creative' ? 'sora-2-pro' : 'sora-2'),
         duration: data.video.duration || selectedDuration,
         resolution: data.video.resolution || selectedResolution,
         aspectRatio: data.video.aspectRatio || selectedAspectRatio,
