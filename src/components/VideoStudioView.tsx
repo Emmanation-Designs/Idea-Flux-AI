@@ -42,6 +42,7 @@ interface VideoStudioViewProps {
 
 interface VideoGenerationItem {
   id: string;
+  providerJobId?: string;
   created_at: string;
   prompt: string;
   negativePrompt?: string;
@@ -50,11 +51,36 @@ interface VideoGenerationItem {
   duration: string;
   resolution: string;
   aspectRatio: string;
-  status: 'completed' | 'generating' | 'failed';
+  status: 'completed' | 'generating' | 'queued' | 'rendering' | 'failed';
+  progress?: number;
+  error?: string;
   videoUrl?: string;
   thumbnailUrl?: string;
   inputImage?: string;
 }
+
+export const MODEL_CAPABILITIES = {
+  'creative': {
+    name: 'Sora 2 (Creative)',
+    modelId: 'sora-2',
+    durations: ['4s', '8s', '12s'],
+    resolutions: ['720p', '1080p'],
+    aspectRatios: [
+      { id: '9:16', label: '9:16 Portrait' },
+      { id: '16:9', label: '16:9 Landscape' }
+    ]
+  },
+  'super-creative': {
+    name: 'Sora 2 Pro (Super Creative)',
+    modelId: 'sora-2-pro',
+    durations: ['4s', '8s', '12s'],
+    resolutions: ['720p', '1080p', '4K'],
+    aspectRatios: [
+      { id: '9:16', label: '9:16 Portrait' },
+      { id: '16:9', label: '16:9 Landscape' }
+    ]
+  }
+};
 
 interface CharacterAsset {
   id: string;
@@ -155,7 +181,7 @@ export const VideoStudioView: React.FC<VideoStudioViewProps> = ({
   const [prompt, setPrompt] = useState('');
   const [negativePrompt, setNegativePrompt] = useState('');
   const [selectedQuality, setSelectedQuality] = useState<'creative' | 'super-creative'>('creative');
-  const [selectedDuration, setSelectedDuration] = useState('6s');
+  const [selectedDuration, setSelectedDuration] = useState('4s');
   const [selectedResolution, setSelectedResolution] = useState('1080p');
   const [selectedAspectRatio, setSelectedAspectRatio] = useState<'9:16' | '16:9'>('9:16');
   const [outputCount, setOutputCount] = useState<'x1' | 'x2' | 'x3' | 'x4'>('x2');
@@ -180,6 +206,17 @@ export const VideoStudioView: React.FC<VideoStudioViewProps> = ({
   const [isGenerating, setIsGenerating] = useState(false);
   const [generationProgress, setGenerationProgress] = useState(0);
   const [generatingItems, setGeneratingItems] = useState<VideoGenerationItem[]>([]);
+
+  // Ref to track active polling intervals by providerJobId or card id
+  const activePollIntervals = useRef<Record<string, NodeJS.Timeout>>({});
+
+  // Cleanup polling timers on unmount
+  useEffect(() => {
+    return () => {
+      Object.values(activePollIntervals.current).forEach((timer) => clearInterval(timer));
+      activePollIntervals.current = {};
+    };
+  }, []);
 
   // Video History (starts empty with no mock items)
   const [currentProject, setCurrentProject] = useState<VideoGenerationItem | null>(null);
@@ -266,43 +303,67 @@ export const VideoStudioView: React.FC<VideoStudioViewProps> = ({
       return;
     }
 
-    if (!prompt.trim()) {
+    const trimmedPrompt = prompt.trim();
+    if (!trimmedPrompt) {
       toast.error('Please enter a prompt before generating');
       return;
     }
 
-    setIsGenerating(true);
-    setShowSettingsPopover(false);
-    setGenerationProgress(15);
+    // Dynamic Capabilities Validation before submission
+    const caps = MODEL_CAPABILITIES[selectedQuality];
+    if (!caps.durations.includes(selectedDuration)) {
+      toast.error(`Duration ${selectedDuration} is not supported by ${caps.name}.`);
+      return;
+    }
+    if (!caps.resolutions.includes(selectedResolution)) {
+      toast.error(`Resolution ${selectedResolution} is not supported by ${caps.name}.`);
+      return;
+    }
 
+    setShowSettingsPopover(false);
     const countNum = parseInt(outputCount.replace('x', '')) || 1;
+
+    // Create unique temporary cards for the requested countNum output videos
     const tempGeneratingCards: VideoGenerationItem[] = Array.from({ length: countNum }).map((_, idx) => ({
-      id: `gen-temp-${Date.now()}-${idx}`,
+      id: `gen-temp-${Date.now()}-${idx}-${Math.random().toString(36).substring(2, 7)}`,
       created_at: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-      prompt,
+      prompt: trimmedPrompt,
+      negativePrompt,
+      quality: selectedQuality,
       model: selectedQuality === 'super-creative' ? 'sora-2-pro' : 'sora-2',
       duration: selectedDuration,
       resolution: selectedResolution,
       aspectRatio: selectedAspectRatio,
-      status: 'generating'
+      status: 'queued',
+      progress: 10,
+      inputImage: inputImage || undefined
     }));
 
-    setGeneratingItems(tempGeneratingCards);
+    setGeneratingItems((prev) => [...tempGeneratingCards, ...prev]);
+    setIsGenerating(true);
 
-    const intervalTimer = setInterval(() => {
-      setGenerationProgress((prev) => {
-        if (prev < 85) return prev + 12;
-        return prev;
-      });
-    }, 1200);
+    const { data: sessionData } = await supabase.auth.getSession();
+    const sessionToken = sessionData?.session?.access_token;
 
+    if (!sessionToken) {
+      toast.error('Authentication session not found. Please log in.');
+      setIsGenerating(false);
+      setGeneratingItems((prev) => prev.filter((item) => !tempGeneratingCards.some((t) => t.id === item.id)));
+      return;
+    }
+
+    // Dispatch parallel requests for each requested output video
+    tempGeneratingCards.forEach((card) => {
+      startSingleVideoJob(card, sessionToken);
+    });
+  };
+
+  const startSingleVideoJob = async (tempCard: VideoGenerationItem, sessionToken: string) => {
     try {
-      const { data: sessionData } = await supabase.auth.getSession();
-      const sessionToken = sessionData?.session?.access_token;
-
-      if (!sessionToken) {
-        throw new Error('Authentication session not found. Please log in.');
-      }
+      // Update card status to 'queued' with initial progress
+      setGeneratingItems((prev) =>
+        prev.map((item) => (item.id === tempCard.id ? { ...item, status: 'queued', progress: 15 } : item))
+      );
 
       const response = await fetch('/api/tools/video-studio', {
         method: 'POST',
@@ -311,120 +372,193 @@ export const VideoStudioView: React.FC<VideoStudioViewProps> = ({
           'Authorization': `Bearer ${sessionToken}`
         },
         body: JSON.stringify({
-          prompt,
-          negativePrompt,
-          quality: selectedQuality,
-          duration: selectedDuration,
-          resolution: selectedResolution,
-          aspectRatio: selectedAspectRatio,
-          inputImage
+          prompt: tempCard.prompt,
+          negativePrompt: tempCard.negativePrompt,
+          quality: tempCard.quality,
+          duration: tempCard.duration,
+          resolution: tempCard.resolution,
+          aspectRatio: tempCard.aspectRatio,
+          inputImage: tempCard.inputImage
         })
       });
 
-      clearInterval(intervalTimer);
       const data = await safeParseJsonResponse(response);
 
       if (!response.ok || !data.success) {
         if (data.code === 'UPGRADE_REQUIRED' || data.code === 'PRO_REQUIRED') {
           onUpgradeClick?.();
         }
-        throw new Error(data.error || 'Failed to generate video.');
-      }
-
-      // If video generation is still processing/generating on OpenAI
-      if ((data.video.status === 'generating' || data.video.status === 'queued') && !data.video.videoUrl) {
-        const providerJobId = data.video.providerJobId || data.video.id;
-        const dbId = data.video.id;
-        let pollCount = 0;
-        const maxPolls = 60; // Poll for up to 3 minutes (every 3s)
-
-        const pollInterval = setInterval(async () => {
-          pollCount++;
-          try {
-            const statusRes = await fetch(`/api/tools/video-studio/status/${providerJobId}`, {
-              headers: { Authorization: `Bearer ${sessionToken}` }
-            });
-            const statusData = await safeParseJsonResponse(statusRes);
-            
-            if (!statusRes.ok) {
-              clearInterval(pollInterval);
-              setGeneratingItems([]);
-              setIsGenerating(false);
-              toast.error(statusData.error || 'OpenAI Video generation failed during polling.');
-              return;
-            }
-
-            if (statusData.success && statusData.video) {
-              if (statusData.video.status === 'completed' && statusData.video.videoUrl) {
-                clearInterval(pollInterval);
-                setGenerationProgress(100);
-                const completedVideo: VideoGenerationItem = {
-                  id: dbId || statusData.video.id,
-                  created_at: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-                  prompt: statusData.video.prompt || prompt,
-                  quality: selectedQuality,
-                  model: statusData.video.model || (selectedQuality === 'super-creative' ? 'sora-2-pro' : 'sora-2'),
-                  duration: statusData.video.duration || selectedDuration,
-                  resolution: statusData.video.resolution || selectedResolution,
-                  aspectRatio: statusData.video.aspectRatio || selectedAspectRatio,
-                  status: 'completed',
-                  videoUrl: statusData.video.videoUrl,
-                  thumbnailUrl: statusData.video.thumbnailUrl
-                };
-                setGeneratingItems([]);
-                setHistory((prev) => [completedVideo, ...prev]);
-                setCurrentProject(completedVideo);
-                setIsGenerating(false);
-                toast.success('Video generation complete!');
-              } else if (statusData.video.status === 'failed') {
-                clearInterval(pollInterval);
-                setGeneratingItems([]);
-                setIsGenerating(false);
-                toast.error(statusData.error || 'Video generation failed on OpenAI.');
-              }
-            }
-          } catch (pollErr: any) {
-            console.error('[VideoStudio] Polling error:', pollErr);
-          }
-
-          if (pollCount >= maxPolls) {
-            clearInterval(pollInterval);
-            setGeneratingItems([]);
-            setIsGenerating(false);
-            toast.error('Video generation timed out.');
-          }
-        }, 3000);
+        const errMsg = data.error || 'Failed to generate video.';
+        setGeneratingItems((prev) =>
+          prev.map((item) => (item.id === tempCard.id ? { ...item, status: 'failed', error: errMsg, progress: 0 } : item))
+        );
+        toast.error(`Generation error: ${errMsg}`);
         return;
       }
 
-      setGenerationProgress(100);
+      const dbId = data.video.id; // Database UUID
+      const providerJobId = data.video.providerJobId || data.video.id; // OpenAI provider job ID ONLY
 
-      const newVideo: VideoGenerationItem = {
-        id: data.video.id || `v-${Date.now()}`,
-        created_at: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-        prompt: data.video.prompt || prompt,
-        quality: selectedQuality,
-        model: data.video.model || (selectedQuality === 'super-creative' ? 'sora-2-pro' : 'sora-2'),
-        duration: data.video.duration || selectedDuration,
-        resolution: data.video.resolution || selectedResolution,
-        aspectRatio: data.video.aspectRatio || selectedAspectRatio,
-        status: 'completed',
-        videoUrl: data.video.videoUrl,
-        thumbnailUrl: data.video.thumbnailUrl
-      };
+      // Update item with DB UUID and Provider Job ID
+      setGeneratingItems((prev) =>
+        prev.map((item) =>
+          item.id === tempCard.id
+            ? {
+                ...item,
+                id: dbId || tempCard.id,
+                providerJobId: providerJobId,
+                status: (data.video.status as any) || 'generating',
+                progress: data.video.progress || 25,
+                videoUrl: data.video.videoUrl,
+                thumbnailUrl: data.video.thumbnailUrl
+              }
+            : item
+        )
+      );
 
-      setGeneratingItems([]);
-      setHistory((prev) => [newVideo, ...prev]);
-      setCurrentProject(newVideo);
-      setIsGenerating(false);
-      toast.success('Video generation complete!');
+      // If finished instantly
+      if (data.video.status === 'completed' && data.video.videoUrl) {
+        const completedVideo: VideoGenerationItem = {
+          id: dbId || providerJobId,
+          created_at: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+          prompt: data.video.prompt || tempCard.prompt,
+          quality: tempCard.quality,
+          model: data.video.model || tempCard.model,
+          duration: data.video.duration || tempCard.duration,
+          resolution: data.video.resolution || tempCard.resolution,
+          aspectRatio: data.video.aspectRatio || tempCard.aspectRatio,
+          status: 'completed',
+          progress: 100,
+          videoUrl: data.video.videoUrl,
+          thumbnailUrl: data.video.thumbnailUrl
+        };
+
+        setGeneratingItems((prev) =>
+          prev.map((item) => (item.id === (dbId || tempCard.id) ? completedVideo : item))
+        );
+        setHistory((prev) => [completedVideo, ...prev.filter((h) => h.id !== completedVideo.id)]);
+        setCurrentProject(completedVideo);
+        window.dispatchEvent(new CustomEvent('library-updated'));
+        toast.success('Video generation completed!');
+        return;
+      }
+
+      // Start independent polling loop using providerJobId
+      let pollCount = 0;
+      const maxPolls = 60; // Up to 3 minutes
+
+      const pollTimer = setInterval(async () => {
+        pollCount++;
+        try {
+          const statusRes = await fetch(`/api/tools/video-studio/status/${providerJobId}`, {
+            headers: { Authorization: `Bearer ${sessionToken}` }
+          });
+          const statusData = await safeParseJsonResponse(statusRes);
+
+          if (!statusRes.ok) {
+            clearInterval(pollTimer);
+            delete activePollIntervals.current[providerJobId];
+            const pollError = statusData.error || `Polling failed (HTTP ${statusRes.status})`;
+            setGeneratingItems((prev) =>
+              prev.map((item) =>
+                item.providerJobId === providerJobId || item.id === dbId
+                  ? { ...item, status: 'failed', error: pollError, progress: 0 }
+                  : item
+              )
+            );
+            toast.error(pollError);
+            return;
+          }
+
+          if (statusData.success && statusData.video) {
+            const v = statusData.video;
+            const currentStatus = v.status || 'generating';
+            const currentProgress = v.progress ?? (currentStatus === 'completed' ? 100 : 50);
+
+            setGeneratingItems((prev) =>
+              prev.map((item) => {
+                if (item.providerJobId === providerJobId || item.id === dbId || item.id === tempCard.id) {
+                  return {
+                    ...item,
+                    status: currentStatus as any,
+                    progress: currentProgress,
+                    videoUrl: v.videoUrl || item.videoUrl,
+                    thumbnailUrl: v.thumbnailUrl || item.thumbnailUrl
+                  };
+                }
+                return item;
+              })
+            );
+
+            if (currentStatus === 'completed' && v.videoUrl) {
+              clearInterval(pollTimer);
+              delete activePollIntervals.current[providerJobId];
+
+              const completedVideo: VideoGenerationItem = {
+                id: dbId || v.id || providerJobId,
+                created_at: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+                prompt: v.prompt || tempCard.prompt,
+                quality: tempCard.quality,
+                model: v.model || tempCard.model,
+                duration: v.duration || tempCard.duration,
+                resolution: v.resolution || tempCard.resolution,
+                aspectRatio: v.aspectRatio || tempCard.aspectRatio,
+                status: 'completed',
+                progress: 100,
+                videoUrl: v.videoUrl,
+                thumbnailUrl: v.thumbnailUrl
+              };
+
+              setGeneratingItems((prev) =>
+                prev.map((item) =>
+                  item.providerJobId === providerJobId || item.id === dbId || item.id === tempCard.id
+                    ? completedVideo
+                    : item
+                )
+              );
+              setHistory((prev) => [completedVideo, ...prev.filter((h) => h.id !== completedVideo.id)]);
+              setCurrentProject(completedVideo);
+              window.dispatchEvent(new CustomEvent('library-updated'));
+              toast.success('Video generation completed!');
+            } else if (currentStatus === 'failed') {
+              clearInterval(pollTimer);
+              delete activePollIntervals.current[providerJobId];
+              const failReason = v.error || statusData.error || 'Video generation failed on OpenAI.';
+              setGeneratingItems((prev) =>
+                prev.map((item) =>
+                  item.providerJobId === providerJobId || item.id === dbId || item.id === tempCard.id
+                    ? { ...item, status: 'failed', error: failReason, progress: 0 }
+                    : item
+                )
+              );
+              toast.error(failReason);
+            }
+          }
+        } catch (pollErr: any) {
+          console.error(`[VideoStudio] Polling error for ${providerJobId}:`, pollErr);
+        }
+
+        if (pollCount >= maxPolls) {
+          clearInterval(pollTimer);
+          delete activePollIntervals.current[providerJobId];
+          setGeneratingItems((prev) =>
+            prev.map((item) =>
+              item.providerJobId === providerJobId || item.id === dbId
+                ? { ...item, status: 'failed', error: 'Generation request timed out after 3 minutes.', progress: 0 }
+                : item
+            )
+          );
+          toast.error('Video generation timed out.');
+        }
+      }, 3000);
+
+      activePollIntervals.current[providerJobId] = pollTimer;
     } catch (err: any) {
-      clearInterval(intervalTimer);
-      setGeneratingItems([]);
-      console.error('[VideoStudio] Generation error:', err);
-      toast.error(err.message || 'An error occurred during video generation.');
-    } finally {
-      setIsGenerating(false);
+      console.error('[VideoStudio] Job submission error:', err);
+      setGeneratingItems((prev) =>
+        prev.map((item) => (item.id === tempCard.id ? { ...item, status: 'failed', error: err.message, progress: 0 } : item))
+      );
+      toast.error(err.message || 'Failed to submit video generation job.');
     }
   };
 
@@ -1011,28 +1145,95 @@ export const VideoStudioView: React.FC<VideoStudioViewProps> = ({
                     </div>
                   )}
 
-                  {isGenerating && generatingItems.length > 0 && (
+                  {generatingItems.length > 0 && (
                     <div className="w-full max-w-4xl grid grid-cols-1 sm:grid-cols-2 gap-6 my-auto">
                       {generatingItems.map((item) => (
                         <div
                           key={item.id}
-                          className={`relative rounded-3xl overflow-hidden border border-zinc-200 dark:border-zinc-800 bg-zinc-200 dark:bg-zinc-900 shadow-2xl flex flex-col items-center justify-center ${
-                            selectedAspectRatio === '9:16' ? 'aspect-[9/16] max-h-[500px]' : 'aspect-video'
+                          className={`relative rounded-3xl overflow-hidden border ${
+                            item.status === 'failed'
+                              ? 'border-red-500/50 bg-red-950/20'
+                              : item.status === 'completed'
+                              ? 'border-emerald-500/50 bg-black'
+                              : 'border-zinc-200 dark:border-zinc-800 bg-zinc-100 dark:bg-zinc-900'
+                          } shadow-2xl flex flex-col items-center justify-center ${
+                            item.aspectRatio === '9:16' ? 'aspect-[9/16] max-h-[500px]' : 'aspect-video'
                           }`}
                         >
-                          <div className="absolute inset-0 bg-gradient-to-r from-zinc-300/40 via-zinc-100/60 to-zinc-300/40 dark:from-zinc-800/40 dark:via-zinc-700/60 dark:to-zinc-800/40 animate-pulse" />
-                          <div className="absolute top-4 left-4 p-2 rounded-full bg-black/40 backdrop-blur-md text-white">
-                            <Play className="w-4 h-4 fill-current ml-0.5" />
+                          {/* Top Badges */}
+                          <div className="absolute top-4 inset-x-4 flex items-center justify-between z-20">
+                            <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-black/60 backdrop-blur-md text-[10px] font-mono font-bold text-white">
+                              <span className="text-emerald-400">{item.model}</span>
+                              <span>•</span>
+                              <span>{item.duration}</span>
+                              <span>•</span>
+                              <span className="uppercase">{item.aspectRatio}</span>
+                            </div>
+                            <div className={`px-2.5 py-1 rounded-full backdrop-blur-md text-xs font-mono font-bold text-white ${
+                              item.status === 'failed' ? 'bg-red-600' : item.status === 'completed' ? 'bg-emerald-600' : 'bg-black/60'
+                            }`}>
+                              {item.status === 'failed' ? 'Failed' : `${item.progress ?? 15}%`}
+                            </div>
                           </div>
-                          <div className="absolute top-4 right-4 px-2.5 py-1 rounded-full bg-black/60 backdrop-blur-md text-xs font-mono font-bold text-white">
-                            {generationProgress}%
-                          </div>
-                          <div className="z-10 flex flex-col items-center gap-3 p-6 text-center">
-                            <RefreshCw className="w-8 h-8 text-emerald-500 animate-spin" />
-                            <span className="text-xs font-bold text-zinc-700 dark:text-zinc-300 animate-pulse">
-                              Rendering cinematic video frames...
-                            </span>
-                          </div>
+
+                          {/* Content Body */}
+                          {item.status === 'completed' && item.videoUrl ? (
+                            <div
+                              onClick={() => setActiveVideoModal(item)}
+                              className="w-full h-full cursor-pointer relative group"
+                            >
+                              <video
+                                src={item.videoUrl}
+                                className="w-full h-full object-cover"
+                                autoPlay
+                                loop
+                                muted
+                                playsInline
+                              />
+                              <div className="absolute top-4 left-4 p-2 rounded-full bg-black/60 backdrop-blur-md text-white group-hover:scale-110 transition-transform">
+                                <Play className="w-4 h-4 fill-current ml-0.5" />
+                              </div>
+                              <div className="absolute inset-x-0 bottom-0 p-4 bg-gradient-to-t from-black/80 via-black/40 to-transparent text-white">
+                                <p className="text-xs font-medium line-clamp-2">{item.prompt}</p>
+                              </div>
+                            </div>
+                          ) : item.status === 'failed' ? (
+                            <div className="z-10 flex flex-col items-center gap-3 p-6 text-center max-w-xs">
+                              <div className="p-3 rounded-full bg-red-500/20 text-red-400">
+                                <X className="w-8 h-8" />
+                              </div>
+                              <span className="text-xs font-bold text-red-400">
+                                Generation Failed
+                              </span>
+                              <p className="text-[11px] text-zinc-400 line-clamp-3">
+                                {item.error || 'OpenAI API returned an error.'}
+                              </p>
+                            </div>
+                          ) : (
+                            <div className="z-10 flex flex-col items-center gap-3 p-6 text-center max-w-xs">
+                              <RefreshCw className="w-8 h-8 text-emerald-500 animate-spin" />
+                              <span className="text-xs font-bold text-zinc-700 dark:text-zinc-300 animate-pulse">
+                                {item.status === 'queued'
+                                  ? 'Queued in OpenAI generation queue...'
+                                  : item.status === 'rendering'
+                                  ? 'Encoding final video frames...'
+                                  : 'Synthesizing motion video frames...'}
+                              </span>
+                              <p className="text-[10px] text-zinc-400 line-clamp-2 font-mono">
+                                "{item.prompt}"
+                              </p>
+                            </div>
+                          )}
+
+                          {/* Bottom Progress Line */}
+                          {item.status !== 'completed' && item.status !== 'failed' && (
+                            <div className="absolute inset-x-0 bottom-0 h-1.5 bg-zinc-800/60 z-20">
+                              <div
+                                className="h-full bg-gradient-to-r from-emerald-500 to-teal-400 transition-all duration-500"
+                                style={{ width: `${item.progress ?? 15}%` }}
+                              />
+                            </div>
+                          )}
                         </div>
                       ))}
                     </div>
@@ -1454,19 +1655,24 @@ export const VideoStudioView: React.FC<VideoStudioViewProps> = ({
                     <div className="space-y-1.5">
                       <label className="text-[10px] font-bold uppercase tracking-wider text-zinc-500 dark:text-zinc-400 flex items-center justify-between">
                         <span>Quality Engine</span>
-                        <span className="text-emerald-500 font-mono text-[10px]">Trelvix AI</span>
+                        <span className="text-emerald-500 font-mono text-[10px]">OpenAI Sora 2</span>
                       </label>
                       <div className="grid grid-cols-2 gap-2 bg-zinc-100 dark:bg-zinc-950 p-1 rounded-2xl border border-zinc-200 dark:border-zinc-800">
                         <button
                           type="button"
-                          onClick={() => setSelectedQuality('creative')}
+                          onClick={() => {
+                            setSelectedQuality('creative');
+                            const caps = MODEL_CAPABILITIES['creative'];
+                            if (!caps.durations.includes(selectedDuration)) setSelectedDuration(caps.durations[0]);
+                            if (!caps.resolutions.includes(selectedResolution)) setSelectedResolution(caps.resolutions[0]);
+                          }}
                           className={`py-2 px-2 text-xs font-bold rounded-xl transition-all cursor-pointer ${
                             selectedQuality === 'creative'
                               ? 'bg-emerald-600 text-white'
                               : 'text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-200'
                           }`}
                         >
-                          Creative
+                          Creative (sora-2)
                         </button>
                         <button
                           type="button"
@@ -1477,6 +1683,9 @@ export const VideoStudioView: React.FC<VideoStudioViewProps> = ({
                               return;
                             }
                             setSelectedQuality('super-creative');
+                            const caps = MODEL_CAPABILITIES['super-creative'];
+                            if (!caps.durations.includes(selectedDuration)) setSelectedDuration(caps.durations[0]);
+                            if (!caps.resolutions.includes(selectedResolution)) setSelectedResolution(caps.resolutions[0]);
                           }}
                           className={`py-2 px-2 text-xs font-bold rounded-xl transition-all flex items-center justify-center gap-1 cursor-pointer ${
                             selectedQuality === 'super-creative'
@@ -1493,10 +1702,10 @@ export const VideoStudioView: React.FC<VideoStudioViewProps> = ({
                     {/* DURATIONS */}
                     <div className="space-y-1.5">
                       <label className="text-[10px] font-bold uppercase tracking-wider text-zinc-500 dark:text-zinc-400">
-                        Duration
+                        Duration (Seconds)
                       </label>
-                      <div className="grid grid-cols-4 gap-1.5 bg-zinc-100 dark:bg-zinc-950 p-1 rounded-2xl border border-zinc-200 dark:border-zinc-800">
-                        {['4s', '6s', '8s', '10s'].map((dur) => (
+                      <div className="grid grid-cols-3 gap-1.5 bg-zinc-100 dark:bg-zinc-950 p-1 rounded-2xl border border-zinc-200 dark:border-zinc-800">
+                        {MODEL_CAPABILITIES[selectedQuality].durations.map((dur) => (
                           <button
                             key={dur}
                             type="button"
@@ -1508,6 +1717,29 @@ export const VideoStudioView: React.FC<VideoStudioViewProps> = ({
                             }`}
                           >
                             {dur}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
+                    {/* RESOLUTION */}
+                    <div className="space-y-1.5">
+                      <label className="text-[10px] font-bold uppercase tracking-wider text-zinc-500 dark:text-zinc-400">
+                        Resolution
+                      </label>
+                      <div className="grid grid-cols-3 gap-1.5 bg-zinc-100 dark:bg-zinc-950 p-1 rounded-2xl border border-zinc-200 dark:border-zinc-800">
+                        {MODEL_CAPABILITIES[selectedQuality].resolutions.map((res) => (
+                          <button
+                            key={res}
+                            type="button"
+                            onClick={() => setSelectedResolution(res)}
+                            className={`py-1.5 text-xs font-bold rounded-xl transition-all cursor-pointer ${
+                              selectedResolution === res
+                                ? 'bg-white dark:bg-zinc-800 text-zinc-900 dark:text-white shadow-xs'
+                                : 'text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-200'
+                            }`}
+                          >
+                            {res}
                           </button>
                         ))}
                       </div>

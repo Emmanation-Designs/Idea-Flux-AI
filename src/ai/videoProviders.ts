@@ -27,7 +27,9 @@ export interface VideoGenerationResult {
   quality: 'creative' | 'super-creative';
   modelUsed: string;
   provider: string;
-  status: 'queued' | 'generating' | 'completed' | 'failed';
+  status: 'queued' | 'generating' | 'rendering' | 'completed' | 'failed';
+  progress?: number;
+  rawStatus?: string;
   createdAt: string;
   completedAt?: string;
   generationTimeMs?: number;
@@ -194,9 +196,33 @@ export class OpenAISoraProvider implements VideoProvider {
     }
 
     const data = await res.json();
-    const rawStatus = data.status || 'queued';
-    const isCompleted = rawStatus === 'completed';
-    const isFailed = rawStatus === 'failed';
+    const rawStatus = (data.status || 'queued').toLowerCase();
+    const isCompleted = rawStatus === 'completed' || rawStatus === 'succeeded';
+    const isFailed = rawStatus === 'failed' || rawStatus === 'cancelled';
+
+    let mappedStatus: 'queued' | 'generating' | 'rendering' | 'completed' | 'failed' = 'generating';
+    let computedProgress = 50;
+
+    if (isCompleted) {
+      mappedStatus = 'completed';
+      computedProgress = 100;
+    } else if (isFailed) {
+      mappedStatus = 'failed';
+      computedProgress = 0;
+    } else if (rawStatus === 'queued' || rawStatus === 'pending') {
+      mappedStatus = 'queued';
+      computedProgress = 15;
+    } else if (rawStatus === 'rendering' || rawStatus === 'encoding') {
+      mappedStatus = 'rendering';
+      computedProgress = 80;
+    } else {
+      mappedStatus = 'generating';
+      computedProgress = 50;
+    }
+
+    if (typeof data.progress === 'number' && data.progress >= 0 && data.progress <= 100) {
+      computedProgress = Math.round(data.progress);
+    }
 
     const videoUrl = data.video_url || data.url || (isCompleted ? `/api/tools/video-studio/content/${jobId}` : undefined);
     const thumbnailUrl = data.thumbnail_url || (isCompleted ? `/api/tools/video-studio/content/${jobId}?variant=thumbnail` : undefined);
@@ -213,7 +239,9 @@ export class OpenAISoraProvider implements VideoProvider {
       quality: data.model?.includes('pro') ? 'super-creative' : 'creative',
       modelUsed: data.model || 'sora-2',
       provider: 'openai',
-      status: isFailed ? 'failed' : (isCompleted ? 'completed' : 'generating'),
+      status: mappedStatus,
+      rawStatus,
+      progress: computedProgress,
       error: data.error?.message || (isFailed ? 'Video generation failed' : undefined),
       createdAt: data.created_at ? new Date(data.created_at * 1000).toISOString() : new Date().toISOString(),
       completedAt: data.completed_at ? new Date(data.completed_at * 1000).toISOString() : (isCompleted ? new Date().toISOString() : undefined),

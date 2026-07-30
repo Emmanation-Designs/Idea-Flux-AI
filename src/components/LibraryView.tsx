@@ -89,6 +89,13 @@ export const LibraryView: React.FC<LibraryViewProps> = ({
 
   useEffect(() => {
     loadLibraryData();
+    const handleLibraryUpdated = () => {
+      loadLibraryData();
+    };
+    window.addEventListener('library-updated', handleLibraryUpdated);
+    return () => {
+      window.removeEventListener('library-updated', handleLibraryUpdated);
+    };
   }, [loadLibraryData]);
 
   // Handle local user file upload

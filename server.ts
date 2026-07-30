@@ -1698,7 +1698,14 @@ const handlePollVideoStatus = async (req: express.Request, res: express.Response
             thumbnailUrl: updatedResult.thumbnailUrl || item?.thumbnail_url,
             prompt: updatedResult.prompt || item?.prompt || '',
             quality: item?.quality || 'creative',
+            model: updatedResult.modelUsed || item?.selected_model || 'sora-2',
+            duration: updatedResult.duration || item?.duration,
+            resolution: updatedResult.resolution || item?.resolution,
+            aspectRatio: updatedResult.aspectRatio || item?.aspect_ratio,
             status: updatedResult.status || 'generating',
+            progress: updatedResult.progress ?? (updatedResult.status === 'completed' ? 100 : 50),
+            rawStatus: updatedResult.rawStatus,
+            error: updatedResult.error,
             createdAt: item?.created_at || updatedResult.createdAt,
             completedAt: updatedResult.completedAt
           }
