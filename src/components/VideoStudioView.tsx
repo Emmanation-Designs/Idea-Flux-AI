@@ -62,8 +62,8 @@ interface VideoGenerationItem {
 
 export const MODEL_CAPABILITIES = {
   'creative': {
-    name: 'Sora 2 (Creative)',
-    modelId: 'sora-2',
+    name: 'Creative Quality',
+    modelId: 'creative',
     durations: ['4s', '8s', '12s'],
     resolutions: ['720p', '1080p'],
     aspectRatios: [
@@ -72,8 +72,8 @@ export const MODEL_CAPABILITIES = {
     ]
   },
   'super-creative': {
-    name: 'Sora 2 Pro (Super Creative)',
-    modelId: 'sora-2-pro',
+    name: 'Super Creative Quality',
+    modelId: 'super-creative',
     durations: ['4s', '8s', '12s'],
     resolutions: ['720p', '1080p', '4K'],
     aspectRatios: [
@@ -237,6 +237,119 @@ export const VideoStudioView: React.FC<VideoStudioViewProps> = ({
     return () => clearInterval(timer);
   }, [viewMode]);
 
+  // Reusable polling helper function
+  const startPollingJob = useCallback((dbId: string, providerJobId: string, sessionToken: string, card: VideoGenerationItem) => {
+    if (activePollIntervals.current[providerJobId]) return;
+
+    let pollCount = 0;
+    const maxPolls = 60; // Up to 3 minutes
+
+    const pollTimer = setInterval(async () => {
+      pollCount++;
+      try {
+        const statusRes = await fetch(`/api/tools/video-studio/status/${providerJobId}`, {
+          headers: { Authorization: `Bearer ${sessionToken}` }
+        });
+        const statusData = await safeParseJsonResponse(statusRes);
+
+        if (!statusRes.ok) {
+          clearInterval(pollTimer);
+          delete activePollIntervals.current[providerJobId];
+          const pollError = statusData.error || `Polling failed (HTTP ${statusRes.status})`;
+          setGeneratingItems((prev) =>
+            prev.map((item) =>
+              item.providerJobId === providerJobId || item.id === dbId || item.id === card.id
+                ? { ...item, status: 'failed', error: pollError, progress: 0 }
+                : item
+            )
+          );
+          toast.error(pollError);
+          return;
+        }
+
+        if (statusData.success && statusData.video) {
+          const v = statusData.video;
+          const currentStatus = v.status || 'generating';
+
+          setGeneratingItems((prev) =>
+            prev.map((item) => {
+              if (item.providerJobId === providerJobId || item.id === dbId || item.id === card.id) {
+                const rawProg = typeof v.progress === 'number' && v.progress > 0 ? v.progress : (currentStatus === 'completed' ? 100 : Math.min(95, (item.progress || 20) + 10));
+                const newProgress = Math.max(item.progress || 20, rawProg);
+                return {
+                  ...item,
+                  status: currentStatus as any,
+                  progress: newProgress,
+                  videoUrl: v.videoUrl || item.videoUrl,
+                  thumbnailUrl: v.thumbnailUrl || item.thumbnailUrl
+                };
+              }
+              return item;
+            })
+          );
+
+          if (currentStatus === 'completed' && v.videoUrl) {
+            clearInterval(pollTimer);
+            delete activePollIntervals.current[providerJobId];
+
+            const completedVideo: VideoGenerationItem = {
+              id: dbId || v.id || providerJobId,
+              providerJobId: providerJobId,
+              created_at: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+              prompt: v.prompt || card.prompt,
+              quality: card.quality,
+              model: v.model || card.model,
+              duration: v.duration || card.duration,
+              resolution: v.resolution || card.resolution,
+              aspectRatio: v.aspectRatio || card.aspectRatio,
+              status: 'completed',
+              progress: 100,
+              videoUrl: v.videoUrl,
+              thumbnailUrl: v.thumbnailUrl
+            };
+
+            setGeneratingItems((prev) =>
+              prev.filter((item) => item.providerJobId !== providerJobId && item.id !== dbId && item.id !== card.id)
+            );
+            setHistory((prev) => [completedVideo, ...prev.filter((h) => h.id !== completedVideo.id)]);
+            setCurrentProject(completedVideo);
+            window.dispatchEvent(new CustomEvent('library-updated'));
+            toast.success('Video generation completed!');
+          } else if (currentStatus === 'failed') {
+            clearInterval(pollTimer);
+            delete activePollIntervals.current[providerJobId];
+            const failReason = v.error || statusData.error || 'Video generation failed on OpenAI.';
+            setGeneratingItems((prev) =>
+              prev.map((item) =>
+                item.providerJobId === providerJobId || item.id === dbId || item.id === card.id
+                  ? { ...item, status: 'failed', error: failReason, progress: 0 }
+                  : item
+              )
+            );
+            toast.error(failReason);
+          }
+        }
+      } catch (pollErr: any) {
+        console.error(`[VideoStudio] Polling error for ${providerJobId}:`, pollErr);
+      }
+
+      if (pollCount >= maxPolls) {
+        clearInterval(pollTimer);
+        delete activePollIntervals.current[providerJobId];
+        setGeneratingItems((prev) =>
+          prev.map((item) =>
+            item.providerJobId === providerJobId || item.id === dbId || item.id === card.id
+              ? { ...item, status: 'failed', error: 'Generation request timed out after 3 minutes.', progress: 0 }
+              : item
+          )
+        );
+        toast.error('Video generation timed out.');
+      }
+    }, 3000);
+
+    activePollIntervals.current[providerJobId] = pollTimer;
+  }, []);
+
   // Load user's video generation history on mount & on update events
   const loadGenerations = useCallback(async () => {
     try {
@@ -249,27 +362,51 @@ export const VideoStudioView: React.FC<VideoStudioViewProps> = ({
       });
       const data = await safeParseJsonResponse(res);
       if (data?.success && Array.isArray(data.videos)) {
-        const apiVideos: VideoGenerationItem[] = data.videos.map((v: any) => ({
-          id: v.id,
-          created_at: v.createdAt ? new Date(v.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'Recent',
-          prompt: v.prompt,
-          negativePrompt: v.negativePrompt,
-          quality: v.quality || 'creative',
-          model: v.model || (v.quality === 'super-creative' ? 'sora-2-pro' : 'sora-2'),
-          duration: v.duration || '6s',
-          resolution: v.resolution || '1080p',
-          aspectRatio: v.aspectRatio || '9:16',
-          status: v.status || 'completed',
-          videoUrl: v.videoUrl,
-          thumbnailUrl: v.thumbnailUrl
-        }));
+        const completedVideos: VideoGenerationItem[] = [];
+        const inProgressVideos: VideoGenerationItem[] = [];
 
-        setHistory(apiVideos);
+        data.videos.forEach((v: any) => {
+          const item: VideoGenerationItem = {
+            id: v.id,
+            providerJobId: v.providerJobId,
+            created_at: v.createdAt ? new Date(v.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'Recent',
+            prompt: v.prompt,
+            negativePrompt: v.negativePrompt,
+            quality: v.quality || 'creative',
+            model: v.model || (v.quality === 'super-creative' ? 'sora-2-pro' : 'sora-2'),
+            duration: v.duration || '6s',
+            resolution: v.resolution || '1080p',
+            aspectRatio: v.aspectRatio || '9:16',
+            status: v.status || 'completed',
+            videoUrl: v.videoUrl,
+            thumbnailUrl: v.thumbnailUrl,
+            progress: v.status === 'completed' ? 100 : 35
+          };
+
+          if (v.status === 'completed') {
+            completedVideos.push(item);
+          } else if (v.status === 'generating' || v.status === 'queued' || v.status === 'rendering') {
+            inProgressVideos.push(item);
+          }
+        });
+
+        setHistory(completedVideos);
+
+        if (inProgressVideos.length > 0) {
+          setGeneratingItems(inProgressVideos);
+          setIsGenerating(true);
+          inProgressVideos.forEach((card) => {
+            const jobId = card.providerJobId || card.id;
+            if (jobId) {
+              startPollingJob(card.id, jobId, token, card);
+            }
+          });
+        }
       }
     } catch (err) {
       console.warn('Could not load video history:', err);
     }
-  }, []);
+  }, [startPollingJob]);
 
   useEffect(() => {
     loadGenerations();
@@ -426,6 +563,7 @@ export const VideoStudioView: React.FC<VideoStudioViewProps> = ({
       if (data.video.status === 'completed' && data.video.videoUrl) {
         const completedVideo: VideoGenerationItem = {
           id: dbId || providerJobId,
+          providerJobId: providerJobId,
           created_at: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
           prompt: data.video.prompt || tempCard.prompt,
           quality: tempCard.quality,
@@ -440,7 +578,7 @@ export const VideoStudioView: React.FC<VideoStudioViewProps> = ({
         };
 
         setGeneratingItems((prev) =>
-          prev.map((item) => (item.id === (dbId || tempCard.id) ? completedVideo : item))
+          prev.filter((item) => item.id !== (dbId || tempCard.id) && item.providerJobId !== providerJobId)
         );
         setHistory((prev) => [completedVideo, ...prev.filter((h) => h.id !== completedVideo.id)]);
         setCurrentProject(completedVideo);
@@ -450,115 +588,7 @@ export const VideoStudioView: React.FC<VideoStudioViewProps> = ({
       }
 
       // Start independent polling loop using providerJobId
-      let pollCount = 0;
-      const maxPolls = 60; // Up to 3 minutes
-
-      const pollTimer = setInterval(async () => {
-        pollCount++;
-        try {
-          const statusRes = await fetch(`/api/tools/video-studio/status/${providerJobId}`, {
-            headers: { Authorization: `Bearer ${sessionToken}` }
-          });
-          const statusData = await safeParseJsonResponse(statusRes);
-
-          if (!statusRes.ok) {
-            clearInterval(pollTimer);
-            delete activePollIntervals.current[providerJobId];
-            const pollError = statusData.error || `Polling failed (HTTP ${statusRes.status})`;
-            setGeneratingItems((prev) =>
-              prev.map((item) =>
-                item.providerJobId === providerJobId || item.id === dbId
-                  ? { ...item, status: 'failed', error: pollError, progress: 0 }
-                  : item
-              )
-            );
-            toast.error(pollError);
-            return;
-          }
-
-          if (statusData.success && statusData.video) {
-            const v = statusData.video;
-            const currentStatus = v.status || 'generating';
-            const currentProgress = v.progress ?? (currentStatus === 'completed' ? 100 : 50);
-
-            setGeneratingItems((prev) =>
-              prev.map((item) => {
-                if (item.providerJobId === providerJobId || item.id === dbId || item.id === tempCard.id) {
-                  return {
-                    ...item,
-                    status: currentStatus as any,
-                    progress: currentProgress,
-                    videoUrl: v.videoUrl || item.videoUrl,
-                    thumbnailUrl: v.thumbnailUrl || item.thumbnailUrl
-                  };
-                }
-                return item;
-              })
-            );
-
-            if (currentStatus === 'completed' && v.videoUrl) {
-              clearInterval(pollTimer);
-              delete activePollIntervals.current[providerJobId];
-
-              const completedVideo: VideoGenerationItem = {
-                id: dbId || v.id || providerJobId,
-                created_at: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-                prompt: v.prompt || tempCard.prompt,
-                quality: tempCard.quality,
-                model: v.model || tempCard.model,
-                duration: v.duration || tempCard.duration,
-                resolution: v.resolution || tempCard.resolution,
-                aspectRatio: v.aspectRatio || tempCard.aspectRatio,
-                status: 'completed',
-                progress: 100,
-                videoUrl: v.videoUrl,
-                thumbnailUrl: v.thumbnailUrl
-              };
-
-              setGeneratingItems((prev) =>
-                prev.map((item) =>
-                  item.providerJobId === providerJobId || item.id === dbId || item.id === tempCard.id
-                    ? completedVideo
-                    : item
-                )
-              );
-              setHistory((prev) => [completedVideo, ...prev.filter((h) => h.id !== completedVideo.id)]);
-              setCurrentProject(completedVideo);
-              window.dispatchEvent(new CustomEvent('library-updated'));
-              toast.success('Video generation completed!');
-            } else if (currentStatus === 'failed') {
-              clearInterval(pollTimer);
-              delete activePollIntervals.current[providerJobId];
-              const failReason = v.error || statusData.error || 'Video generation failed on OpenAI.';
-              setGeneratingItems((prev) =>
-                prev.map((item) =>
-                  item.providerJobId === providerJobId || item.id === dbId || item.id === tempCard.id
-                    ? { ...item, status: 'failed', error: failReason, progress: 0 }
-                    : item
-                )
-              );
-              toast.error(failReason);
-            }
-          }
-        } catch (pollErr: any) {
-          console.error(`[VideoStudio] Polling error for ${providerJobId}:`, pollErr);
-        }
-
-        if (pollCount >= maxPolls) {
-          clearInterval(pollTimer);
-          delete activePollIntervals.current[providerJobId];
-          setGeneratingItems((prev) =>
-            prev.map((item) =>
-              item.providerJobId === providerJobId || item.id === dbId
-                ? { ...item, status: 'failed', error: 'Generation request timed out after 3 minutes.', progress: 0 }
-                : item
-            )
-          );
-          toast.error('Video generation timed out.');
-        }
-      }, 3000);
-
-      activePollIntervals.current[providerJobId] = pollTimer;
+      startPollingJob(dbId, providerJobId, sessionToken, tempCard);
     } catch (err: any) {
       console.error('[VideoStudio] Job submission error:', err);
       setGeneratingItems((prev) =>
@@ -1300,14 +1330,16 @@ export const VideoStudioView: React.FC<VideoStudioViewProps> = ({
                           </button>
                         </div>
 
-                        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
+                        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4 items-start">
                           {history.map((proj) => (
                             <div
                               key={proj.id}
                               onClick={() => handleSelectProject(proj)}
                               className="group relative rounded-2xl border border-zinc-200 dark:border-zinc-800/80 bg-white dark:bg-zinc-900/80 overflow-hidden cursor-pointer hover:border-emerald-500 transition-all shadow-md flex flex-col"
                             >
-                              <div className="relative aspect-video w-full bg-black overflow-hidden">
+                              <div className={`relative w-full bg-black overflow-hidden flex items-center justify-center ${
+                                proj.aspectRatio === '9:16' ? 'aspect-[9/16]' : proj.aspectRatio === '3:4' ? 'aspect-[3/4]' : proj.aspectRatio === '1:1' ? 'aspect-square' : 'aspect-video'
+                              }`}>
                                 {proj.videoUrl ? (
                                   <video
                                     src={proj.videoUrl}
@@ -1400,7 +1432,7 @@ export const VideoStudioView: React.FC<VideoStudioViewProps> = ({
                   )}
 
                   {generatingItems.length > 0 && (
-                    <div className="w-full max-w-4xl grid grid-cols-1 sm:grid-cols-2 gap-6 my-auto">
+                    <div className="w-full max-w-4xl grid grid-cols-1 sm:grid-cols-2 gap-6 my-auto items-start">
                       {generatingItems.map((item) => (
                         <div
                           key={item.id}
@@ -1411,22 +1443,31 @@ export const VideoStudioView: React.FC<VideoStudioViewProps> = ({
                               ? 'border-emerald-500/50 bg-black'
                               : 'border-zinc-200 dark:border-zinc-800 bg-zinc-100 dark:bg-zinc-900'
                           } shadow-2xl flex flex-col items-center justify-center ${
-                            item.aspectRatio === '9:16' ? 'aspect-[9/16] max-h-[500px]' : 'aspect-video'
+                            item.aspectRatio === '9:16' ? 'aspect-[9/16] max-h-[520px]' : 'aspect-video'
                           }`}
                         >
                           {/* Top Badges */}
                           <div className="absolute top-4 inset-x-4 flex items-center justify-between z-20">
                             <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-black/60 backdrop-blur-md text-[10px] font-mono font-bold text-white">
-                              <span className="text-emerald-400">{item.model}</span>
+                              <span className="text-emerald-400">{item.quality === 'super-creative' ? 'Super Creative' : 'Creative'}</span>
                               <span>•</span>
                               <span>{item.duration}</span>
                               <span>•</span>
                               <span className="uppercase">{item.aspectRatio}</span>
                             </div>
-                            <div className={`px-2.5 py-1 rounded-full backdrop-blur-md text-xs font-mono font-bold text-white ${
+                            <div className={`px-2.5 py-1 rounded-full backdrop-blur-md text-xs font-mono font-bold text-white flex items-center gap-1.5 ${
                               item.status === 'failed' ? 'bg-red-600' : item.status === 'completed' ? 'bg-emerald-600' : 'bg-black/60'
                             }`}>
-                              {item.status === 'failed' ? 'Failed' : `${item.progress ?? 15}%`}
+                              {item.status === 'failed' ? (
+                                'Failed'
+                              ) : item.status === 'completed' ? (
+                                'Ready'
+                              ) : (
+                                <>
+                                  <RefreshCw className="w-3 h-3 animate-spin text-emerald-400" />
+                                  <span>Processing</span>
+                                </>
+                              )}
                             </div>
                           </div>
 
@@ -1460,7 +1501,7 @@ export const VideoStudioView: React.FC<VideoStudioViewProps> = ({
                                 Generation Failed
                               </span>
                               <p className="text-[11px] text-zinc-400 line-clamp-3">
-                                {item.error || 'OpenAI API returned an error.'}
+                                {item.error || 'API returned an error.'}
                               </p>
                             </div>
                           ) : (
@@ -1468,10 +1509,10 @@ export const VideoStudioView: React.FC<VideoStudioViewProps> = ({
                               <RefreshCw className="w-8 h-8 text-emerald-500 animate-spin" />
                               <span className="text-xs font-bold text-zinc-700 dark:text-zinc-300 animate-pulse">
                                 {item.status === 'queued'
-                                  ? 'Queued in OpenAI generation queue...'
+                                  ? 'Queued in video pipeline...'
                                   : item.status === 'rendering'
-                                  ? 'Encoding final video frames...'
-                                  : 'Synthesizing motion video frames...'}
+                                  ? 'Encoding video frames...'
+                                  : 'Synthesizing motion video...'}
                               </span>
                               <p className="text-[10px] text-zinc-400 line-clamp-2 font-mono">
                                 "{item.prompt}"
@@ -1481,10 +1522,10 @@ export const VideoStudioView: React.FC<VideoStudioViewProps> = ({
 
                           {/* Bottom Progress Line */}
                           {item.status !== 'completed' && item.status !== 'failed' && (
-                            <div className="absolute inset-x-0 bottom-0 h-1.5 bg-zinc-800/60 z-20">
+                            <div className="absolute inset-x-0 bottom-0 h-1.5 bg-zinc-800/60 z-20 overflow-hidden">
                               <div
                                 className="h-full bg-gradient-to-r from-emerald-500 to-teal-400 transition-all duration-500"
-                                style={{ width: `${item.progress ?? 15}%` }}
+                                style={{ width: `${item.progress ?? 20}%` }}
                               />
                             </div>
                           )}
@@ -1514,7 +1555,7 @@ export const VideoStudioView: React.FC<VideoStudioViewProps> = ({
                       </div>
 
                       <div className={`grid grid-cols-1 gap-6 justify-center mx-auto ${
-                        currentProject.aspectRatio === '9:16' ? 'max-w-md' : 'max-w-3xl'
+                        currentProject.aspectRatio === '9:16' ? 'max-w-xs sm:max-w-sm' : 'max-w-3xl'
                       }`}>
                         <div
                           onClick={() => setActiveVideoModal(currentProject)}

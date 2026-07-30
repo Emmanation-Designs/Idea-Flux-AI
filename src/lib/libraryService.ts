@@ -203,9 +203,13 @@ export async function fetchLibraryItems(): Promise<{
 
         if (!vidErr && Array.isArray(videos)) {
           videos.forEach((row: any) => {
-            if (seenIds.has(row.id) || (row.video_url && seenUrls.has(row.video_url))) return;
+            if (row.status === 'failed' || row.generation_status === 'failed') return;
+            const videoUrl = row.video_url || (row.provider_job_id ? `/api/tools/video-studio/content/${row.provider_job_id}` : undefined);
+            const thumbUrl = row.thumbnail_url || (row.provider_job_id ? `/api/tools/video-studio/content/${row.provider_job_id}?variant=thumbnail` : undefined);
+
+            if (seenIds.has(row.id) || (videoUrl && seenUrls.has(videoUrl))) return;
             seenIds.add(row.id);
-            if (row.video_url) seenUrls.add(row.video_url);
+            if (videoUrl) seenUrls.add(videoUrl);
 
             const promptTitle = row.prompt ? (row.prompt.length > 50 ? row.prompt.slice(0, 50) + '...' : row.prompt) : 'AI Generated Video';
 
@@ -215,13 +219,13 @@ export async function fetchLibraryItems(): Promise<{
               type: 'video',
               category: 'generated',
               createdAt: row.created_at || new Date().toISOString(),
-              url: row.video_url,
-              thumbnailUrl: row.thumbnail_url || (row.provider_job_id ? `/api/tools/video-studio/content/${row.provider_job_id}?variant=thumbnail` : undefined),
+              url: videoUrl,
+              thumbnailUrl: thumbUrl,
               duration: row.duration || '6s',
               resolution: row.resolution || '1080p',
               fileFormat: 'MP4',
               prompt: row.prompt,
-              modelUsed: row.selected_model || 'Sora 2',
+              modelUsed: row.selected_model === 'super-creative' || row.quality === 'super-creative' ? 'Super Creative' : 'Creative',
               originatingFeature: 'Video Studio',
               generatorType: 'AI Video'
             });

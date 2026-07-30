@@ -1524,6 +1524,9 @@ const handleVideoGeneration = async (req: express.Request, res: express.Response
 
     // 4. Record generation in database (video_generations) with complete fields
     let dbRecordId = result.id;
+    const initialVideoUrl = result.videoUrl || `/api/tools/video-studio/content/${result.providerJobId}`;
+    const initialThumbUrl = result.thumbnailUrl || `/api/tools/video-studio/content/${result.providerJobId}?variant=thumbnail`;
+
     try {
       const insertData = {
         user_id: user.id,
@@ -1536,11 +1539,11 @@ const handleVideoGeneration = async (req: express.Request, res: express.Response
         duration: result.duration,
         resolution: result.resolution,
         aspect_ratio: result.aspectRatio,
-        video_url: result.videoUrl || null,
-        thumbnail_url: result.thumbnailUrl || null,
-        status: result.status || "completed",
-        generation_status: result.status || "completed",
-        created_at: result.createdAt,
+        video_url: initialVideoUrl,
+        thumbnail_url: initialThumbUrl,
+        status: result.status || "generating",
+        generation_status: result.status || "generating",
+        created_at: result.createdAt || new Date().toISOString(),
         completed_at: result.completedAt || (result.status === 'completed' ? new Date().toISOString() : null),
         generation_time: result.generationTimeMs || generationTimeMs,
         cost_estimate: result.costEstimateUsd,
@@ -1573,8 +1576,8 @@ const handleVideoGeneration = async (req: express.Request, res: express.Response
       video: {
         id: dbRecordId,
         providerJobId: result.providerJobId,
-        videoUrl: result.videoUrl,
-        thumbnailUrl: result.thumbnailUrl,
+        videoUrl: initialVideoUrl,
+        thumbnailUrl: initialThumbUrl,
         prompt: result.prompt,
         negativePrompt: result.negativePrompt,
         quality: resolvedQuality,
@@ -1585,7 +1588,7 @@ const handleVideoGeneration = async (req: express.Request, res: express.Response
         costEstimate: result.costEstimateUsd,
         generationTimeMs,
         createdAt: result.createdAt,
-        status: result.status || "completed"
+        status: result.status || "generating"
       },
       remainingCapacity
     });
@@ -1598,6 +1601,76 @@ const handleVideoGeneration = async (req: express.Request, res: express.Response
     });
   }
 };
+
+/**
+ * Helper to download video & thumbnail from OpenAI and persist to Supabase Storage if possible.
+ */
+async function persistVideoToSupabaseStorage(supabase: any, userId: string, providerJobId: string): Promise<{ videoUrl: string; thumbnailUrl: string }> {
+  const defaultVideoUrl = `/api/tools/video-studio/content/${providerJobId}`;
+  const defaultThumbUrl = `/api/tools/video-studio/content/${providerJobId}?variant=thumbnail`;
+  
+  if (!supabase || !userId || !providerJobId) {
+    return { videoUrl: defaultVideoUrl, thumbnailUrl: defaultThumbUrl };
+  }
+
+  try {
+    const apiKey = process.env.OPENAI_API_KEY;
+    if (!apiKey) return { videoUrl: defaultVideoUrl, thumbnailUrl: defaultThumbUrl };
+
+    const videoRes = await fetch(`https://api.openai.com/v1/videos/${providerJobId}/content?variant=video`, {
+      headers: { Authorization: `Bearer ${apiKey}` }
+    });
+
+    if (!videoRes.ok) return { videoUrl: defaultVideoUrl, thumbnailUrl: defaultThumbUrl };
+
+    const videoBuffer = Buffer.from(await videoRes.arrayBuffer());
+    const bucketName = "videos";
+    const videoPath = `${userId}/${providerJobId}.mp4`;
+
+    const { error: uploadErr } = await supabase.storage
+      .from(bucketName)
+      .upload(videoPath, videoBuffer, {
+        contentType: "video/mp4",
+        upsert: true
+      });
+
+    if (uploadErr) {
+      console.warn(`[VideoStorage] Supabase storage upload notice for ${providerJobId}:`, uploadErr.message);
+      return { videoUrl: defaultVideoUrl, thumbnailUrl: defaultThumbUrl };
+    }
+
+    const { data: publicUrlData } = supabase.storage.from(bucketName).getPublicUrl(videoPath);
+    const permanentVideoUrl = publicUrlData?.publicUrl || defaultVideoUrl;
+
+    let permanentThumbUrl = defaultThumbUrl;
+    try {
+      const thumbRes = await fetch(`https://api.openai.com/v1/videos/${providerJobId}/content?variant=thumbnail`, {
+        headers: { Authorization: `Bearer ${apiKey}` }
+      });
+      if (thumbRes.ok) {
+        const thumbBuffer = Buffer.from(await thumbRes.arrayBuffer());
+        const thumbPath = `${userId}/${providerJobId}_thumb.png`;
+        const { error: thumbUploadErr } = await supabase.storage
+          .from(bucketName)
+          .upload(thumbPath, thumbBuffer, {
+            contentType: "image/png",
+            upsert: true
+          });
+        if (!thumbUploadErr) {
+          const { data: thumbUrlData } = supabase.storage.from(bucketName).getPublicUrl(thumbPath);
+          if (thumbUrlData?.publicUrl) permanentThumbUrl = thumbUrlData.publicUrl;
+        }
+      }
+    } catch (tErr) {
+      console.warn(`[VideoStorage] Thumbnail storage notice for ${providerJobId}:`, tErr);
+    }
+
+    return { videoUrl: permanentVideoUrl, thumbnailUrl: permanentThumbUrl };
+  } catch (err) {
+    console.warn(`[VideoStorage] Error persisting video to Supabase Storage:`, err);
+    return { videoUrl: defaultVideoUrl, thumbnailUrl: defaultThumbUrl };
+  }
+}
 
 app.post("/api/tools/video-studio", handleVideoGeneration);
 app.post("/api/video/generate", handleVideoGeneration);
@@ -1641,7 +1714,7 @@ const handlePollVideoStatus = async (req: express.Request, res: express.Response
           id: item.id,
           providerJobId: item.provider_job_id || id,
           videoUrl: item.video_url,
-          thumbnailUrl: item.thumbnail_url,
+          thumbnailUrl: item.thumbnail_url || `/api/tools/video-studio/content/${providerJobId}?variant=thumbnail`,
           prompt: item.prompt,
           quality: item.quality || 'creative',
           model: item.selected_model,
@@ -1659,19 +1732,60 @@ const handlePollVideoStatus = async (req: express.Request, res: express.Response
     if (provider.pollVideoStatus && providerJobId) {
       try {
         const updatedResult = await provider.pollVideoStatus(providerJobId);
-        if (item) {
-          if (updatedResult.status === 'completed' && updatedResult.videoUrl) {
+
+        if (updatedResult.status === 'completed') {
+          const stored = await persistVideoToSupabaseStorage(supabase, user.id, providerJobId);
+          const finalVideoUrl = stored.videoUrl || updatedResult.videoUrl || `/api/tools/video-studio/content/${providerJobId}`;
+          const finalThumbUrl = stored.thumbnailUrl || updatedResult.thumbnailUrl || `/api/tools/video-studio/content/${providerJobId}?variant=thumbnail`;
+          const completedAtTime = updatedResult.completedAt || new Date().toISOString();
+
+          // Update database by ID or providerJobId
+          if (item?.id) {
             await supabase
               .from("video_generations")
               .update({
-                video_url: updatedResult.videoUrl,
-                thumbnail_url: updatedResult.thumbnailUrl || item.thumbnail_url,
+                video_url: finalVideoUrl,
+                thumbnail_url: finalThumbUrl,
                 status: 'completed',
                 generation_status: 'completed',
-                completed_at: new Date().toISOString()
+                completed_at: completedAtTime
               })
               .eq("id", item.id);
-          } else if (updatedResult.status === 'failed') {
+          } else {
+            await supabase
+              .from("video_generations")
+              .update({
+                video_url: finalVideoUrl,
+                thumbnail_url: finalThumbUrl,
+                status: 'completed',
+                generation_status: 'completed',
+                completed_at: completedAtTime
+              })
+              .eq("provider_job_id", providerJobId)
+              .eq("user_id", user.id);
+          }
+
+          return res.json({
+            success: true,
+            video: {
+              id: item?.id || providerJobId,
+              providerJobId: providerJobId,
+              videoUrl: finalVideoUrl,
+              thumbnailUrl: finalThumbUrl,
+              prompt: updatedResult.prompt || item?.prompt || '',
+              quality: item?.quality || 'creative',
+              model: updatedResult.modelUsed || item?.selected_model || 'sora-2',
+              duration: updatedResult.duration || item?.duration,
+              resolution: updatedResult.resolution || item?.resolution,
+              aspectRatio: updatedResult.aspectRatio || item?.aspect_ratio,
+              status: 'completed',
+              progress: 100,
+              createdAt: item?.created_at || updatedResult.createdAt,
+              completedAt: completedAtTime
+            }
+          });
+        } else if (updatedResult.status === 'failed') {
+          if (item?.id) {
             await supabase
               .from("video_generations")
               .update({
@@ -1680,9 +1794,7 @@ const handlePollVideoStatus = async (req: express.Request, res: express.Response
               })
               .eq("id", item.id);
           }
-        }
 
-        if (updatedResult.status === 'failed') {
           return res.status(400).json({
             error: updatedResult.error || "OpenAI video generation failed.",
             status: 'failed'
@@ -1694,8 +1806,8 @@ const handlePollVideoStatus = async (req: express.Request, res: express.Response
           video: {
             id: item?.id || providerJobId,
             providerJobId: providerJobId,
-            videoUrl: updatedResult.videoUrl,
-            thumbnailUrl: updatedResult.thumbnailUrl || item?.thumbnail_url,
+            videoUrl: updatedResult.videoUrl || `/api/tools/video-studio/content/${providerJobId}`,
+            thumbnailUrl: updatedResult.thumbnailUrl || item?.thumbnail_url || `/api/tools/video-studio/content/${providerJobId}?variant=thumbnail`,
             prompt: updatedResult.prompt || item?.prompt || '',
             quality: item?.quality || 'creative',
             model: updatedResult.modelUsed || item?.selected_model || 'sora-2',
@@ -1703,7 +1815,7 @@ const handlePollVideoStatus = async (req: express.Request, res: express.Response
             resolution: updatedResult.resolution || item?.resolution,
             aspectRatio: updatedResult.aspectRatio || item?.aspect_ratio,
             status: updatedResult.status || 'generating',
-            progress: updatedResult.progress ?? (updatedResult.status === 'completed' ? 100 : 50),
+            progress: updatedResult.progress ?? 50,
             rawStatus: updatedResult.rawStatus,
             error: updatedResult.error,
             createdAt: item?.created_at || updatedResult.createdAt,
@@ -1822,25 +1934,78 @@ const handleGetVideoGenerations = async (req: express.Request, res: express.Resp
       return res.json({ success: true, videos: [] });
     }
 
+    const provider = getVideoProvider("openai");
+
+    const formattedVideos = await Promise.all(
+      (items || []).map(async (item: any) => {
+        let status = item.status || item.generation_status || 'completed';
+        let videoUrl = item.video_url;
+        let thumbnailUrl = item.thumbnail_url;
+        let completedAt = item.completed_at;
+
+        // Auto-check pending OpenAI jobs
+        if ((status === 'generating' || status === 'queued' || status === 'rendering') && item.provider_job_id) {
+          try {
+            const polled = await provider.pollVideoStatus(item.provider_job_id);
+            if (polled.status === 'completed') {
+              status = 'completed';
+              completedAt = polled.completedAt || new Date().toISOString();
+
+              const stored = await persistVideoToSupabaseStorage(supabase, user.id, item.provider_job_id);
+              videoUrl = stored.videoUrl || polled.videoUrl || `/api/tools/video-studio/content/${item.provider_job_id}`;
+              thumbnailUrl = stored.thumbnailUrl || polled.thumbnailUrl || `/api/tools/video-studio/content/${item.provider_job_id}?variant=thumbnail`;
+
+              await supabase
+                .from("video_generations")
+                .update({
+                  video_url: videoUrl,
+                  thumbnail_url: thumbnailUrl,
+                  status: 'completed',
+                  generation_status: 'completed',
+                  completed_at: completedAt
+                })
+                .eq("id", item.id);
+            } else if (polled.status === 'failed') {
+              status = 'failed';
+              await supabase
+                .from("video_generations")
+                .update({
+                  status: 'failed',
+                  generation_status: 'failed'
+                })
+                .eq("id", item.id);
+            }
+          } catch (pErr) {
+            console.warn(`[VideoStudio] Notice auto-polling pending video ${item.provider_job_id}:`, pErr);
+          }
+        }
+
+        const fallbackVideoUrl = videoUrl || (item.provider_job_id ? `/api/tools/video-studio/content/${item.provider_job_id}` : null);
+        const fallbackThumbUrl = thumbnailUrl || (item.provider_job_id ? `/api/tools/video-studio/content/${item.provider_job_id}?variant=thumbnail` : null);
+
+        return {
+          id: item.id,
+          providerJobId: item.provider_job_id,
+          videoUrl: fallbackVideoUrl,
+          thumbnailUrl: fallbackThumbUrl,
+          prompt: item.prompt,
+          negativePrompt: item.negative_prompt,
+          quality: item.quality || 'creative',
+          model: item.selected_model,
+          duration: item.duration || '10s',
+          resolution: item.resolution || '1080p',
+          aspectRatio: item.aspect_ratio || '16:9',
+          createdAt: item.created_at,
+          completedAt: completedAt,
+          costEstimate: item.cost_estimate || 0.10,
+          status: status
+        };
+      })
+    );
+
     return res.json({
       success: true,
-      videos: (items || []).map((item: any) => ({
-        id: item.id,
-        providerJobId: item.provider_job_id,
-        videoUrl: item.video_url,
-        thumbnailUrl: item.thumbnail_url,
-        prompt: item.prompt,
-        negativePrompt: item.negative_prompt,
-        quality: item.quality || 'creative',
-        model: item.selected_model,
-        duration: item.duration || '10s',
-        resolution: item.resolution || '1080p',
-        aspectRatio: item.aspect_ratio || '16:9',
-        createdAt: item.created_at,
-        completedAt: item.completed_at,
-        costEstimate: item.cost_estimate || 0.10,
-        status: item.status || item.generation_status || 'completed'
-      }))
+      videos: formattedVideos
     });
   } catch (err: any) {
     if (err.status) return res.status(err.status).json({ error: err.error });
