@@ -94,12 +94,8 @@ export class OpenAISoraProvider implements VideoProvider {
       model: openAIModel,
       prompt: fullPrompt,
       size,
-      duration: durationSec,
+      seconds: durationSec,
     };
-
-    if (params.negativePrompt) {
-      payload.negative_prompt = params.negativePrompt;
-    }
 
     if (params.inputImage) {
       payload.input_image = params.inputImage;
