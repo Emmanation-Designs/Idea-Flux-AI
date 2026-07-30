@@ -44,12 +44,21 @@ export interface VideoProvider {
 export class OpenAISoraProvider implements VideoProvider {
   name = "openai";
 
-  private mapAspectRatioToSize(aspectRatio: string = '16:9', resolution: string = '1080p'): string {
+  private mapAspectRatioToSize(aspectRatio: string = '16:9', resolution: string = '1080p', openAIModel: string = 'sora-2'): string {
+    const isPortrait = aspectRatio === '9:16' || aspectRatio === '3:4';
     const isHD = resolution === '1080p' || resolution === '4K';
-    if (aspectRatio === '9:16') {
-      return isHD ? "1024x1792" : "720x1280";
+
+    // For standard sora-2 model, OpenAI strictly supports only 720x1280 and 1280x720
+    if (openAIModel === 'sora-2' || openAIModel.startsWith('sora-2-2025')) {
+      return isPortrait ? "720x1280" : "1280x720";
     }
-    return isHD ? "1792x1024" : "1280x720";
+
+    // For sora-2-pro model, 1024x1792 (portrait) and 1792x1024 (landscape) are supported for HD
+    if (isPortrait) {
+      return isHD ? "1024x1792" : "720x1280";
+    } else {
+      return isHD ? "1792x1024" : "1280x720";
+    }
   }
 
   private mapSecondsEnum(duration?: string): "4" | "8" | "12" {
@@ -76,7 +85,7 @@ export class OpenAISoraProvider implements VideoProvider {
     const secondsEnum = this.mapSecondsEnum(params.duration);
     const resolution = params.resolution || '1080p';
     const aspectRatio = params.aspectRatio || '16:9';
-    const size = this.mapAspectRatioToSize(aspectRatio, resolution);
+    const size = this.mapAspectRatioToSize(aspectRatio, resolution, openAIModel);
     
     // Cost estimation calculation (Creative sora-2: ~$0.10, Super Creative sora-2-pro: ~$0.35)
     const costEstimateUsd = isSuperCreative ? 0.35 : 0.10;
