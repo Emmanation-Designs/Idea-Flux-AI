@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { 
   Video, 
   Film, 
@@ -25,7 +25,8 @@ import {
   Settings2,
   Upload,
   RotateCcw,
-  Sparkle
+  Sparkle,
+  Menu
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import type { Profile } from '../types';
@@ -201,6 +202,7 @@ export const VideoStudioView: React.FC<VideoStudioViewProps> = ({
   const [showSettingsPopover, setShowSettingsPopover] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [activeVideoModal, setActiveVideoModal] = useState<VideoGenerationItem | null>(null);
+  const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
 
   // Generation & playback state
   const [isGenerating, setIsGenerating] = useState(false);
@@ -218,7 +220,7 @@ export const VideoStudioView: React.FC<VideoStudioViewProps> = ({
     };
   }, []);
 
-  // Video History (starts empty with no mock items)
+  // Video History
   const [currentProject, setCurrentProject] = useState<VideoGenerationItem | null>(null);
   const [history, setHistory] = useState<VideoGenerationItem[]>([]);
 
@@ -235,44 +237,48 @@ export const VideoStudioView: React.FC<VideoStudioViewProps> = ({
     return () => clearInterval(timer);
   }, [viewMode]);
 
-  // Load user's video generation history on mount
-  useEffect(() => {
-    let isMounted = true;
-    async function loadGenerations() {
-      try {
-        const { data: sessionData } = await supabase.auth.getSession();
-        const token = sessionData?.session?.access_token;
-        if (!token) return;
+  // Load user's video generation history on mount & on update events
+  const loadGenerations = useCallback(async () => {
+    try {
+      const { data: sessionData } = await supabase.auth.getSession();
+      const token = sessionData?.session?.access_token;
+      if (!token) return;
 
-        const res = await fetch('/api/tools/video-studio/generations', {
-          headers: { Authorization: `Bearer ${token}` }
-        });
-        const data = await safeParseJsonResponse(res);
-        if (data?.success && Array.isArray(data.videos) && isMounted) {
-          const apiVideos: VideoGenerationItem[] = data.videos.map((v: any) => ({
-            id: v.id,
-            created_at: v.createdAt ? new Date(v.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'Recent',
-            prompt: v.prompt,
-            negativePrompt: v.negativePrompt,
-            quality: v.quality || 'creative',
-            model: v.model || (v.quality === 'super-creative' ? 'sora-2-pro' : 'sora-2'),
-            duration: v.duration || '6s',
-            resolution: v.resolution || '1080p',
-            aspectRatio: v.aspectRatio || '9:16',
-            status: v.status || 'completed',
-            videoUrl: v.videoUrl,
-            thumbnailUrl: v.thumbnailUrl
-          }));
+      const res = await fetch('/api/tools/video-studio/generations', {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      const data = await safeParseJsonResponse(res);
+      if (data?.success && Array.isArray(data.videos)) {
+        const apiVideos: VideoGenerationItem[] = data.videos.map((v: any) => ({
+          id: v.id,
+          created_at: v.createdAt ? new Date(v.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'Recent',
+          prompt: v.prompt,
+          negativePrompt: v.negativePrompt,
+          quality: v.quality || 'creative',
+          model: v.model || (v.quality === 'super-creative' ? 'sora-2-pro' : 'sora-2'),
+          duration: v.duration || '6s',
+          resolution: v.resolution || '1080p',
+          aspectRatio: v.aspectRatio || '9:16',
+          status: v.status || 'completed',
+          videoUrl: v.videoUrl,
+          thumbnailUrl: v.thumbnailUrl
+        }));
 
-          setHistory(apiVideos);
-        }
-      } catch (err) {
-        console.warn('Could not load video history:', err);
+        setHistory(apiVideos);
       }
+    } catch (err) {
+      console.warn('Could not load video history:', err);
     }
-    loadGenerations();
-    return () => { isMounted = false; };
   }, []);
+
+  useEffect(() => {
+    loadGenerations();
+    const handleUpdate = () => loadGenerations();
+    window.addEventListener('library-updated', handleUpdate);
+    return () => {
+      window.removeEventListener('library-updated', handleUpdate);
+    };
+  }, [loadGenerations]);
 
   // Handle New Project creation
   const handleOpenNewProject = () => {
@@ -791,7 +797,7 @@ export const VideoStudioView: React.FC<VideoStudioViewProps> = ({
           </div>
 
           {/* HERO SLIDE CAROUSEL BANNER */}
-          <div className="relative w-full aspect-[21/9] min-h-[360px] sm:min-h-[440px] rounded-3xl overflow-hidden shadow-2xl border border-zinc-200 dark:border-zinc-800/80 bg-zinc-900 group">
+          <div className="relative w-full rounded-3xl overflow-hidden shadow-2xl border border-zinc-200 dark:border-zinc-800/80 bg-zinc-900 group min-h-[300px] sm:min-h-[380px] md:min-h-[420px] flex flex-col justify-between">
             
             <AnimatePresence mode="wait">
               <motion.div
@@ -820,13 +826,13 @@ export const VideoStudioView: React.FC<VideoStudioViewProps> = ({
               </button>
             )}
 
-            <div className="absolute inset-0 z-10 p-8 sm:p-12 flex flex-col justify-between text-white">
-              <div className="max-w-2xl space-y-4">
+            <div className="relative z-10 p-5 sm:p-8 md:p-10 flex flex-col justify-between h-full min-h-[300px] sm:min-h-[380px] md:min-h-[420px] space-y-4 text-white">
+              <div className="max-w-2xl space-y-3 sm:space-y-4">
                 <motion.h1 
                   key={`title-${HERO_SLIDES[activeHeroSlide].id}`}
                   initial={{ opacity: 0, y: 10 }}
                   animate={{ opacity: 1, y: 0 }}
-                  className="text-3xl sm:text-5xl font-extrabold tracking-tight leading-tight"
+                  className="text-xl sm:text-3xl md:text-4xl lg:text-5xl font-extrabold tracking-tight leading-tight"
                 >
                   {HERO_SLIDES[activeHeroSlide].title}
                 </motion.h1>
@@ -836,15 +842,15 @@ export const VideoStudioView: React.FC<VideoStudioViewProps> = ({
                   initial={{ opacity: 0, y: 10 }}
                   animate={{ opacity: 1, y: 0 }}
                   transition={{ delay: 0.1 }}
-                  className="text-sm sm:text-lg text-zinc-300 font-medium leading-relaxed max-w-xl"
+                  className="text-xs sm:text-base text-zinc-300 font-medium leading-snug sm:leading-relaxed max-w-xl"
                 >
                   {HERO_SLIDES[activeHeroSlide].subtitle}
                 </motion.p>
 
-                <div className="pt-2">
+                <div className="pt-1">
                   <button
                     onClick={handleOpenNewProject}
-                    className="inline-flex items-center gap-2 px-5 py-2.5 rounded-full bg-white/20 hover:bg-white/30 backdrop-blur-md text-white text-xs font-bold border border-white/20 transition-all hover:scale-105 cursor-pointer"
+                    className="inline-flex items-center gap-2 px-3.5 py-1.5 sm:px-5 sm:py-2.5 rounded-full bg-white/20 hover:bg-white/30 backdrop-blur-md text-white text-xs font-bold border border-white/20 transition-all hover:scale-105 cursor-pointer"
                   >
                     <span>{HERO_SLIDES[activeHeroSlide].tagIcon}</span>
                     <span>{HERO_SLIDES[activeHeroSlide].tag}</span>
@@ -852,14 +858,14 @@ export const VideoStudioView: React.FC<VideoStudioViewProps> = ({
                 </div>
               </div>
 
-              <div className="flex items-center justify-between pt-4">
-                <div className="flex items-center gap-2">
+              <div className="flex items-center justify-between pt-2 sm:pt-4 gap-3">
+                <div className="flex items-center gap-1.5 sm:gap-2">
                   {HERO_SLIDES.map((slide, idx) => (
                     <button
                       key={slide.id}
                       onClick={() => setActiveHeroSlide(idx)}
                       className={`h-1.5 rounded-full transition-all cursor-pointer ${
-                        activeHeroSlide === idx ? 'w-10 bg-white' : 'w-4 bg-white/40 hover:bg-white/60'
+                        activeHeroSlide === idx ? 'w-8 sm:w-10 bg-white' : 'w-3 sm:w-4 bg-white/40 hover:bg-white/60'
                       }`}
                     />
                   ))}
@@ -867,10 +873,10 @@ export const VideoStudioView: React.FC<VideoStudioViewProps> = ({
 
                 <button
                   onClick={handleOpenNewProject}
-                  className="px-8 py-6 rounded-3xl bg-zinc-800/80 hover:bg-zinc-700/90 text-white backdrop-blur-xl border border-white/10 shadow-2xl flex items-center gap-3 transition-all hover:scale-105 active:scale-95 group/btn cursor-pointer"
+                  className="px-4 py-2.5 sm:px-6 sm:py-3 rounded-2xl bg-white/20 hover:bg-white/30 sm:bg-zinc-800/90 sm:hover:bg-zinc-700/90 text-white backdrop-blur-xl border border-white/20 shadow-lg flex items-center gap-2 transition-all hover:scale-105 active:scale-95 group/btn cursor-pointer shrink-0"
                 >
-                  <Plus className="w-5 h-5 text-white group-hover/btn:rotate-90 transition-transform" />
-                  <span className="text-base font-bold tracking-wide">New project</span>
+                  <Plus className="w-4 h-4 sm:w-5 sm:h-5 text-white group-hover/btn:rotate-90 transition-transform" />
+                  <span className="text-xs sm:text-sm font-bold tracking-wide">New project</span>
                 </button>
               </div>
             </div>
@@ -971,19 +977,27 @@ export const VideoStudioView: React.FC<VideoStudioViewProps> = ({
         <div className="flex-1 flex flex-col h-full overflow-hidden">
           
           {/* HEADER BAR */}
-          <header className="h-14 shrink-0 px-4 flex items-center justify-between border-b border-zinc-200 dark:border-zinc-800/80 bg-white dark:bg-[#08080a] z-30">
-            <div className="flex items-center gap-3">
+          <header className="h-14 shrink-0 px-3 sm:px-4 flex items-center justify-between border-b border-zinc-200 dark:border-zinc-800/80 bg-white dark:bg-[#08080a] z-30">
+            <div className="flex items-center gap-2 sm:gap-3">
               <button
                 onClick={() => setViewMode('landing')}
                 className="p-2 rounded-full text-zinc-600 dark:text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors cursor-pointer"
                 title="Back to Landing Projects"
               >
-                <ArrowLeft className="w-5 h-5" />
+                <ArrowLeft className="w-4 h-4 sm:w-5 sm:h-5" />
               </button>
 
-              <div className="flex items-center gap-2">
-                <span className="text-sm font-bold text-zinc-900 dark:text-zinc-100">
-                  {currentProject?.created_at || new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+              <button
+                onClick={() => setIsMobileSidebarOpen(true)}
+                className="md:hidden p-2 rounded-xl text-zinc-600 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors cursor-pointer"
+                title="Open Sidebar"
+              >
+                <Menu className="w-5 h-5" />
+              </button>
+
+              <div className="flex items-center gap-2 max-w-[140px] sm:max-w-none truncate">
+                <span className="text-xs sm:text-sm font-bold text-zinc-900 dark:text-zinc-100 truncate">
+                  {currentProject?.prompt || currentProject?.created_at || new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                 </span>
               </div>
             </div>
@@ -1003,7 +1017,7 @@ export const VideoStudioView: React.FC<VideoStudioViewProps> = ({
             </div>
 
             {/* Top Right Actions */}
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-1.5 sm:gap-2">
               <button
                 onClick={handleOpenNewProject}
                 className="p-2 rounded-full text-zinc-600 dark:text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors cursor-pointer"
@@ -1039,35 +1053,182 @@ export const VideoStudioView: React.FC<VideoStudioViewProps> = ({
           {/* WORKSPACE BODY: SIDEBAR + MAIN AREA */}
           <div className="flex-1 flex overflow-hidden relative">
             
-            {/* SIDEBAR */}
+            {/* MOBILE SIDEBAR DRAWER */}
+            <AnimatePresence>
+              {isMobileSidebarOpen && (
+                <>
+                  <motion.div
+                    initial={{ opacity: 0 }}
+                    animate={{ opacity: 1 }}
+                    exit={{ opacity: 0 }}
+                    onClick={() => setIsMobileSidebarOpen(false)}
+                    className="md:hidden fixed inset-0 bg-black/60 backdrop-blur-xs z-40"
+                  />
+                  <motion.aside
+                    initial={{ x: '-100%' }}
+                    animate={{ x: 0 }}
+                    exit={{ x: '-100%' }}
+                    transition={{ type: 'spring', damping: 25, stiffness: 200 }}
+                    className="md:hidden fixed top-0 bottom-0 left-0 w-64 bg-white dark:bg-[#0c0c0e] border-r border-zinc-200 dark:border-zinc-800 z-50 flex flex-col justify-between p-3"
+                  >
+                    <div className="space-y-4">
+                      <div className="flex items-center justify-between px-2 pt-2 pb-1 border-b border-zinc-100 dark:border-zinc-800">
+                        <span className="text-xs font-bold text-zinc-900 dark:text-white flex items-center gap-2">
+                          <Film className="w-4 h-4 text-emerald-500" />
+                          <span>Video Studio</span>
+                        </span>
+                        <button
+                          onClick={() => setIsMobileSidebarOpen(false)}
+                          className="p-1.5 rounded-lg text-zinc-500 hover:bg-zinc-100 dark:hover:bg-zinc-800"
+                        >
+                          <X className="w-4 h-4" />
+                        </button>
+                      </div>
+
+                      <div className="space-y-1">
+                        {[
+                          { id: 'all', label: 'All Media', icon: LayoutGrid },
+                          { id: 'characters', label: 'Characters', icon: User },
+                          { id: 'scenes', label: 'Scenes', icon: Layers },
+                        ].map((item) => {
+                          const Icon = item.icon;
+                          const isActive = activeSidebarTab === item.id;
+                          return (
+                            <button
+                              key={item.id}
+                              onClick={() => {
+                                setActiveSidebarTab(item.id as any);
+                                setIsMobileSidebarOpen(false);
+                              }}
+                              className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs font-semibold transition-colors cursor-pointer ${
+                                isActive
+                                  ? 'bg-zinc-200 dark:bg-zinc-800/90 text-zinc-900 dark:text-white'
+                                  : 'text-zinc-600 dark:text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-900'
+                              }`}
+                            >
+                              <Icon className="w-4 h-4 shrink-0" />
+                              <span>{item.label}</span>
+                            </button>
+                          );
+                        })}
+                      </div>
+
+                      {/* Recent Projects List for Mobile */}
+                      {history.length > 0 && (
+                        <div className="pt-3 border-t border-zinc-200 dark:border-zinc-800/60 space-y-1">
+                          <div className="px-3 pb-1 flex items-center justify-between">
+                            <span className="text-[10px] font-bold uppercase tracking-wider text-zinc-400 dark:text-zinc-500">
+                              Recent Projects
+                            </span>
+                            <span className="text-[10px] text-emerald-500 font-mono font-bold">{history.length}</span>
+                          </div>
+                          <div className="space-y-0.5 max-h-52 overflow-y-auto custom-scrollbar">
+                            {history.slice(0, 8).map((proj) => (
+                              <button
+                                key={proj.id}
+                                onClick={() => {
+                                  handleSelectProject(proj);
+                                  setActiveSidebarTab('all');
+                                  setIsMobileSidebarOpen(false);
+                                }}
+                                className={`w-full text-left px-3 py-2 rounded-xl text-xs flex items-center gap-2 transition-colors cursor-pointer ${
+                                  currentProject?.id === proj.id
+                                    ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 font-bold'
+                                    : 'text-zinc-600 dark:text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-900'
+                                }`}
+                              >
+                                <Play className="w-3 h-3 text-emerald-500 shrink-0 fill-current" />
+                                <span className="truncate flex-1">{proj.prompt || 'Untitled Video'}</span>
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+
+                    <div className="pt-3 border-t border-zinc-200 dark:border-zinc-800/60">
+                      <button
+                        onClick={() => {
+                          setActiveSidebarTab('trash');
+                          setIsMobileSidebarOpen(false);
+                        }}
+                        className={`w-full flex items-center gap-3 px-3 py-2 rounded-xl text-xs font-semibold transition-colors cursor-pointer ${
+                          activeSidebarTab === 'trash'
+                            ? 'bg-red-500/10 text-red-500'
+                            : 'text-zinc-500 hover:bg-zinc-100 dark:hover:bg-zinc-900'
+                        }`}
+                      >
+                        <Trash2 className="w-4 h-4 shrink-0" />
+                        <span>Trash ({trashedItems.length})</span>
+                      </button>
+                    </div>
+                  </motion.aside>
+                </>
+              )}
+            </AnimatePresence>
+
+            {/* DESKTOP SIDEBAR */}
             <aside 
-              className={`border-r border-zinc-200 dark:border-zinc-800/80 bg-zinc-50/50 dark:bg-[#0c0c0e] flex flex-col justify-between transition-all duration-200 ${
+              className={`hidden md:flex border-r border-zinc-200 dark:border-zinc-800/80 bg-zinc-50/50 dark:bg-[#0c0c0e] flex-col justify-between transition-all duration-200 ${
                 isSidebarCollapsed ? 'w-16' : 'w-56'
               }`}
             >
-              <div className="p-3 space-y-1">
-                {[
-                  { id: 'all', label: 'All Media', icon: LayoutGrid },
-                  { id: 'characters', label: 'Characters', icon: User },
-                  { id: 'scenes', label: 'Scenes', icon: Layers },
-                ].map((item) => {
-                  const Icon = item.icon;
-                  const isActive = activeSidebarTab === item.id;
-                  return (
-                    <button
-                      key={item.id}
-                      onClick={() => setActiveSidebarTab(item.id as any)}
-                      className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs font-semibold transition-colors cursor-pointer ${
-                        isActive
-                          ? 'bg-zinc-200 dark:bg-zinc-800/90 text-zinc-900 dark:text-white'
-                          : 'text-zinc-600 dark:text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-900 hover:text-zinc-900 dark:hover:text-zinc-200'
-                      }`}
-                    >
-                      <Icon className="w-4 h-4 shrink-0" />
-                      {!isSidebarCollapsed && <span>{item.label}</span>}
-                    </button>
-                  );
-                })}
+              <div className="p-3 space-y-3">
+                <div className="space-y-1">
+                  {[
+                    { id: 'all', label: 'All Media', icon: LayoutGrid },
+                    { id: 'characters', label: 'Characters', icon: User },
+                    { id: 'scenes', label: 'Scenes', icon: Layers },
+                  ].map((item) => {
+                    const Icon = item.icon;
+                    const isActive = activeSidebarTab === item.id;
+                    return (
+                      <button
+                        key={item.id}
+                        onClick={() => setActiveSidebarTab(item.id as any)}
+                        className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs font-semibold transition-colors cursor-pointer ${
+                          isActive
+                            ? 'bg-zinc-200 dark:bg-zinc-800/90 text-zinc-900 dark:text-white'
+                            : 'text-zinc-600 dark:text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-900 hover:text-zinc-900 dark:hover:text-zinc-200'
+                        }`}
+                      >
+                        <Icon className="w-4 h-4 shrink-0" />
+                        {!isSidebarCollapsed && <span>{item.label}</span>}
+                      </button>
+                    );
+                  })}
+                </div>
+
+                {/* Recent Projects List for Desktop */}
+                {!isSidebarCollapsed && history.length > 0 && (
+                  <div className="pt-3 border-t border-zinc-200 dark:border-zinc-800/60 space-y-1">
+                    <div className="px-3 pb-1 flex items-center justify-between">
+                      <span className="text-[10px] font-bold uppercase tracking-wider text-zinc-400 dark:text-zinc-500">
+                        Recent Projects
+                      </span>
+                      <span className="text-[10px] text-emerald-500 font-mono font-bold">{history.length}</span>
+                    </div>
+                    <div className="space-y-0.5 max-h-44 overflow-y-auto custom-scrollbar">
+                      {history.slice(0, 8).map((proj) => (
+                        <button
+                          key={proj.id}
+                          onClick={() => {
+                            handleSelectProject(proj);
+                            setActiveSidebarTab('all');
+                          }}
+                          className={`w-full text-left px-3 py-2 rounded-xl text-xs flex items-center gap-2 transition-colors cursor-pointer ${
+                            currentProject?.id === proj.id
+                              ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 font-bold'
+                              : 'text-zinc-600 dark:text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-900 hover:text-zinc-900 dark:hover:text-zinc-100'
+                          }`}
+                        >
+                          <Play className="w-3 h-3 text-emerald-500 shrink-0 fill-current" />
+                          <span className="truncate flex-1">{proj.prompt || 'Untitled Video'}</span>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
               </div>
 
               {/* SIDEBAR BOTTOM: TRASH & COLLAPSE */}
@@ -1110,39 +1271,132 @@ export const VideoStudioView: React.FC<VideoStudioViewProps> = ({
             </aside>
 
             {/* MAIN WORKSPACE CANVAS AREA */}
-            <main className="flex-1 relative flex flex-col items-center justify-center p-6 overflow-y-auto custom-scrollbar pb-32">
+            <main className="flex-1 relative flex flex-col items-center justify-center p-4 sm:p-6 overflow-y-auto custom-scrollbar pb-36">
               
-              {/* TAB 1: ALL MEDIA - EMPTY STATE / GENERATING / COMPLETED */}
+              {/* TAB 1: ALL MEDIA - EMPTY STATE / GALLERY / GENERATING / COMPLETED */}
               {activeSidebarTab === 'all' && (
                 <>
                   {!currentProject && !isGenerating && generatingItems.length === 0 && (
-                    <div 
-                      onClick={() => fileInputRef.current?.click()}
-                      className="flex flex-col items-center justify-center text-center space-y-4 max-w-sm p-8 cursor-pointer rounded-3xl hover:bg-zinc-100 dark:hover:bg-zinc-900/40 transition-all group"
-                    >
-                      <input
-                        type="file"
-                        ref={fileInputRef}
-                        className="hidden"
-                        accept="image/*,video/*"
-                        onChange={(e) => {
-                          const file = e.target.files?.[0];
-                          if (file) {
-                            const url = URL.createObjectURL(file);
-                            setInputImage(url);
-                            toast.success('Image attached for Image-to-Video generation!');
-                          }
-                        }}
-                      />
+                    history.length > 0 ? (
+                      /* USER'S VIDEO GALLERY GRID WHEN NO SPECIFIC PROJECT SELECTED */
+                      <div className="w-full max-w-4xl space-y-4 my-auto">
+                        <div className="flex items-center justify-between pb-2 border-b border-zinc-200 dark:border-zinc-800">
+                          <div>
+                            <h2 className="text-base sm:text-lg font-bold text-zinc-900 dark:text-white flex items-center gap-2">
+                              <Film className="w-4 h-4 sm:w-5 sm:h-5 text-emerald-500" />
+                              <span>Your Video Projects</span>
+                            </h2>
+                            <p className="text-xs text-zinc-500">
+                              {history.length} video project{history.length === 1 ? '' : 's'} saved in your library
+                            </p>
+                          </div>
 
-                      <div className="p-3 group-hover:scale-105 transition-transform">
-                        <PixelFlowerIcon />
+                          <button
+                            onClick={handleOpenNewProject}
+                            className="px-3.5 py-2 bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs rounded-xl transition-all shadow-md flex items-center gap-1.5 cursor-pointer"
+                          >
+                            <Plus className="w-4 h-4" />
+                            <span>New Video</span>
+                          </button>
+                        </div>
+
+                        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
+                          {history.map((proj) => (
+                            <div
+                              key={proj.id}
+                              onClick={() => handleSelectProject(proj)}
+                              className="group relative rounded-2xl border border-zinc-200 dark:border-zinc-800/80 bg-white dark:bg-zinc-900/80 overflow-hidden cursor-pointer hover:border-emerald-500 transition-all shadow-md flex flex-col"
+                            >
+                              <div className="relative aspect-video w-full bg-black overflow-hidden">
+                                {proj.videoUrl ? (
+                                  <video
+                                    src={proj.videoUrl}
+                                    className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
+                                    muted
+                                    playsInline
+                                    onMouseOver={(e) => (e.currentTarget as HTMLVideoElement).play().catch(() => {})}
+                                    onMouseOut={(e) => {
+                                      const v = e.currentTarget as HTMLVideoElement;
+                                      v.pause();
+                                      v.currentTime = 0;
+                                    }}
+                                  />
+                                ) : proj.thumbnailUrl ? (
+                                  <img
+                                    src={proj.thumbnailUrl}
+                                    alt={proj.prompt}
+                                    className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
+                                  />
+                                ) : (
+                                  <div className="w-full h-full flex items-center justify-center bg-zinc-800">
+                                    <Film className="w-8 h-8 text-zinc-600" />
+                                  </div>
+                                )}
+
+                                <div className="absolute top-2 left-2 p-1.5 rounded-full bg-black/60 backdrop-blur-md text-white group-hover:scale-110 transition-transform">
+                                  <Play className="w-3.5 h-3.5 fill-current ml-0.5" />
+                                </div>
+
+                                <div className="absolute top-2 right-2 px-2 py-0.5 rounded-md bg-black/60 backdrop-blur-md text-[10px] font-mono text-zinc-300">
+                                  {proj.duration}
+                                </div>
+                              </div>
+
+                              <div className="p-3.5 flex-1 flex flex-col justify-between space-y-2">
+                                <p className="text-xs font-semibold text-zinc-800 dark:text-zinc-200 line-clamp-2 leading-snug">
+                                  {proj.prompt}
+                                </p>
+
+                                <div className="flex items-center justify-between text-[11px] text-zinc-500 dark:text-zinc-400 font-mono pt-2 border-t border-zinc-100 dark:border-zinc-800/80">
+                                  <span>{proj.created_at}</span>
+                                  <div className="flex items-center gap-1.5">
+                                    <span className="uppercase text-[9px] px-1.5 py-0.5 rounded bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-300">
+                                      {proj.aspectRatio}
+                                    </span>
+                                    <button
+                                      onClick={(e) => handleDeleteVideo(proj.id, e)}
+                                      className="p-1 text-zinc-400 hover:text-red-500 rounded transition-colors cursor-pointer"
+                                      title="Move to Trash"
+                                    >
+                                      <Trash2 className="w-3.5 h-3.5" />
+                                    </button>
+                                  </div>
+                                </div>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
                       </div>
+                    ) : (
+                      /* EMPTY DROPZONE WHEN NO HISTORY EXISTS */
+                      <div 
+                        onClick={() => fileInputRef.current?.click()}
+                        className="flex flex-col items-center justify-center text-center space-y-4 max-w-sm p-8 cursor-pointer rounded-3xl hover:bg-zinc-100 dark:hover:bg-zinc-900/40 transition-all group my-auto"
+                      >
+                        <input
+                          type="file"
+                          ref={fileInputRef}
+                          className="hidden"
+                          accept="image/*,video/*"
+                          onChange={(e) => {
+                            const file = e.target.files?.[0];
+                            if (file) {
+                              const url = URL.createObjectURL(file);
+                              setInputImage(url);
+                              toast.success('Image attached for Image-to-Video generation!');
+                            }
+                          }}
+                        />
 
-                      <h2 className="text-xl font-bold tracking-tight text-zinc-800 dark:text-zinc-200">
-                        Start creating or drop media
-                      </h2>
-                    </div>
+                        <div className="p-3 group-hover:scale-105 transition-transform">
+                          <PixelFlowerIcon />
+                        </div>
+
+                        <h2 className="text-xl font-bold tracking-tight text-zinc-800 dark:text-zinc-200">
+                          Start creating or drop media
+                        </h2>
+                      </div>
+                    )
                   )}
 
                   {generatingItems.length > 0 && (
@@ -1240,9 +1494,27 @@ export const VideoStudioView: React.FC<VideoStudioViewProps> = ({
                   )}
 
                   {currentProject && currentProject.status === 'completed' && !isGenerating && (
-                    <div className="w-full max-w-4xl my-auto">
-                      <div className={`grid grid-cols-1 sm:grid-cols-2 gap-6 justify-center mx-auto ${
-                        currentProject.aspectRatio === '9:16' ? 'max-w-2xl' : 'max-w-4xl'
+                    <div className="w-full max-w-4xl space-y-4 my-auto">
+                      <div className="flex items-center justify-between">
+                        <button
+                          onClick={() => setCurrentProject(null)}
+                          className="px-3 py-1.5 rounded-xl bg-zinc-100 dark:bg-zinc-800 hover:bg-zinc-200 dark:hover:bg-zinc-700 text-zinc-800 dark:text-zinc-200 text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer"
+                        >
+                          <ArrowLeft className="w-3.5 h-3.5" />
+                          <span>All Videos ({history.length})</span>
+                        </button>
+
+                        <button
+                          onClick={handleOpenNewProject}
+                          className="px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer"
+                        >
+                          <Plus className="w-3.5 h-3.5" />
+                          <span>New Video</span>
+                        </button>
+                      </div>
+
+                      <div className={`grid grid-cols-1 gap-6 justify-center mx-auto ${
+                        currentProject.aspectRatio === '9:16' ? 'max-w-md' : 'max-w-3xl'
                       }`}>
                         <div
                           onClick={() => setActiveVideoModal(currentProject)}
@@ -1590,7 +1862,7 @@ export const VideoStudioView: React.FC<VideoStudioViewProps> = ({
             </main>
 
             {/* FLOATING PROMPT BAR & POP-UP MODAL */}
-            <div className="absolute bottom-6 inset-x-0 mx-auto w-full max-w-2xl px-4 z-40">
+            <div className="absolute bottom-4 sm:bottom-6 inset-x-0 mx-auto w-[94%] sm:w-full max-w-2xl px-2 sm:px-4 z-40">
               
               {/* POP-UP SETTINGS MODAL */}
               <AnimatePresence>
@@ -1599,7 +1871,7 @@ export const VideoStudioView: React.FC<VideoStudioViewProps> = ({
                     initial={{ opacity: 0, y: 15, scale: 0.98 }}
                     animate={{ opacity: 1, y: 0, scale: 1 }}
                     exit={{ opacity: 0, y: 15, scale: 0.98 }}
-                    className="absolute bottom-full mb-3 inset-x-0 mx-auto w-full max-w-md bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-3xl shadow-2xl p-5 space-y-4 text-zinc-900 dark:text-white z-50 backdrop-blur-2xl"
+                    className="absolute bottom-full mb-3 inset-x-0 mx-auto w-full max-w-md max-h-[75vh] overflow-y-auto custom-scrollbar bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-3xl shadow-2xl p-4 sm:p-5 space-y-4 text-zinc-900 dark:text-white z-50 backdrop-blur-2xl"
                   >
                     {/* MODE TABS */}
                     <div className="grid grid-cols-2 gap-2 bg-zinc-100 dark:bg-zinc-950 p-1 rounded-2xl border border-zinc-200 dark:border-zinc-800">

@@ -216,11 +216,12 @@ export async function fetchLibraryItems(): Promise<{
               category: 'generated',
               createdAt: row.created_at || new Date().toISOString(),
               url: row.video_url,
-              duration: row.duration || '10s',
+              thumbnailUrl: row.thumbnail_url || (row.provider_job_id ? `/api/tools/video-studio/content/${row.provider_job_id}?variant=thumbnail` : undefined),
+              duration: row.duration || '6s',
               resolution: row.resolution || '1080p',
               fileFormat: 'MP4',
               prompt: row.prompt,
-              modelUsed: row.selected_model || 'Trelvix Video',
+              modelUsed: row.selected_model || 'Sora 2',
               originatingFeature: 'Video Studio',
               generatorType: 'AI Video'
             });
