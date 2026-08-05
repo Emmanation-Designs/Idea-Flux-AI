@@ -100,6 +100,7 @@ const PERSONALITIES: { id: PersonalityType; name: string; icon: any; description
 export const Settings = (props: { 
   profile: Profile | null; 
   initialSection?: SettingsSection;
+  onSectionChange?: (section: SettingsSection) => void;
   onClose: () => void;
   onUpdateProfile: (updates: Partial<Profile>) => Promise<any>;
   onShowLegal: (type: 'about' | 'privacy' | 'terms' | 'support') => void;
@@ -112,6 +113,7 @@ export const Settings = (props: {
   const {
     profile,
     initialSection,
+    onSectionChange,
     onClose,
     onUpdateProfile,
     onShowLegal,
@@ -124,6 +126,12 @@ export const Settings = (props: {
   const [activeSection, setActiveSection] = React.useState<SettingsSection | null>(
     initialSection || (typeof window !== 'undefined' && window.innerWidth > 768 ? 'account' : null)
   );
+
+  React.useEffect(() => {
+    if (initialSection) {
+      setActiveSection(initialSection);
+    }
+  }, [initialSection]);
   const [isEditingName, setIsEditingName] = React.useState(false);
   const [newName, setNewName] = React.useState(profile?.name || profile?.email?.split('@')[0] || '');
   const [isUploading, setIsUploading] = React.useState(false);
@@ -278,7 +286,12 @@ export const Settings = (props: {
 
   const SidebarItem = ({ id, icon: Icon, label }: { id: SettingsSection; icon: any; label: string }) => (
     <button
-      onClick={() => setActiveSection(id)}
+      onClick={() => {
+        setActiveSection(id);
+        if (onSectionChange) {
+          onSectionChange(id);
+        }
+      }}
       className={cn(
         "w-full flex items-center gap-4 px-4 py-3 rounded-2xl text-sm font-bold transition-all",
         activeSection === id 

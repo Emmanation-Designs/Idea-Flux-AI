@@ -556,7 +556,7 @@ export default function App() {
     currentConversationRef.current = currentConversation;
   }, [currentConversation]);
 
-  // Handle browser Back/Forward navigation (popstate event only)
+  // Handle browser Back/Forward navigation & initial route matching
   useEffect(() => {
     const handleLocationChange = () => {
       const path = window.location.pathname;
@@ -564,12 +564,35 @@ export default function App() {
       
       if (cleanPath === '/privacy') {
         setShowLegal('privacy');
+        setShowSettings(false);
       } else if (cleanPath === '/terms') {
         setShowLegal('terms');
+        setShowSettings(false);
       } else if (cleanPath === '/about') {
         setShowLegal('about');
+        setShowSettings(false);
+      } else if (cleanPath === '/support') {
+        setShowSettings('support');
+        setShowLegal(null);
+      } else if (cleanPath === '/billing') {
+        setShowSettings('billing');
+        setShowLegal(null);
+      } else if (cleanPath === '/settings') {
+        setShowSettings('account');
+        setShowLegal(null);
+      } else if (cleanPath.startsWith('/settings/')) {
+        const subSection = cleanPath.split('/settings/')[1];
+        if (['account', 'profile', 'memory', 'personality', 'billing', 'display', 'support', 'legal'].includes(subSection)) {
+          const sectionKey = subSection === 'profile' ? 'account' : subSection as any;
+          setShowSettings(sectionKey);
+          setShowLegal(null);
+        } else {
+          setShowSettings('account');
+          setShowLegal(null);
+        }
       } else {
         setShowLegal(null);
+        setShowSettings(false);
         
         const projListMatch = path.match(/^\/(projects|workspaces)/i);
         const projWithConvMatch = path.match(/^\/project\/([a-f0-9-]+)\/c\/([a-f0-9-]+)/i);
@@ -635,6 +658,8 @@ export default function App() {
       }
     };
 
+    handleLocationChange();
+
     window.addEventListener('popstate', handleLocationChange);
     return () => window.removeEventListener('popstate', handleLocationChange);
   }, []);
@@ -644,6 +669,14 @@ export default function App() {
     let expectedPath = '/';
     if (showLegal) {
       expectedPath = `/${showLegal}`;
+    } else if (showSettings) {
+      if (showSettings === 'support') {
+        expectedPath = '/support';
+      } else if (typeof showSettings === 'string') {
+        expectedPath = `/settings/${showSettings}`;
+      } else {
+        expectedPath = '/settings';
+      }
     } else if (activeView === 'projects') {
       expectedPath = '/projects';
     } else if (activeView === 'project' && selectedProjectId && !currentConversation?.id) {
@@ -665,7 +698,7 @@ export default function App() {
         window.history.pushState({ conversationId: currentConversation?.id || null }, document.title, expectedPath);
       }
     }
-  }, [currentConversation?.id, activeView, selectedProjectId, showLegal]);
+  }, [currentConversation?.id, activeView, selectedProjectId, showLegal, showSettings]);
 
   // Tab-Focus recovery & Background Sync:
   // If the user leaves the tab and comes back, and we were generating an image or loading,
@@ -3462,7 +3495,8 @@ export default function App() {
         {showSettings && (
           <Settings 
             profile={profile} 
-            initialSection={typeof showSettings === 'string' ? (showSettings as 'account' | 'personality' | 'billing' | 'display' | 'legal') : undefined}
+            initialSection={typeof showSettings === 'string' ? (showSettings as any) : undefined}
+            onSectionChange={(section) => setShowSettings(section as any)}
             onClose={() => setShowSettings(false)} 
             onUpdateProfile={updateProfile}
             onShowLegal={handleShowLegal}
