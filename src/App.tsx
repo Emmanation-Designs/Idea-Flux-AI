@@ -68,6 +68,7 @@ import { twMerge } from 'tailwind-merge';
 import { supabase } from './lib/supabase';
 import { applyWatermark } from './utils/watermark';
 import { downloadFile, openExternalLink } from './utils/nativeCompat';
+import { navigateToVideoStudio } from './utils/videoStudio';
 
 import type { Message, ConversationType, Profile, Project } from './types';
 import { projectService } from './lib/projectService';
@@ -575,7 +576,7 @@ export default function App() {
         setShowSettings('support');
         setShowLegal(null);
       } else if (cleanPath === '/video' || cleanPath === '/videostudio' || cleanPath === '/video-studio') {
-        openExternalLink('https://videostudio.trelvixai.com');
+        navigateToVideoStudio();
         setShowSettings(false);
         setShowLegal(null);
       } else if (cleanPath === '/billing') {
@@ -2389,7 +2390,7 @@ export default function App() {
           onOpenApps={() => setActiveView('apps')}
         onOpenImages={() => setActiveView('images')}
         onOpenTTS={() => setActiveView('tts')}
-        onOpenVideo={() => openExternalLink('https://videostudio.trelvixai.com')}
+        onOpenVideo={() => navigateToVideoStudio()}
         onOpenLibrary={() => setActiveView('library')}
         onOpenUpgrade={() => setShowUpgradeModal(true)}
         onShowLegal={handleShowLegal}
@@ -2587,7 +2588,7 @@ export default function App() {
                 </p>
               </div>
               <button
-                onClick={() => openExternalLink('https://videostudio.trelvixai.com')}
+                onClick={() => navigateToVideoStudio()}
                 className="px-6 py-3.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-bold transition-all shadow-md hover:shadow-emerald-500/20 flex items-center gap-2 cursor-pointer active:scale-95"
               >
                 <span>Launch Video Studio (videostudio.trelvixai.com)</span>

@@ -34,6 +34,7 @@ import type { Profile } from '../types';
 import { WorkspaceSwitcher } from './WorkspaceSwitcher';
 import { useOrganization } from '../context/OrganizationContext';
 import { openExternalLink } from '../utils/nativeCompat';
+import { navigateToVideoStudio } from '../utils/videoStudio';
 
 function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
@@ -243,7 +244,7 @@ export const Sidebar = ({
               if (onOpenVideo) {
                 onOpenVideo();
               } else {
-                openExternalLink('https://videostudio.trelvixai.com');
+                navigateToVideoStudio();
               }
             })}
             className={cn(
