@@ -574,6 +574,10 @@ export default function App() {
       } else if (cleanPath === '/support') {
         setShowSettings('support');
         setShowLegal(null);
+      } else if (cleanPath === '/video' || cleanPath === '/videostudio' || cleanPath === '/video-studio') {
+        openExternalLink('https://videostudio.trelvixai.com');
+        setShowSettings(false);
+        setShowLegal(null);
       } else if (cleanPath === '/billing') {
         setShowSettings('billing');
         setShowLegal(null);
@@ -2385,7 +2389,7 @@ export default function App() {
           onOpenApps={() => setActiveView('apps')}
         onOpenImages={() => setActiveView('images')}
         onOpenTTS={() => setActiveView('tts')}
-        onOpenVideo={() => setActiveView('video')}
+        onOpenVideo={() => openExternalLink('https://videostudio.trelvixai.com')}
         onOpenLibrary={() => setActiveView('library')}
         onOpenUpgrade={() => setShowUpgradeModal(true)}
         onShowLegal={handleShowLegal}
@@ -2566,18 +2570,30 @@ export default function App() {
               onBack={() => setActiveView('chat')}
             />
           ) : activeView === 'video' ? (
-            <VideoStudioView 
-              profile={profile}
-              onUpgradeClick={() => setShowUpgradeModal(true)}
-              onBack={() => setActiveView('chat')}
-              onOpenSupport={(initialProblem) => {
-                setSupportInitialProblem(initialProblem || 'Video Studio Issue');
-                setShowSupportModal(true);
-              }}
-              onOpenProfile={() => {
-                setShowSettings('account');
-              }}
-            />
+            <div className="flex-1 flex flex-col items-center justify-center p-8 text-center space-y-6 relative bg-white dark:bg-zinc-950 animate-fade-in">
+              <button 
+                onClick={() => setActiveView('chat')}
+                className="absolute top-6 left-6 px-4 py-2 bg-zinc-100 dark:bg-zinc-900 rounded-xl text-xs font-bold text-zinc-700 dark:text-zinc-300 hover:bg-zinc-200 dark:hover:bg-zinc-800 transition-all cursor-pointer"
+              >
+                Back to Chat
+              </button>
+              <div className="w-16 h-16 rounded-2xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-500 flex items-center justify-center">
+                <Video className="w-8 h-8" />
+              </div>
+              <div className="space-y-2 max-w-md">
+                <h2 className="text-2xl font-bold tracking-tight text-zinc-900 dark:text-zinc-100">Video Studio</h2>
+                <p className="text-xs text-zinc-500 font-medium leading-relaxed">
+                  Video Studio is available as a dedicated service at <strong className="text-zinc-800 dark:text-zinc-200">videostudio.trelvixai.com</strong>.
+                </p>
+              </div>
+              <button
+                onClick={() => openExternalLink('https://videostudio.trelvixai.com')}
+                className="px-6 py-3.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-bold transition-all shadow-md hover:shadow-emerald-500/20 flex items-center gap-2 cursor-pointer active:scale-95"
+              >
+                <span>Launch Video Studio (videostudio.trelvixai.com)</span>
+                <ExternalLink className="w-4 h-4" />
+              </button>
+            </div>
           ) : activeView === 'library' ? (
             <LibraryView 
               profile={profile}

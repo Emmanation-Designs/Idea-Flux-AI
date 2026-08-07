@@ -23,7 +23,8 @@ import {
   LifeBuoy,
   ShieldCheck,
   Building2,
-  Video
+  Video,
+  ExternalLink
 } from 'lucide-react';
 import React, { useState, useRef, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
@@ -32,6 +33,7 @@ import { twMerge } from 'tailwind-merge';
 import type { Profile } from '../types';
 import { WorkspaceSwitcher } from './WorkspaceSwitcher';
 import { useOrganization } from '../context/OrganizationContext';
+import { openExternalLink } from '../utils/nativeCompat';
 
 function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
@@ -237,16 +239,25 @@ export const Sidebar = ({
           </button>
 
           <button 
-            onClick={() => handleAction(onOpenVideo)}
+            onClick={() => handleAction(() => {
+              if (onOpenVideo) {
+                onOpenVideo();
+              } else {
+                openExternalLink('https://videostudio.trelvixai.com');
+              }
+            })}
             className={cn(
-              "w-full flex items-center gap-3 px-4 py-2.5 text-sm font-medium rounded-xl transition-all",
+              "w-full flex items-center justify-between px-4 py-2.5 text-sm font-medium rounded-xl transition-all group",
               activeView === 'video' 
                 ? "bg-zinc-200 dark:bg-zinc-800 text-zinc-900 dark:text-zinc-100 shadow-sm" 
                 : "text-zinc-500 hover:bg-zinc-100 dark:hover:bg-zinc-900"
             )}
           >
-            <Video className="w-4 h-4" />
-            Video Studio
+            <div className="flex items-center gap-3">
+              <Video className="w-4 h-4 text-emerald-500" />
+              <span>Video Studio</span>
+            </div>
+            <ExternalLink className="w-3.5 h-3.5 text-zinc-400 group-hover:text-zinc-600 dark:group-hover:text-zinc-300 transition-colors" />
           </button>
 
           <button 
