@@ -587,7 +587,7 @@ export default function App() {
         setShowLegal(null);
       } else if (cleanPath.startsWith('/settings/')) {
         const subSection = cleanPath.split('/settings/')[1];
-        if (['account', 'profile', 'memory', 'personality', 'billing', 'display', 'support', 'legal'].includes(subSection)) {
+        if (['account', 'profile', 'personality', 'billing', 'display', 'support', 'legal'].includes(subSection)) {
           const sectionKey = subSection === 'profile' ? 'account' : subSection as any;
           setShowSettings(sectionKey);
           setShowLegal(null);

@@ -32,8 +32,7 @@ import {
   Mail,
   Send,
   CheckCircle2,
-  Shield,
-  Brain
+  Shield
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { clsx, type ClassValue } from 'clsx';
@@ -44,13 +43,12 @@ import { supabase } from '../lib/supabase';
 import { openExternalLink } from '../utils/nativeCompat';
 import { getPlan, getPlanPrice, getPlanLimits, PlanId } from '../subscription/catalog';
 import { BillingCenter } from './BillingCenter';
-import { MemoryManager } from './MemoryManager';
 
 function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }
 
-type SettingsSection = 'account' | 'memory' | 'personality' | 'billing' | 'display' | 'legal' | 'support';
+type SettingsSection = 'account' | 'personality' | 'billing' | 'display' | 'legal' | 'support';
 
 const PERSONALITIES: { id: PersonalityType; name: string; icon: any; description: string; color: string }[] = [
   { 
@@ -340,7 +338,6 @@ export const Settings = (props: {
           
           <nav className="flex-1 space-y-1">
             <SidebarItem id="account" icon={User} label="Profile" />
-            <SidebarItem id="memory" icon={Brain} label="Memory" />
             <SidebarItem id="personality" icon={Sparkles} label="Personality" />
             <SidebarItem id="billing" icon={CreditCard} label="Billing" />
             <SidebarItem id="display" icon={Layout} label="Display" />
@@ -548,30 +545,6 @@ export const Settings = (props: {
                       </button>
                     </div>
                   </div>
-                </div>
-              )}
-
-              {activeSection === 'memory' && (
-                <div className="space-y-6 pb-12">
-                  <div className="border-b border-zinc-100 dark:border-zinc-900 pb-4">
-                    <h3 className="text-lg font-bold text-zinc-900 dark:text-zinc-100">Memory Manager</h3>
-                    <p className="text-xs text-zinc-500 mt-1">
-                      Manage long-term information Trelvix AI has remembered about you and your work.
-                    </p>
-                  </div>
-
-                  <MemoryManager
-                    userId={profile?.id || ''}
-                    isMemoryEnabled={profile?.memory_enabled !== false}
-                    onToggleMemoryEnabled={async (enabled) => {
-                      try {
-                        await onUpdateProfile({ memory_enabled: enabled });
-                        toast.success(enabled ? 'Memory system enabled' : 'Memory system disabled');
-                      } catch (e) {
-                        toast.error('Failed to update memory settings');
-                      }
-                    }}
-                  />
                 </div>
               )}
 
