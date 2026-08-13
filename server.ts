@@ -575,14 +575,21 @@ app.post("/api/subscription/sync", async (req, res) => {
 app.post("/api/realtime/session", async (req, res) => {
   try {
     const user = await authenticateUser(req);
-    const { voice = 'marin', model = 'gpt-4o-realtime-preview-2024-12-17' } = req.body || {};
+    const { voice = 'marin', model = 'gpt-4o-realtime-preview', language = 'auto', idempotency_key } = req.body || {};
 
     const supabase = getSupabaseAdminClient();
+    const subscription = await getSubscription(supabase, user.id);
+    const plan = (subscription?.plan || 'free').toUpperCase();
+
+    console.log(`[Live] authenticated user: ${user.id}`);
+    console.log(`[Live] plan: ${plan}`);
+
     const minRequiredCapacity = 10; // 1 active minute check
 
-    // 1. Pre-check user capacity allowance (ensure at least 10 capacity available)
+    // 1. Capacity authorization check
     const limitCheck = await checkLimit(supabase, user.id, 'live_mode', minRequiredCapacity);
     if (!limitCheck.allowed) {
+      console.log(`[Live] capacity authorization: denied (current: ${limitCheck.current}, limit: ${limitCheck.limit})`);
       return res.status(403).json({
         error: limitCheck.reason || "Insufficient AI Capacity for Live Mode.",
         code: limitCheck.code || "CAPACITY_EXHAUSTED",
@@ -591,9 +598,11 @@ app.post("/api/realtime/session", async (req, res) => {
       });
     }
 
+    console.log(`[Live] capacity authorization: allowed (current: ${limitCheck.current}, limit: ${limitCheck.limit})`);
+
     const apiKey = process.env.OPENAI_API_KEY;
     if (!apiKey) {
-      console.error("[Realtime Session] OPENAI_API_KEY missing");
+      console.error("[Live] realtime provider initialization failed: OPENAI_API_KEY missing");
       return res.status(500).json({ error: "Server configuration error: OPENAI_API_KEY is not configured." });
     }
 
@@ -603,7 +612,18 @@ app.post("/api/realtime/session", async (req, res) => {
     ]);
     const requestedVoice = (voice || 'marin').toLowerCase().trim();
     const cleanVoice = VALID_OPENAI_REALTIME_VOICES.has(requestedVoice) ? requestedVoice : 'marin';
-    const targetModel = model || 'gpt-4o-realtime-preview-2024-12-17';
+    
+    // Enforce current supported OpenAI Realtime model family (never obsolete date snapshots)
+    const targetModel = 'gpt-4o-realtime-preview';
+
+    // System prompt tailored with optional language preference
+    let languageInstruction = "";
+    if (language && language !== 'auto' && language !== 'en') {
+      languageInstruction = ` Please speak and respond fluently in language code: ${language}.`;
+    }
+    const systemInstructions = `You are Trelvix AI, a highly intelligent, empathetic, clear, and articulate real-time conversational voice assistant. You respond naturally, concisely, and gracefully in conversation.${languageInstruction}`;
+
+    console.log("[Live] realtime provider initialization started");
 
     // 2. Request ephemeral client secret from OpenAI Realtime API (POST /v1/realtime/client_secrets)
     const response = await fetch("https://api.openai.com/v1/realtime/client_secrets", {
@@ -620,7 +640,7 @@ app.post("/api/realtime/session", async (req, res) => {
         session: {
           type: "realtime",
           model: targetModel,
-          instructions: "You are Trelvix AI, a highly intelligent, empathetic, clear, and articulate real-time voice assistant. You respond naturally, concisely, and gracefully in conversation.",
+          instructions: systemInstructions,
           audio: {
             output: {
               voice: cleanVoice
@@ -631,24 +651,28 @@ app.post("/api/realtime/session", async (req, res) => {
     });
 
     if (!response.ok) {
-      const errText = await response.text();
-      console.error("[Realtime Session Error] OpenAI responded with:", response.status, errText);
-      // Provider initialization failed — NO capacity is consumed
+      const errText = await response.text().catch(() => '');
+      console.error(`[Live] realtime provider initialization failed: HTTP ${response.status}`, errText);
+      // Provider initialization failed — NO capacity is permanently charged
       return res.status(502).json({ error: "Failed to initialize realtime session with AI provider." });
     }
+
+    console.log("[Live] realtime provider initialization succeeded");
 
     const sessionData = await response.json();
     const clientSecretValue = sessionData.value || sessionData.client_secret?.value || sessionData.client_secret;
     const providerSessionId = sessionData.session?.id || sessionData.id || null;
 
     if (!clientSecretValue) {
-      console.error("[Realtime Session Error] No ephemeral secret returned by provider:", sessionData);
+      console.error("[Live] realtime provider initialization failed: No ephemeral secret returned by provider");
       return res.status(502).json({ error: "AI provider returned invalid session credentials." });
     }
 
-    // 3. Finalize initial 10 capacity charge ONLY after successful provider session initialization
+    // 3. Finalize initial 10 capacity settlement ONLY after successful provider session initialization
     let capacityCharged = false;
-    let liveSessionId = crypto.randomUUID();
+    let liveSessionId = (typeof idempotency_key === 'string' && idempotency_key.length > 8)
+      ? idempotency_key
+      : crypto.randomUUID();
 
     try {
       await consumeCapacity(supabase, user.id, minRequiredCapacity);
@@ -675,6 +699,9 @@ app.post("/api/realtime/session", async (req, res) => {
       if (dbSession?.id) {
         liveSessionId = dbSession.id;
       }
+
+      console.log(`[Live] session ID: ${liveSessionId} (provider session: ${providerSessionId || 'none'})`);
+      console.log(`[Live] capacity settlement: session ${liveSessionId} charged ${minRequiredCapacity} (total: ${minRequiredCapacity})`);
     } catch (settleErr) {
       console.error("[Live Mode Settlement Error]:", settleErr);
       if (capacityCharged) {
@@ -684,7 +711,7 @@ app.post("/api/realtime/session", async (req, res) => {
       return res.status(500).json({ error: "Failed to finalize live session tracking." });
     }
 
-    // 4. Return client-safe ephemeral credential and session metadata
+    // 4. Return client-safe ephemeral credential and session metadata (NEVER server API keys)
     res.json({
       live_session_id: liveSessionId,
       client_secret: {
@@ -692,8 +719,8 @@ app.post("/api/realtime/session", async (req, res) => {
         expires_at: sessionData.expires_at
       },
       session_id: providerSessionId,
-      model: sessionData.session?.model || sessionData.model || targetModel,
-      voice: sessionData.session?.audio?.output?.voice || cleanVoice
+      model: targetModel,
+      voice: cleanVoice
     });
   } catch (error: any) {
     console.error("[Realtime Session API Error]:", error);
@@ -750,6 +777,8 @@ app.post("/api/realtime/heartbeat", async (req, res) => {
           last_accounted_at: newLastAccounted
         })
         .eq("id", live_session_id);
+
+      console.log(`[Live] capacity settlement: session ${live_session_id} charged incremental ${incrementalCost} (total: ${newTotalConsumed})`);
     }
 
     const remainingCapacity = await getRemainingCapacity(supabase, user.id);
@@ -821,17 +850,16 @@ app.post("/api/realtime/end", async (req, res) => {
       })
       .eq("id", live_session_id);
 
-    const remainingCapacity = await getRemainingCapacity(supabase, user.id);
+    console.log(`[Live] capacity settlement: session ${live_session_id} ended (final duration: ${totalDurationSec}s, total charged: ${finalCapacityConsumed})`);
 
     res.json({
       status: 'ended',
       duration_seconds: totalDurationSec,
-      capacity_consumed: finalCapacityConsumed,
-      remaining_capacity: remainingCapacity
+      total_capacity_consumed: finalCapacityConsumed
     });
   } catch (error: any) {
     console.error("[Realtime End API Error]:", error);
-    res.status(error.status || 500).json({ error: error.error || error.message || "Session end settlement failed" });
+    res.status(error.status || 500).json({ error: error.error || error.message || "End session failed" });
   }
 });
 

@@ -112,7 +112,8 @@ export const LiveModeOverlay: React.FC<LiveModeOverlayProps> = ({
         },
         body: JSON.stringify({
           voice: sessionState.selectedVoice,
-          model: 'gpt-4o-realtime-preview-2024-12-17',
+          language: sessionState.selectedLanguage,
+          model: 'gpt-4o-realtime-preview',
         }),
       });
 
@@ -157,7 +158,7 @@ export const LiveModeOverlay: React.FC<LiveModeOverlayProps> = ({
         setSessionState((prev) => ({ ...prev, status: 'ai_speaking' }));
       };
 
-      // 4. Create DataChannel
+      // 4. Create DataChannel for realtime event handling and barge-in
       const dc = pc.createDataChannel('oai-events');
       dcRef.current = dc;
 
@@ -177,14 +178,11 @@ export const LiveModeOverlay: React.FC<LiveModeOverlayProps> = ({
       // 5. Audio Analyzer for reactive Orb visualization
       setupAudioAnalyzers(micStream);
 
-      // 6. SDP Offer Exchange with OpenAI Realtime WebRTC
+      // 6. SDP Offer Exchange with official OpenAI Realtime Calls API (POST /v1/realtime/calls)
       const offer = await pc.createOffer();
       await pc.setLocalDescription(offer);
 
-      const model = 'gpt-4o-realtime-preview-2024-12-17';
-      let answerSdp = '';
-
-      let sdpRes = await fetch(`https://api.openai.com/v1/realtime?model=${model}`, {
+      const sdpRes = await fetch('https://api.openai.com/v1/realtime/calls', {
         method: 'POST',
         body: offer.sdp,
         headers: {
@@ -194,24 +192,12 @@ export const LiveModeOverlay: React.FC<LiveModeOverlayProps> = ({
       });
 
       if (!sdpRes.ok) {
-        // Fallback attempt with /v1/realtime/calls
-        sdpRes = await fetch('https://api.openai.com/v1/realtime/calls', {
-          method: 'POST',
-          body: offer.sdp,
-          headers: {
-            'Authorization': `Bearer ${ephemeralKey}`,
-            'Content-Type': 'application/sdp',
-          },
-        });
-      }
-
-      if (!sdpRes.ok) {
         const sdpErrText = await sdpRes.text().catch(() => '');
-        console.error('[Live Mode] SDP negotiation failed:', sdpRes.status, sdpErrText);
+        console.error('[Live Mode] Realtime Calls SDP negotiation failed:', sdpRes.status, sdpErrText);
         throw new Error('WebRTC audio connection could not be established with AI provider.');
       }
 
-      answerSdp = await sdpRes.text();
+      const answerSdp = await sdpRes.text();
       await pc.setRemoteDescription({ type: 'answer', sdp: answerSdp });
 
       // 7. Start periodic heartbeat for capacity accounting
