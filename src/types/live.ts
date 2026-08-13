@@ -7,11 +7,8 @@ export interface LiveVoice {
 }
 
 export const SUPPORTED_LIVE_VOICES: LiveVoice[] = [
-  { id: 'juniper', name: 'Juniper', description: 'Open and upbeat', gender: 'female', tone: 'Open and upbeat' },
-  { id: 'breeze', name: 'Breeze', description: 'Animated and earnest', gender: 'female', tone: 'Animated and earnest' },
-  { id: 'cove', name: 'Cove', description: 'Composed and direct', gender: 'male', tone: 'Composed and direct' },
-  { id: 'ember', name: 'Ember', description: 'Confident and optimistic', gender: 'male', tone: 'Confident and optimistic' },
-  { id: 'sol', name: 'Sol', description: 'Savvy and relaxed', gender: 'female', tone: 'Savvy and relaxed' },
+  { id: 'marin', name: 'Marin', description: 'Natural and engaging', gender: 'female', tone: 'Natural and engaging' },
+  { id: 'cedar', name: 'Cedar', description: 'Calm and grounded', gender: 'male', tone: 'Calm and grounded' },
   { id: 'alloy', name: 'Alloy', description: 'Versatile and balanced', gender: 'neutral', tone: 'Versatile and balanced' },
   { id: 'ash', name: 'Ash', description: 'Relaxed and conversational', gender: 'male', tone: 'Relaxed and conversational' },
   { id: 'ballad', name: 'Ballad', description: 'Melodic and expressive', gender: 'neutral', tone: 'Melodic and expressive' },

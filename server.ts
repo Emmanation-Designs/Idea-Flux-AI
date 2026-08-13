@@ -12,7 +12,7 @@ import { getVideoProvider } from "./src/ai/videoProviders.js";
 
 // Import Vite types only for type checking
 import type { ViteDevServer } from "vite";
-import { checkLimit, incrementUsage, getUserUsage, getPlanLimits, getRemainingCapacity, consumeCapacity, CAPACITY_WARNING_THRESHOLD } from "./src/lib/usageService.js";
+import { checkLimit, incrementUsage, getUserUsage, getPlanLimits, getRemainingCapacity, consumeCapacity, refundCapacity, CAPACITY_WARNING_THRESHOLD } from "./src/lib/usageService.js";
 import { getSubscription, updateSubscription } from "./src/lib/subscriptionService.js";
 import { getPaymentAdapter } from "./src/lib/paymentService.js";
 import { getPlan, getPaymentConfiguration } from "./src/subscription/catalog.js";
@@ -575,12 +575,12 @@ app.post("/api/subscription/sync", async (req, res) => {
 app.post("/api/realtime/session", async (req, res) => {
   try {
     const user = await authenticateUser(req);
-    const { voice = 'alloy', model = 'gpt-4o-realtime-preview-2024-12-17' } = req.body || {};
+    const { voice = 'marin', model = 'gpt-4o-realtime-preview-2024-12-17' } = req.body || {};
 
     const supabase = getSupabaseAdminClient();
     const minRequiredCapacity = 10; // 1 active minute check
 
-    // Check user capacity allowance
+    // 1. Pre-check user capacity allowance (ensure at least 10 capacity available)
     const limitCheck = await checkLimit(supabase, user.id, 'live_mode', minRequiredCapacity);
     if (!limitCheck.allowed) {
       return res.status(403).json({
@@ -597,25 +597,35 @@ app.post("/api/realtime/session", async (req, res) => {
       return res.status(500).json({ error: "Server configuration error: OPENAI_API_KEY is not configured." });
     }
 
-    // Request ephemeral session token from OpenAI Realtime API
-    const response = await fetch("https://api.openai.com/v1/realtime/sessions", {
+    // Sanitize voice to officially supported OpenAI Realtime voices
+    const VALID_OPENAI_REALTIME_VOICES = new Set([
+      'alloy', 'ash', 'ballad', 'coral', 'echo', 'sage', 'shimmer', 'verse', 'marin', 'cedar'
+    ]);
+    const requestedVoice = (voice || 'marin').toLowerCase().trim();
+    const cleanVoice = VALID_OPENAI_REALTIME_VOICES.has(requestedVoice) ? requestedVoice : 'marin';
+    const targetModel = model || 'gpt-4o-realtime-preview-2024-12-17';
+
+    // 2. Request ephemeral client secret from OpenAI Realtime API (POST /v1/realtime/client_secrets)
+    const response = await fetch("https://api.openai.com/v1/realtime/client_secrets", {
       method: "POST",
       headers: {
         "Authorization": `Bearer ${apiKey}`,
         "Content-Type": "application/json"
       },
       body: JSON.stringify({
-        model: model,
-        modalities: ["audio", "text"],
-        voice: voice,
-        instructions: "You are Trelvix AI, a highly intelligent, empathetic, clear, and articulate real-time voice assistant. You respond naturally, concisely, and gracefully in conversation.",
-        input_audio_format: "pcm16",
-        output_audio_format: "pcm16",
-        turn_detection: {
-          type: "server_vad",
-          threshold: 0.5,
-          prefix_padding_ms: 300,
-          silence_duration_ms: 500
+        expires_after: {
+          anchor: "created_at",
+          seconds: 600
+        },
+        session: {
+          type: "realtime",
+          model: targetModel,
+          instructions: "You are Trelvix AI, a highly intelligent, empathetic, clear, and articulate real-time voice assistant. You respond naturally, concisely, and gracefully in conversation.",
+          audio: {
+            output: {
+              voice: cleanVoice
+            }
+          }
         }
       })
     });
@@ -623,27 +633,41 @@ app.post("/api/realtime/session", async (req, res) => {
     if (!response.ok) {
       const errText = await response.text();
       console.error("[Realtime Session Error] OpenAI responded with:", response.status, errText);
-      return res.status(500).json({ error: "Failed to initialize realtime session with AI provider." });
+      // Provider initialization failed — NO capacity is consumed
+      return res.status(502).json({ error: "Failed to initialize realtime session with AI provider." });
     }
 
     const sessionData = await response.json();
+    const clientSecretValue = sessionData.value || sessionData.client_secret?.value || sessionData.client_secret;
+    const providerSessionId = sessionData.session?.id || sessionData.id || null;
 
-    // Register live session tracking in DB
+    if (!clientSecretValue) {
+      console.error("[Realtime Session Error] No ephemeral secret returned by provider:", sessionData);
+      return res.status(502).json({ error: "AI provider returned invalid session credentials." });
+    }
+
+    // 3. Finalize initial 10 capacity charge ONLY after successful provider session initialization
+    let capacityCharged = false;
     let liveSessionId = crypto.randomUUID();
+
     try {
+      await consumeCapacity(supabase, user.id, minRequiredCapacity);
+      capacityCharged = true;
+
+      // Register live session tracking in DB
       const { data: dbSession } = await supabase
         .from("live_sessions")
         .insert({
           id: liveSessionId,
           user_id: user.id,
-          provider_session_id: sessionData.id || null,
-          model: model,
-          voice: voice,
+          provider_session_id: providerSessionId,
+          model: targetModel,
+          voice: cleanVoice,
           started_at: new Date().toISOString(),
           last_accounted_at: new Date().toISOString(),
           status: 'active',
           duration_seconds: 0,
-          capacity_consumed: 0
+          capacity_consumed: minRequiredCapacity
         })
         .select("id")
         .maybeSingle();
@@ -651,17 +675,25 @@ app.post("/api/realtime/session", async (req, res) => {
       if (dbSession?.id) {
         liveSessionId = dbSession.id;
       }
-    } catch (insertErr) {
-      console.warn("[Live Mode] Notice creating live session row in DB:", insertErr);
+    } catch (settleErr) {
+      console.error("[Live Mode Settlement Error]:", settleErr);
+      if (capacityCharged) {
+        // Safe rollback / refund if DB tracking setup encounters an error
+        await refundCapacity(supabase, user.id, minRequiredCapacity);
+      }
+      return res.status(500).json({ error: "Failed to finalize live session tracking." });
     }
 
-    // Return client-safe ephemeral credential
+    // 4. Return client-safe ephemeral credential and session metadata
     res.json({
       live_session_id: liveSessionId,
-      client_secret: sessionData.client_secret,
-      session_id: sessionData.id,
-      model: sessionData.model,
-      voice: sessionData.voice || voice
+      client_secret: {
+        value: clientSecretValue,
+        expires_at: sessionData.expires_at
+      },
+      session_id: providerSessionId,
+      model: sessionData.session?.model || sessionData.model || targetModel,
+      voice: sessionData.session?.audio?.output?.voice || cleanVoice
     });
   } catch (error: any) {
     console.error("[Realtime Session API Error]:", error);

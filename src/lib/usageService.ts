@@ -526,6 +526,31 @@ export async function consumeCapacity(supabaseClient: any, userId: string, cost:
 }
 
 /**
+ * Safely refunds / rolls back AI Capacity for a user (e.g. on provider initialization failures).
+ */
+export async function refundCapacity(supabaseClient: any, userId: string, cost: number): Promise<void> {
+  if (cost <= 0) return;
+  try {
+    const { data: current, error: getErr } = await supabaseClient
+      .from('user_usage_tracking')
+      .select('daily_ai_capacity_used')
+      .eq('user_id', userId)
+      .single();
+
+    if (!getErr && current) {
+      const currentVal = current.daily_ai_capacity_used || 0;
+      const newVal = Math.max(0, currentVal - cost);
+      await supabaseClient
+        .from('user_usage_tracking')
+        .update({ daily_ai_capacity_used: newVal })
+        .eq('user_id', userId);
+    }
+  } catch (err: any) {
+    console.warn(`[UsageService] Failed to refund capacity for ${userId}:`, err?.message || err);
+  }
+}
+
+/**
  * Adds extra daily capacity (e.g. from rewarded ads).
  */
 export async function addDailyCapacity(supabaseClient: any, userId: string, amount: number): Promise<void> {

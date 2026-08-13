@@ -28,7 +28,7 @@ export const LiveModeOverlay: React.FC<LiveModeOverlayProps> = ({
     liveSessionId: null,
     error: null,
     isMuted: false,
-    selectedVoice: 'juniper',
+    selectedVoice: 'marin',
     selectedLanguage: 'auto',
     userVolume: 0,
     aiVolume: 0,
@@ -177,14 +177,14 @@ export const LiveModeOverlay: React.FC<LiveModeOverlayProps> = ({
       // 5. Audio Analyzer for reactive Orb visualization
       setupAudioAnalyzers(micStream);
 
-      // 6. SDP Offer Exchange
+      // 6. SDP Offer Exchange with OpenAI Realtime WebRTC
       const offer = await pc.createOffer();
       await pc.setLocalDescription(offer);
 
-      const baseUrl = 'https://api.openai.com/v1/realtime';
       const model = 'gpt-4o-realtime-preview-2024-12-17';
+      let answerSdp = '';
 
-      const sdpRes = await fetch(`${baseUrl}?model=${model}`, {
+      let sdpRes = await fetch(`https://api.openai.com/v1/realtime?model=${model}`, {
         method: 'POST',
         body: offer.sdp,
         headers: {
@@ -194,10 +194,24 @@ export const LiveModeOverlay: React.FC<LiveModeOverlayProps> = ({
       });
 
       if (!sdpRes.ok) {
-        throw new Error('WebRTC SDP offer rejected by gateway.');
+        // Fallback attempt with /v1/realtime/calls
+        sdpRes = await fetch('https://api.openai.com/v1/realtime/calls', {
+          method: 'POST',
+          body: offer.sdp,
+          headers: {
+            'Authorization': `Bearer ${ephemeralKey}`,
+            'Content-Type': 'application/sdp',
+          },
+        });
       }
 
-      const answerSdp = await sdpRes.text();
+      if (!sdpRes.ok) {
+        const sdpErrText = await sdpRes.text().catch(() => '');
+        console.error('[Live Mode] SDP negotiation failed:', sdpRes.status, sdpErrText);
+        throw new Error('WebRTC audio connection could not be established with AI provider.');
+      }
+
+      answerSdp = await sdpRes.text();
       await pc.setRemoteDescription({ type: 'answer', sdp: answerSdp });
 
       // 7. Start periodic heartbeat for capacity accounting
