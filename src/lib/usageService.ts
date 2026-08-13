@@ -41,7 +41,8 @@ export type CentralizedFeature =
   | 'tts'
   | 'video_generation'
   | 'video_generation_creative'
-  | 'video_generation_super_creative';
+  | 'video_generation_super_creative'
+  | 'live_mode';
 
 /**
  * Internal configurable warning threshold.
@@ -73,6 +74,8 @@ export function getFeatureCost(feature: string): number {
       return 8;
     case 'image_generation':
       return 10;
+    case 'live_mode':
+      return 10; // 10 AI Capacity per active minute
     case 'video_generation_creative':
     case 'creative':
       return 15;

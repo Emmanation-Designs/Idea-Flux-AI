@@ -12,7 +12,7 @@ import { getVideoProvider } from "./src/ai/videoProviders.js";
 
 // Import Vite types only for type checking
 import type { ViteDevServer } from "vite";
-import { checkLimit, incrementUsage, getUserUsage, getPlanLimits, getRemainingCapacity, CAPACITY_WARNING_THRESHOLD } from "./src/lib/usageService.js";
+import { checkLimit, incrementUsage, getUserUsage, getPlanLimits, getRemainingCapacity, consumeCapacity, CAPACITY_WARNING_THRESHOLD } from "./src/lib/usageService.js";
 import { getSubscription, updateSubscription } from "./src/lib/subscriptionService.js";
 import { getPaymentAdapter } from "./src/lib/paymentService.js";
 import { getPlan, getPaymentConfiguration } from "./src/subscription/catalog.js";
@@ -564,6 +564,242 @@ app.post("/api/subscription/sync", async (req, res) => {
   } catch (error: any) {
     console.error("[Subscription Sync API Error]:", error);
     res.status(error.status || 500).json({ error: error.error || error.message || "Failed to sync subscription" });
+  }
+});
+
+// ============================================================================
+// REALTIME VOICE LIVE MODE API ENDPOINTS
+// ============================================================================
+
+// 1. Create Ephemeral Realtime Session
+app.post("/api/realtime/session", async (req, res) => {
+  try {
+    const user = await authenticateUser(req);
+    const { voice = 'alloy', model = 'gpt-4o-realtime-preview-2024-12-17' } = req.body || {};
+
+    const supabase = getSupabaseAdminClient();
+    const minRequiredCapacity = 10; // 1 active minute check
+
+    // Check user capacity allowance
+    const limitCheck = await checkLimit(supabase, user.id, 'live_mode', minRequiredCapacity);
+    if (!limitCheck.allowed) {
+      return res.status(403).json({
+        error: limitCheck.reason || "Insufficient AI Capacity for Live Mode.",
+        code: limitCheck.code || "CAPACITY_EXHAUSTED",
+        current: limitCheck.current,
+        limit: limitCheck.limit
+      });
+    }
+
+    const apiKey = process.env.OPENAI_API_KEY;
+    if (!apiKey) {
+      console.error("[Realtime Session] OPENAI_API_KEY missing");
+      return res.status(500).json({ error: "Server configuration error: OPENAI_API_KEY is not configured." });
+    }
+
+    // Request ephemeral session token from OpenAI Realtime API
+    const response = await fetch("https://api.openai.com/v1/realtime/sessions", {
+      method: "POST",
+      headers: {
+        "Authorization": `Bearer ${apiKey}`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        model: model,
+        modalities: ["audio", "text"],
+        voice: voice,
+        instructions: "You are Trelvix AI, a highly intelligent, empathetic, clear, and articulate real-time voice assistant. You respond naturally, concisely, and gracefully in conversation.",
+        input_audio_format: "pcm16",
+        output_audio_format: "pcm16",
+        turn_detection: {
+          type: "server_vad",
+          threshold: 0.5,
+          prefix_padding_ms: 300,
+          silence_duration_ms: 500
+        }
+      })
+    });
+
+    if (!response.ok) {
+      const errText = await response.text();
+      console.error("[Realtime Session Error] OpenAI responded with:", response.status, errText);
+      return res.status(500).json({ error: "Failed to initialize realtime session with AI provider." });
+    }
+
+    const sessionData = await response.json();
+
+    // Register live session tracking in DB
+    let liveSessionId = crypto.randomUUID();
+    try {
+      const { data: dbSession } = await supabase
+        .from("live_sessions")
+        .insert({
+          id: liveSessionId,
+          user_id: user.id,
+          provider_session_id: sessionData.id || null,
+          model: model,
+          voice: voice,
+          started_at: new Date().toISOString(),
+          last_accounted_at: new Date().toISOString(),
+          status: 'active',
+          duration_seconds: 0,
+          capacity_consumed: 0
+        })
+        .select("id")
+        .maybeSingle();
+
+      if (dbSession?.id) {
+        liveSessionId = dbSession.id;
+      }
+    } catch (insertErr) {
+      console.warn("[Live Mode] Notice creating live session row in DB:", insertErr);
+    }
+
+    // Return client-safe ephemeral credential
+    res.json({
+      live_session_id: liveSessionId,
+      client_secret: sessionData.client_secret,
+      session_id: sessionData.id,
+      model: sessionData.model,
+      voice: sessionData.voice || voice
+    });
+  } catch (error: any) {
+    console.error("[Realtime Session API Error]:", error);
+    res.status(error.status || 500).json({ error: error.error || error.message || "Failed to start Live Mode session" });
+  }
+});
+
+// 2. Realtime Session Heartbeat & Incremental Settlement
+app.post("/api/realtime/heartbeat", async (req, res) => {
+  try {
+    const user = await authenticateUser(req);
+    const { live_session_id, duration_seconds = 0 } = req.body || {};
+
+    if (!live_session_id) {
+      return res.status(400).json({ error: "live_session_id required" });
+    }
+
+    const supabase = getSupabaseAdminClient();
+
+    const { data: session } = await supabase
+      .from("live_sessions")
+      .select("*")
+      .eq("id", live_session_id)
+      .eq("user_id", user.id)
+      .maybeSingle();
+
+    if (!session) {
+      return res.status(404).json({ error: "Live session not found" });
+    }
+
+    if (session.status !== 'active') {
+      return res.json({ status: session.status, total_capacity_consumed: session.capacity_consumed });
+    }
+
+    const lastAccounted = new Date(session.last_accounted_at || session.started_at);
+    const now = new Date();
+    const elapsedMs = Math.max(0, now.getTime() - lastAccounted.getTime());
+    const elapsedMinutes = Math.floor(elapsedMs / 60000);
+
+    let incrementalCost = 0;
+    if (elapsedMinutes >= 1) {
+      incrementalCost = elapsedMinutes * 10; // 10 AI Capacity per active minute
+      
+      await consumeCapacity(supabase, user.id, incrementalCost);
+
+      const newTotalConsumed = (session.capacity_consumed || 0) + incrementalCost;
+      const newLastAccounted = new Date(lastAccounted.getTime() + elapsedMinutes * 60000).toISOString();
+
+      await supabase
+        .from("live_sessions")
+        .update({
+          duration_seconds: Math.max(session.duration_seconds || 0, Math.floor(duration_seconds)),
+          capacity_consumed: newTotalConsumed,
+          last_accounted_at: newLastAccounted
+        })
+        .eq("id", live_session_id);
+    }
+
+    const remainingCapacity = await getRemainingCapacity(supabase, user.id);
+
+    res.json({
+      status: 'active',
+      incremental_capacity_consumed: incrementalCost,
+      remaining_capacity: remainingCapacity
+    });
+  } catch (error: any) {
+    console.error("[Realtime Heartbeat API Error]:", error);
+    res.status(error.status || 500).json({ error: error.error || error.message || "Heartbeat failed" });
+  }
+});
+
+// 3. Realtime Session End Settlement
+app.post("/api/realtime/end", async (req, res) => {
+  try {
+    const user = await authenticateUser(req);
+    const { live_session_id, duration_seconds = 0 } = req.body || {};
+
+    if (!live_session_id) {
+      return res.status(400).json({ error: "live_session_id required" });
+    }
+
+    const supabase = getSupabaseAdminClient();
+
+    const { data: session } = await supabase
+      .from("live_sessions")
+      .select("*")
+      .eq("id", live_session_id)
+      .eq("user_id", user.id)
+      .maybeSingle();
+
+    if (!session) {
+      return res.status(404).json({ error: "Live session not found" });
+    }
+
+    if (session.status === 'ended') {
+      return res.json({ status: 'ended', capacity_consumed: session.capacity_consumed });
+    }
+
+    const startedAt = new Date(session.started_at);
+    const endedAt = new Date();
+    const totalDurationSec = Math.max(0, Math.floor((endedAt.getTime() - startedAt.getTime()) / 1000));
+    
+    let totalMinutes = 0;
+    if (totalDurationSec >= 5) {
+      totalMinutes = Math.max(1, Math.ceil(totalDurationSec / 60));
+    }
+
+    const targetTotalCost = totalMinutes * 10;
+    const alreadyConsumed = session.capacity_consumed || 0;
+    const remainingToCharge = Math.max(0, targetTotalCost - alreadyConsumed);
+
+    if (remainingToCharge > 0) {
+      await consumeCapacity(supabase, user.id, remainingToCharge);
+    }
+
+    const finalCapacityConsumed = alreadyConsumed + remainingToCharge;
+
+    await supabase
+      .from("live_sessions")
+      .update({
+        status: 'ended',
+        ended_at: endedAt.toISOString(),
+        duration_seconds: totalDurationSec,
+        capacity_consumed: finalCapacityConsumed
+      })
+      .eq("id", live_session_id);
+
+    const remainingCapacity = await getRemainingCapacity(supabase, user.id);
+
+    res.json({
+      status: 'ended',
+      duration_seconds: totalDurationSec,
+      capacity_consumed: finalCapacityConsumed,
+      remaining_capacity: remainingCapacity
+    });
+  } catch (error: any) {
+    console.error("[Realtime End API Error]:", error);
+    res.status(error.status || 500).json({ error: error.error || error.message || "Session end settlement failed" });
   }
 });
 

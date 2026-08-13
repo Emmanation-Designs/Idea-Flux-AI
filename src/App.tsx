@@ -44,7 +44,8 @@ import {
   FolderKanban,
   FolderPlus,
   Search,
-  ArrowLeft
+  ArrowLeft,
+  AudioLines
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Toaster, toast } from 'sonner';
@@ -222,6 +223,7 @@ import { LibraryView } from './components/LibraryView';
 import { OrganizationProvider } from './context/OrganizationContext';
 import { OrganizationSettings } from './components/OrganizationSettings';
 import { AcceptInvitationView } from './components/AcceptInvitationView';
+import { LiveModeOverlay } from './components/LiveModeOverlay';
 
 const PLAN_LIMITS = {
   free: { messages: Infinity, analysis: Infinity, images: Infinity },
@@ -255,6 +257,7 @@ export default function App() {
     return saved !== null ? saved === 'true' : false;
   });
   const [messages, setMessages] = useState<Message[]>([]);
+  const [showLiveMode, setShowLiveMode] = useState<boolean>(false);
   const [isTemporaryChat, setIsTemporaryChat] = useState<boolean>(false);
   const [showTempChatIntro, setShowTempChatIntro] = useState<boolean>(false);
   const [input, setInput] = useState('');
@@ -3070,6 +3073,7 @@ export default function App() {
                   activeTag={activeTag}
                   setActiveTag={setActiveTag}
                   handleInputChange={handleInputChange}
+                  onStartLiveMode={() => setShowLiveMode(true)}
                 />
               ) : (
                 <div className="max-w-3xl mx-auto w-full px-4 py-8 md:py-12 space-y-10 pb-36">
@@ -3475,21 +3479,27 @@ export default function App() {
                       variant="compact"
                     />
 
-                    {/* Send Button */}
-                    <button 
-                      type="button"
-                      onClick={() => sendMessage(activeTag ? `${activeTag} ${input}` : input)}
-                      disabled={(!input.trim() && !selectedAttachment) || isLoading}
-                      className={cn(
-                        "w-9 h-9 sm:w-10 sm:h-10 rounded-full flex items-center justify-center transform active:scale-95 shrink-0 transition-all duration-200",
-                        (input.trim() || selectedAttachment)
-                          ? "bg-[#19C37D] hover:bg-[#15a86b] text-white shadow-md shadow-emerald-500/10" 
-                          : "bg-zinc-200/50 dark:bg-zinc-800/50 text-zinc-400 dark:text-zinc-600 cursor-not-allowed border border-zinc-200/20 dark:border-zinc-800/20"
-                      )}
-                      title="Send message"
-                    >
-                      <ArrowUp className="w-4 h-4 stroke-[2.5]" />
-                    </button>
+                    {/* Action Button: Dynamic Live Mode / Send Button (Matches Image 1) */}
+                    {(input.trim() || selectedAttachment) ? (
+                      <button 
+                        type="button"
+                        onClick={() => sendMessage(activeTag ? `${activeTag} ${input}` : input)}
+                        disabled={isLoading}
+                        className="w-9 h-9 sm:w-10 sm:h-10 rounded-full flex items-center justify-center transform active:scale-95 shrink-0 transition-all duration-200 bg-[#19C37D] hover:bg-[#15a86b] text-white shadow-md shadow-emerald-500/10"
+                        title="Send message"
+                      >
+                        <ArrowUp className="w-4 h-4 stroke-[2.5]" />
+                      </button>
+                    ) : (
+                      <button 
+                        type="button"
+                        onClick={() => setShowLiveMode(true)}
+                        className="w-9 h-9 sm:w-10 sm:h-10 rounded-full flex items-center justify-center transform active:scale-95 shrink-0 transition-all duration-200 bg-[#19C37D] hover:bg-[#15a86b] text-white shadow-md shadow-emerald-500/20 cursor-pointer"
+                        title="Start Live Mode"
+                      >
+                        <AudioLines className="w-4 h-4 sm:w-5 sm:h-5 stroke-[2.2]" />
+                      </button>
+                    )}
                   </div>
                 </div>
               </div>
@@ -3509,6 +3519,19 @@ export default function App() {
 
       {/* Modals */}
       <AnimatePresence>
+        <LiveModeOverlay
+          isOpen={showLiveMode}
+          onClose={() => setShowLiveMode(false)}
+          onNewMessages={(newMsgs) => {
+            setMessages((prev) => [...prev, ...newMsgs]);
+          }}
+          getAuthToken={async () => {
+            const { data: { session } } = await supabase.auth.getSession();
+            return session?.access_token || null;
+          }}
+          userPlan={profile?.plan || 'free'}
+        />
+
         {showSettings && (
           <Settings 
             profile={profile} 

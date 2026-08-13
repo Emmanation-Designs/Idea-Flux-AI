@@ -7,7 +7,9 @@ import {
   ArrowUp,
   X,
   Film,
-  Edit3
+  Edit3,
+  Mic,
+  AudioLines
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import ModelSelector from './ModelSelector';
@@ -35,6 +37,7 @@ interface WelcomeScreenProps {
   activeTag: string | null;
   setActiveTag: (tag: string | null) => void;
   handleInputChange: (value: string) => void;
+  onStartLiveMode?: () => void;
 }
 
 export const WelcomeScreen: React.FC<WelcomeScreenProps> = ({
@@ -54,6 +57,7 @@ export const WelcomeScreen: React.FC<WelcomeScreenProps> = ({
   activeTag,
   setActiveTag,
   handleInputChange,
+  onStartLiveMode,
 }) => {
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
@@ -235,7 +239,7 @@ export const WelcomeScreen: React.FC<WelcomeScreenProps> = ({
               />
             </div>
 
-            {/* Right container containing select and the brand green action button */}
+            {/* Right container containing model selector and dynamic action button */}
             <div className="flex items-center gap-1 sm:gap-2 shrink-0">
               <ModelSelector 
                 selectedModelId={selectedModelId} 
@@ -245,21 +249,27 @@ export const WelcomeScreen: React.FC<WelcomeScreenProps> = ({
                 variant="compact"
               />
 
-              {/* Action Button: Brand Green Send button */}
-              <button 
-                type="button"
-                onClick={() => sendMessage(activeTag ? `${activeTag} ${input}` : input)}
-                disabled={(!input.trim() && !selectedAttachment) || isLoading}
-                className={cn(
-                  "w-9 h-9 sm:w-10 sm:h-10 rounded-full flex items-center justify-center transform active:scale-95 shrink-0 transition-all duration-200",
-                  (input.trim() || selectedAttachment)
-                    ? "bg-[#19C37D] hover:bg-[#15a86b] text-white shadow-md shadow-emerald-500/10" 
-                    : "bg-zinc-200/50 dark:bg-zinc-800/50 text-zinc-400 dark:text-zinc-600 cursor-not-allowed border border-zinc-200/20 dark:border-zinc-800/20"
-                )}
-                title="Send message"
-              >
-                <ArrowUp className="w-4 h-4 stroke-[2.5]" />
-              </button>
+              {/* Action Button: Changes dynamically between Live Mode and Send button (Matches Image 1) */}
+              {(input.trim() || selectedAttachment) ? (
+                <button 
+                  type="button"
+                  onClick={() => sendMessage(activeTag ? `${activeTag} ${input}` : input)}
+                  disabled={isLoading}
+                  className="w-9 h-9 sm:w-10 sm:h-10 rounded-full flex items-center justify-center transform active:scale-95 shrink-0 transition-all duration-200 bg-[#19C37D] hover:bg-[#15a86b] text-white shadow-md shadow-emerald-500/10"
+                  title="Send message"
+                >
+                  <ArrowUp className="w-4 h-4 stroke-[2.5]" />
+                </button>
+              ) : (
+                <button 
+                  type="button"
+                  onClick={onStartLiveMode}
+                  className="w-9 h-9 sm:w-10 sm:h-10 rounded-full flex items-center justify-center transform active:scale-95 shrink-0 transition-all duration-200 bg-[#19C37D] hover:bg-[#15a86b] text-white shadow-md shadow-emerald-500/20 cursor-pointer"
+                  title="Start Live Mode"
+                >
+                  <AudioLines className="w-4 h-4 sm:w-5 sm:h-5 stroke-[2.2]" />
+                </button>
+              )}
             </div>
           </div>
         </div>
