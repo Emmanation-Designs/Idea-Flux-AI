@@ -7,7 +7,7 @@ CREATE TABLE IF NOT EXISTS public.live_sessions (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     user_id UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
     provider_session_id TEXT NULL,
-    model TEXT DEFAULT 'gpt-4o-realtime-preview',
+    model TEXT DEFAULT 'gpt-realtime-2.1',
     voice TEXT DEFAULT 'marin',
     started_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     ended_at TIMESTAMPTZ NULL,

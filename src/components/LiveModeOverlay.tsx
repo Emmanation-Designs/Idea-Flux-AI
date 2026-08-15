@@ -103,7 +103,7 @@ export const LiveModeOverlay: React.FC<LiveModeOverlayProps> = ({
         throw new Error('Authentication required to start Live Mode.');
       }
 
-      // 1. Fetch ephemeral session key from backend
+      // 1. Fetch ephemeral session key from backend (server determines authoritative model)
       const res = await fetch('/api/realtime/session', {
         method: 'POST',
         headers: {
@@ -113,7 +113,6 @@ export const LiveModeOverlay: React.FC<LiveModeOverlayProps> = ({
         body: JSON.stringify({
           voice: sessionState.selectedVoice,
           language: sessionState.selectedLanguage,
-          model: 'gpt-4o-realtime-preview',
         }),
       });
 

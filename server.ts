@@ -571,25 +571,28 @@ app.post("/api/subscription/sync", async (req, res) => {
 // REALTIME VOICE LIVE MODE API ENDPOINTS
 // ============================================================================
 
+// Authoritative Live Mode Realtime Model (single source of truth)
+const LIVE_MODE_REALTIME_MODEL = process.env.OPENAI_REALTIME_MODEL || 'gpt-realtime-2.1';
+
 // 1. Create Ephemeral Realtime Session
 app.post("/api/realtime/session", async (req, res) => {
   try {
     const user = await authenticateUser(req);
-    const { voice = 'marin', model = 'gpt-4o-realtime-preview', language = 'auto', idempotency_key } = req.body || {};
+    const { voice = 'marin', language = 'auto', idempotency_key } = req.body || {};
 
     const supabase = getSupabaseAdminClient();
     const subscription = await getSubscription(supabase, user.id);
     const plan = (subscription?.plan || 'free').toUpperCase();
 
-    console.log(`[Live] authenticated user: ${user.id}`);
-    console.log(`[Live] plan: ${plan}`);
+    console.log(`[Live] authenticated: ${user.id}`);
+    console.log(`[Live] plan=${plan}`);
 
     const minRequiredCapacity = 10; // 1 active minute check
 
     // 1. Capacity authorization check
     const limitCheck = await checkLimit(supabase, user.id, 'live_mode', minRequiredCapacity);
     if (!limitCheck.allowed) {
-      console.log(`[Live] capacity authorization: denied (current: ${limitCheck.current}, limit: ${limitCheck.limit})`);
+      console.log(`[Live] capacity authorization=DENY (current: ${limitCheck.current}, limit: ${limitCheck.limit})`);
       return res.status(403).json({
         error: limitCheck.reason || "Insufficient AI Capacity for Live Mode.",
         code: limitCheck.code || "CAPACITY_EXHAUSTED",
@@ -598,11 +601,11 @@ app.post("/api/realtime/session", async (req, res) => {
       });
     }
 
-    console.log(`[Live] capacity authorization: allowed (current: ${limitCheck.current}, limit: ${limitCheck.limit})`);
+    console.log(`[Live] capacity authorization=ALLOW (current: ${limitCheck.current}, limit: ${limitCheck.limit})`);
 
     const apiKey = process.env.OPENAI_API_KEY;
     if (!apiKey) {
-      console.error("[Live] realtime provider initialization failed: OPENAI_API_KEY missing");
+      console.error("[Live] OpenAI realtime initialization failed: OPENAI_API_KEY missing");
       return res.status(500).json({ error: "Server configuration error: OPENAI_API_KEY is not configured." });
     }
 
@@ -613,8 +616,9 @@ app.post("/api/realtime/session", async (req, res) => {
     const requestedVoice = (voice || 'marin').toLowerCase().trim();
     const cleanVoice = VALID_OPENAI_REALTIME_VOICES.has(requestedVoice) ? requestedVoice : 'marin';
     
-    // Enforce current supported OpenAI Realtime model family (never obsolete date snapshots)
-    const targetModel = 'gpt-4o-realtime-preview';
+    // Enforce authoritative server-side OpenAI Realtime model
+    const targetModel = LIVE_MODE_REALTIME_MODEL;
+    console.log(`[Live] model=${targetModel}`);
 
     // System prompt tailored with optional language preference
     let languageInstruction = "";
@@ -623,7 +627,7 @@ app.post("/api/realtime/session", async (req, res) => {
     }
     const systemInstructions = `You are Trelvix AI, a highly intelligent, empathetic, clear, and articulate real-time conversational voice assistant. You respond naturally, concisely, and gracefully in conversation.${languageInstruction}`;
 
-    console.log("[Live] realtime provider initialization started");
+    console.log("[Live] OpenAI realtime initialization started");
 
     // 2. Request ephemeral client secret from OpenAI Realtime API (POST /v1/realtime/client_secrets)
     const response = await fetch("https://api.openai.com/v1/realtime/client_secrets", {
@@ -652,19 +656,19 @@ app.post("/api/realtime/session", async (req, res) => {
 
     if (!response.ok) {
       const errText = await response.text().catch(() => '');
-      console.error(`[Live] realtime provider initialization failed: HTTP ${response.status}`, errText);
+      console.error(`[Live] OpenAI realtime initialization failed: HTTP ${response.status}`, errText);
       // Provider initialization failed — NO capacity is permanently charged
       return res.status(502).json({ error: "Failed to initialize realtime session with AI provider." });
     }
 
-    console.log("[Live] realtime provider initialization succeeded");
+    console.log("[Live] OpenAI realtime initialization succeeded");
 
     const sessionData = await response.json();
     const clientSecretValue = sessionData.value || sessionData.client_secret?.value || sessionData.client_secret;
     const providerSessionId = sessionData.session?.id || sessionData.id || null;
 
     if (!clientSecretValue) {
-      console.error("[Live] realtime provider initialization failed: No ephemeral secret returned by provider");
+      console.error("[Live] OpenAI realtime initialization failed: No ephemeral secret returned by provider");
       return res.status(502).json({ error: "AI provider returned invalid session credentials." });
     }
 
