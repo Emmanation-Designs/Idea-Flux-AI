@@ -1,6 +1,6 @@
-import React, { useState } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { ChevronLeft, ChevronRight, X, Globe, ChevronDown, Check } from 'lucide-react';
+import { ChevronLeft, ChevronRight, X, Globe, ChevronDown, Check, Volume2 } from 'lucide-react';
 import { SUPPORTED_LIVE_VOICES, LiveVoice } from '../types/live';
 
 interface LiveVoiceSelectorProps {
@@ -39,30 +39,82 @@ export const LiveVoiceSelector: React.FC<LiveVoiceSelectorProps> = ({
 }) => {
   const currentIndex = SUPPORTED_LIVE_VOICES.findIndex((v) => v.id === selectedVoice);
   const activeIndex = currentIndex >= 0 ? currentIndex : 0;
-  const currentVoice = SUPPORTED_LIVE_VOICES[activeIndex];
+  const currentVoice = SUPPORTED_LIVE_VOICES[activeIndex] || SUPPORTED_LIVE_VOICES[0];
 
   const [showLanguageDropdown, setShowLanguageDropdown] = useState(false);
+  const [isPlayingPreview, setIsPlayingPreview] = useState(false);
+
+  const previewAudioRef = useRef<HTMLAudioElement | null>(null);
+  const previewTokenRef = useRef<number>(0);
+
+  // Stop audio playback when modal unmounts or closes
+  useEffect(() => {
+    if (!isOpen) {
+      stopCurrentPreview();
+    }
+  }, [isOpen]);
+
+  const stopCurrentPreview = () => {
+    if (previewAudioRef.current) {
+      previewAudioRef.current.pause();
+      previewAudioRef.current.currentTime = 0;
+      previewAudioRef.current = null;
+    }
+    setIsPlayingPreview(false);
+  };
+
+  const playVoicePreview = (voice: LiveVoice) => {
+    stopCurrentPreview();
+
+    const thisToken = ++previewTokenRef.current;
+    setIsPlayingPreview(true);
+
+    try {
+      const audio = new Audio(`/voices/${voice.id}.wav`);
+      previewAudioRef.current = audio;
+
+      audio.onended = () => {
+        if (previewTokenRef.current === thisToken) {
+          setIsPlayingPreview(false);
+          previewAudioRef.current = null;
+        }
+      };
+
+      audio.onerror = (e) => {
+        console.warn(`[Live Voice Preview] Audio load error for ${voice.id}:`, e);
+        if (previewTokenRef.current === thisToken) {
+          setIsPlayingPreview(false);
+          previewAudioRef.current = null;
+        }
+      };
+
+      const playPromise = audio.play();
+      if (playPromise !== undefined) {
+        playPromise.catch((err) => {
+          console.warn(`[Live Voice Preview] Playback prevented:`, err);
+          if (previewTokenRef.current === thisToken) {
+            setIsPlayingPreview(false);
+          }
+        });
+      }
+    } catch (err) {
+      console.warn('[Live Voice Preview] Exception:', err);
+      setIsPlayingPreview(false);
+    }
+  };
 
   const handlePrev = () => {
     const nextIdx = (activeIndex - 1 + SUPPORTED_LIVE_VOICES.length) % SUPPORTED_LIVE_VOICES.length;
-    onSelectVoice(SUPPORTED_LIVE_VOICES[nextIdx].id);
-    playQuickPreview(SUPPORTED_LIVE_VOICES[nextIdx]);
+    const voice = SUPPORTED_LIVE_VOICES[nextIdx];
+    onSelectVoice(voice.id);
+    playVoicePreview(voice);
   };
 
   const handleNext = () => {
     const nextIdx = (activeIndex + 1) % SUPPORTED_LIVE_VOICES.length;
-    onSelectVoice(SUPPORTED_LIVE_VOICES[nextIdx].id);
-    playQuickPreview(SUPPORTED_LIVE_VOICES[nextIdx]);
-  };
-
-  const playQuickPreview = (voice: LiveVoice) => {
-    if ('speechSynthesis' in window) {
-      window.speechSynthesis.cancel();
-      const utterance = new SpeechSynthesisUtterance(`Hello! I'm ${voice.name}.`);
-      utterance.rate = 1.0;
-      utterance.pitch = voice.gender === 'female' ? 1.08 : voice.gender === 'male' ? 0.92 : 1.0;
-      window.speechSynthesis.speak(utterance);
-    }
+    const voice = SUPPORTED_LIVE_VOICES[nextIdx];
+    onSelectVoice(voice.id);
+    playVoicePreview(voice);
   };
 
   const selectedLanguageLabel = LANGUAGES.find((l) => l.id === selectedLanguage)?.label || 'Auto-detect';
@@ -76,7 +128,10 @@ export const LiveVoiceSelector: React.FC<LiveVoiceSelectorProps> = ({
         animate={{ opacity: 1 }}
         exit={{ opacity: 0 }}
         className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-md"
-        onClick={onClose}
+        onClick={() => {
+          stopCurrentPreview();
+          onClose();
+        }}
       >
         <motion.div
           initial={{ scale: 0.95, opacity: 0, y: 15 }}
@@ -86,46 +141,61 @@ export const LiveVoiceSelector: React.FC<LiveVoiceSelectorProps> = ({
           onClick={(e) => e.stopPropagation()}
           className="relative w-full max-w-[420px] p-7 bg-[#212121] dark:bg-[#18181b] light:bg-white text-white dark:text-white light:text-zinc-900 border border-zinc-700/50 dark:border-zinc-800 rounded-[28px] shadow-2xl overflow-hidden flex flex-col items-center select-none"
         >
-          {/* Top Right Close 'X' Button (Matches Image 3) */}
+          {/* Top Right Close 'X' Button */}
           <button
-            onClick={onClose}
+            onClick={() => {
+              stopCurrentPreview();
+              onClose();
+            }}
             className="absolute top-5 right-5 p-1.5 text-zinc-400 hover:text-white dark:hover:text-white rounded-full hover:bg-white/10 transition-colors"
             title="Close"
           >
             <X className="w-5 h-5" />
           </button>
 
-          {/* Voice Preview Orb (Brand Green, Matches Image 3) */}
+          {/* Voice Preview Orb (Brand Green with animated glow on play) */}
           <div className="relative flex items-center justify-center mt-4 mb-6">
             <motion.div
               key={currentVoice.id}
               initial={{ scale: 0.92, opacity: 0.8 }}
-              animate={{ scale: 1, opacity: 1 }}
-              transition={{ duration: 0.25 }}
-              className="w-36 h-36 sm:w-40 sm:h-40 rounded-full bg-gradient-to-tr from-[#19C37D] via-[#10b981] to-[#34d399] shadow-2xl shadow-emerald-500/20 flex items-center justify-center cursor-pointer active:scale-95 transition-transform"
-              onClick={() => playQuickPreview(currentVoice)}
+              animate={{ 
+                scale: isPlayingPreview ? [1, 1.06, 0.98, 1.04, 1] : 1,
+                opacity: 1 
+              }}
+              transition={isPlayingPreview ? { repeat: Infinity, duration: 1.2 } : { duration: 0.25 }}
+              className="w-36 h-36 sm:w-40 sm:h-40 rounded-full bg-gradient-to-tr from-[#19C37D] via-[#10b981] to-[#34d399] shadow-2xl shadow-emerald-500/25 flex items-center justify-center cursor-pointer active:scale-95 transition-transform relative group"
+              onClick={() => playVoicePreview(currentVoice)}
               title="Click to preview voice"
             >
               {/* Inner soft diffuse glow */}
-              <div className="w-full h-full rounded-full bg-radial from-white/30 via-transparent to-black/10 backdrop-blur-xs" />
+              <div className="w-full h-full rounded-full bg-radial from-white/30 via-transparent to-black/10 backdrop-blur-xs flex items-center justify-center">
+                {isPlayingPreview && (
+                  <Volume2 className="w-8 h-8 text-white/90 animate-pulse" />
+                )}
+              </div>
             </motion.div>
           </div>
 
-          {/* Voice Name & Description (Matches Image 3) */}
+          {/* Voice Name & Description */}
           <div className="text-center mb-5">
-            <h3 className="text-xl font-bold text-white dark:text-white light:text-zinc-900 tracking-tight mb-1">
-              {currentVoice.name}
-            </h3>
+            <div className="flex items-center justify-center gap-2">
+              <h3 className="text-xl font-bold text-white dark:text-white light:text-zinc-900 tracking-tight mb-1">
+                {currentVoice.name}
+              </h3>
+              <span className="text-[11px] font-medium px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 capitalize">
+                {currentVoice.gender}
+              </span>
+            </div>
             <p className="text-sm text-zinc-400 dark:text-zinc-400 light:text-zinc-500">
               {currentVoice.description}
             </p>
           </div>
 
-          {/* Left Arrow, Pagination Dots, Right Arrow (Matches Image 3) */}
+          {/* Left Arrow, Pagination Dots, Right Arrow */}
           <div className="flex items-center justify-center gap-6 mb-8 w-full max-w-[280px]">
             <button
               onClick={handlePrev}
-              className="p-1.5 text-zinc-400 hover:text-white dark:hover:text-white rounded-full hover:bg-white/10 transition"
+              className="p-1.5 text-zinc-400 hover:text-white dark:hover:text-white rounded-full hover:bg-white/10 transition active:scale-90"
               title="Previous voice"
             >
               <ChevronLeft className="w-5 h-5" />
@@ -138,7 +208,7 @@ export const LiveVoiceSelector: React.FC<LiveVoiceSelectorProps> = ({
                   key={v.id}
                   onClick={() => {
                     onSelectVoice(v.id);
-                    playQuickPreview(v);
+                    playVoicePreview(v);
                   }}
                   className={`h-1.5 rounded-full transition-all duration-200 ${
                     idx === activeIndex
@@ -152,14 +222,14 @@ export const LiveVoiceSelector: React.FC<LiveVoiceSelectorProps> = ({
 
             <button
               onClick={handleNext}
-              className="p-1.5 text-zinc-400 hover:text-white dark:hover:text-white rounded-full hover:bg-white/10 transition"
+              className="p-1.5 text-zinc-400 hover:text-white dark:hover:text-white rounded-full hover:bg-white/10 transition active:scale-90"
               title="Next voice"
             >
               <ChevronRight className="w-5 h-5" />
             </button>
           </div>
 
-          {/* Bottom Language Row (Matches Image 3) */}
+          {/* Bottom Language Row */}
           <div className="w-full pt-4 border-t border-zinc-700/60 dark:border-zinc-800 relative">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2 text-sm font-normal text-zinc-300 dark:text-zinc-300 light:text-zinc-700">

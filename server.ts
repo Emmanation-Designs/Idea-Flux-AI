@@ -609,15 +609,24 @@ app.post("/api/realtime/session", async (req, res) => {
       return res.status(500).json({ error: "Server configuration error: OPENAI_API_KEY is not configured." });
     }
 
-    // Sanitize voice to officially supported OpenAI Realtime voices
+    // Sanitize and validate voice against authoritative OpenAI Realtime voice catalog
     const VALID_OPENAI_REALTIME_VOICES = new Set([
       'alloy', 'ash', 'ballad', 'coral', 'echo', 'sage', 'shimmer', 'verse', 'marin', 'cedar'
     ]);
     const requestedVoice = (voice || 'marin').toLowerCase().trim();
-    const cleanVoice = VALID_OPENAI_REALTIME_VOICES.has(requestedVoice) ? requestedVoice : 'marin';
+    if (!VALID_OPENAI_REALTIME_VOICES.has(requestedVoice)) {
+      console.warn(`[Live Voice] Rejected invalid/unsupported voice: ${requestedVoice}`);
+      return res.status(400).json({
+        error: `Selected voice "${requestedVoice}" is currently unavailable. Please choose another voice.`,
+        code: "UNSUPPORTED_VOICE",
+        supported_voices: Array.from(VALID_OPENAI_REALTIME_VOICES)
+      });
+    }
+    const cleanVoice = requestedVoice;
     
     // Enforce authoritative server-side OpenAI Realtime model
     const targetModel = LIVE_MODE_REALTIME_MODEL;
+    console.log(`[Live Voice]\nRequested voice: ${requestedVoice}\nResolved voice: ${cleanVoice}\nRealtime model: ${targetModel}`);
     console.log(`[Live] model=${targetModel}`);
 
     // System prompt tailored with optional language preference
@@ -662,6 +671,7 @@ app.post("/api/realtime/session", async (req, res) => {
     }
 
     console.log("[Live] OpenAI realtime initialization succeeded");
+    console.log(`[Live Voice]\nSession voice applied successfully: ${cleanVoice}`);
 
     const sessionData = await response.json();
     const clientSecretValue = sessionData.value || sessionData.client_secret?.value || sessionData.client_secret;

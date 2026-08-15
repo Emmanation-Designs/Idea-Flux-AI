@@ -22,18 +22,18 @@ export const LiveModeOverlay: React.FC<LiveModeOverlayProps> = ({
   onNewMessages,
   getAuthToken,
 }) => {
-  const [sessionState, setSessionState] = useState<LiveSessionState>({
+  const [sessionState, setSessionState] = useState<LiveSessionState>(() => ({
     status: 'idle',
     sessionId: null,
     liveSessionId: null,
     error: null,
     isMuted: false,
-    selectedVoice: 'marin',
-    selectedLanguage: 'auto',
+    selectedVoice: (typeof window !== 'undefined' ? localStorage.getItem('trelvix_live_selected_voice') : null) || 'marin',
+    selectedLanguage: (typeof window !== 'undefined' ? localStorage.getItem('trelvix_live_selected_language') : null) || 'auto',
     userVolume: 0,
     aiVolume: 0,
     activeSeconds: 0,
-  });
+  }));
 
   const [showSettings, setShowSettings] = useState(false);
   const [showMicPermission, setShowMicPermission] = useState(false);
@@ -51,6 +51,45 @@ export const LiveModeOverlay: React.FC<LiveModeOverlayProps> = ({
   const remoteAudioElRef = useRef<HTMLAudioElement | null>(null);
   const heartbeatTimerRef = useRef<NodeJS.Timeout | null>(null);
   const secondsTimerRef = useRef<NodeJS.Timeout | null>(null);
+
+  // Handle voice selection with persistence and dynamic WebRTC session update
+  const handleSelectVoice = (voiceId: string) => {
+    setSessionState((prev) => ({ ...prev, selectedVoice: voiceId }));
+    try {
+      localStorage.setItem('trelvix_live_selected_voice', voiceId);
+    } catch (e) {
+      // ignore localstorage errors
+    }
+
+    // If WebRTC DataChannel is open, immediately update live session voice
+    if (dcRef.current && dcRef.current.readyState === 'open') {
+      console.log(`[Live Voice] Dynamic session.update sent to WebRTC: ${voiceId}`);
+      try {
+        dcRef.current.send(JSON.stringify({
+          type: 'session.update',
+          session: {
+            voice: voiceId,
+            audio: {
+              output: {
+                voice: voiceId,
+              },
+            },
+          },
+        }));
+      } catch (err) {
+        console.warn('[Live Voice] Failed to send session.update to DataChannel:', err);
+      }
+    }
+  };
+
+  const handleSelectLanguage = (lang: string) => {
+    setSessionState((prev) => ({ ...prev, selectedLanguage: lang }));
+    try {
+      localStorage.setItem('trelvix_live_selected_language', lang);
+    } catch (e) {
+      // ignore
+    }
+  };
 
   // Check microphone consent on open
   useEffect(() => {
@@ -103,6 +142,11 @@ export const LiveModeOverlay: React.FC<LiveModeOverlayProps> = ({
         throw new Error('Authentication required to start Live Mode.');
       }
 
+      const activeVoice = sessionState.selectedVoice || (typeof window !== 'undefined' ? localStorage.getItem('trelvix_live_selected_voice') : null) || 'marin';
+      const activeLanguage = sessionState.selectedLanguage || (typeof window !== 'undefined' ? localStorage.getItem('trelvix_live_selected_language') : null) || 'auto';
+
+      console.log(`[Live Mode] Initializing Realtime Session with voice: ${activeVoice}, language: ${activeLanguage}`);
+
       // 1. Fetch ephemeral session key from backend (server determines authoritative model)
       const res = await fetch('/api/realtime/session', {
         method: 'POST',
@@ -111,8 +155,8 @@ export const LiveModeOverlay: React.FC<LiveModeOverlayProps> = ({
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          voice: sessionState.selectedVoice,
-          language: sessionState.selectedLanguage,
+          voice: activeVoice,
+          language: activeLanguage,
         }),
       });
 
@@ -441,9 +485,9 @@ export const LiveModeOverlay: React.FC<LiveModeOverlayProps> = ({
           isOpen={showSettings}
           onClose={() => setShowSettings(false)}
           selectedVoice={sessionState.selectedVoice}
-          onSelectVoice={(v) => setSessionState((prev) => ({ ...prev, selectedVoice: v }))}
+          onSelectVoice={handleSelectVoice}
           selectedLanguage={sessionState.selectedLanguage}
-          onSelectLanguage={(l) => setSessionState((prev) => ({ ...prev, selectedLanguage: l }))}
+          onSelectLanguage={handleSelectLanguage}
         />
 
         {/* Top Right Sliders / Settings Icon Button (Matches Image 2 & 3) */}
