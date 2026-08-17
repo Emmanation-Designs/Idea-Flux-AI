@@ -694,9 +694,6 @@ ${memoriesContext}${languageInstruction}`;
           type: "realtime",
           model: targetModel,
           instructions: systemInstructions,
-          input_audio_transcription: {
-            model: "whisper-1"
-          },
           audio: {
             output: {
               voice: cleanVoice

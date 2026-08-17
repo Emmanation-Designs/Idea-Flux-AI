@@ -225,6 +225,19 @@ export const LiveModeOverlay: React.FC<LiveModeOverlayProps> = ({
 
       dc.onopen = () => {
         setSessionState((prev) => ({ ...prev, status: 'listening' }));
+        // Enable input audio transcription over DataChannel session.update
+        try {
+          dc.send(JSON.stringify({
+            type: 'session.update',
+            session: {
+              input_audio_transcription: {
+                model: 'whisper-1'
+              }
+            }
+          }));
+        } catch (e) {
+          console.warn('[Live Mode] session.update transcription error:', e);
+        }
       };
 
       dc.onmessage = (e) => {
