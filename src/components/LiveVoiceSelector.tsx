@@ -105,39 +105,36 @@ export const LiveVoiceSelector: React.FC<LiveVoiceSelectorProps> = ({
     setIsPlayingPreview(true);
 
     try {
-      const endpoint = `/api/realtime/voice-preview?voice=${encodeURIComponent(voice.id)}`;
-      const res = await fetch(endpoint, {
-        signal: controller.signal,
-        headers: {
-          'Accept': 'audio/wav, audio/*;q=0.9, */*;q=0.8'
+      let audioBlob: Blob | null = null;
+
+      // 1. Attempt ultra-fast direct static voice asset fetch
+      try {
+        const staticRes = await fetch(`/voices/${encodeURIComponent(voice.id)}.wav`, { signal: controller.signal });
+        if (staticRes.ok) {
+          audioBlob = await staticRes.blob();
         }
-      });
-
-      if (previewTokenRef.current !== thisToken) return;
-
-      const contentType = res.headers.get('content-type') || 'unknown';
-      const contentLength = res.headers.get('content-length') || 'unknown';
-
-      console.log(`[Live Voice Preview]\nvoice: ${voice.id}\nendpoint: ${endpoint}\nstatus: ${res.status}\ncontent-type: ${contentType}\ncontent-length: ${contentLength}\naudio-format: ${contentType}`);
-
-      if (!res.ok) {
-        let errJson: any = {};
-        try {
-          errJson = await res.json();
-        } catch (e) {
-          // ignore
-        }
-        console.warn(`[Live Voice Preview] Server error for voice ${voice.id}:`, errJson.error || res.statusText);
-        setIsPlayingPreview(false);
-        return;
+      } catch (staticErr) {
+        // fallback to api route
       }
 
-      // Read binary audio as Blob
-      const audioBlob = await res.blob();
+      // 2. Fallback to API route if direct fetch did not return valid blob
+      if (!audioBlob || audioBlob.size === 0) {
+        const endpoint = `/api/realtime/voice-preview?voice=${encodeURIComponent(voice.id)}`;
+        const res = await fetch(endpoint, {
+          signal: controller.signal,
+          headers: {
+            'Accept': 'audio/wav, audio/*;q=0.9, */*;q=0.8'
+          }
+        });
+        if (res.ok) {
+          audioBlob = await res.blob();
+        }
+      }
+
       if (previewTokenRef.current !== thisToken) return;
 
-      if (audioBlob.size === 0) {
-        console.warn(`[Live Voice Preview] Received empty audio blob for voice ${voice.id}`);
+      if (!audioBlob || audioBlob.size === 0) {
+        console.warn(`[Live Voice Preview] Received empty audio for voice ${voice.id}`);
         setIsPlayingPreview(false);
         return;
       }

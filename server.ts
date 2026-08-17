@@ -699,6 +699,13 @@ ${memoriesContext}${languageInstruction}`;
               voice: cleanVoice
             }
           },
+          turn_detection: {
+            type: "server_vad",
+            threshold: 0.65,
+            prefix_padding_ms: 300,
+            silence_duration_ms: 650,
+            create_response: true
+          },
           tools: [
             {
               type: "function",

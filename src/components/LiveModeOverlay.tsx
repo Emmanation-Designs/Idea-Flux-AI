@@ -68,7 +68,7 @@ export const LiveModeOverlay: React.FC<LiveModeOverlayProps> = ({
     setLiveTranscript(updated);
   };
 
-  // Handle voice selection with persistence and dynamic WebRTC session update
+  // Handle voice selection with persistence and immediate live session reconnect
   const handleSelectVoice = (voiceId: string) => {
     setSessionState((prev) => ({ ...prev, selectedVoice: voiceId }));
     try {
@@ -77,24 +77,13 @@ export const LiveModeOverlay: React.FC<LiveModeOverlayProps> = ({
       // ignore localstorage errors
     }
 
-    // If WebRTC DataChannel is open, immediately update live session voice
-    if (dcRef.current && dcRef.current.readyState === 'open') {
-      console.log(`[Live Voice] Dynamic session.update sent to WebRTC: ${voiceId}`);
-      try {
-        dcRef.current.send(JSON.stringify({
-          type: 'session.update',
-          session: {
-            voice: voiceId,
-            audio: {
-              output: {
-                voice: voiceId,
-              },
-            },
-          },
-        }));
-      } catch (err) {
-        console.warn('[Live Voice] Failed to send session.update to DataChannel:', err);
-      }
+    // If session is active, seamlessly reconnect with the chosen voice
+    if (pcRef.current && sessionState.status !== 'idle' && sessionState.status !== 'error') {
+      console.log(`[Live Voice] Seamlessly switching active Live voice to: ${voiceId}`);
+      cleanupRealtimeSession();
+      setTimeout(() => {
+        initRealtimeSession(voiceId);
+      }, 120);
     }
   };
 
@@ -150,8 +139,8 @@ export const LiveModeOverlay: React.FC<LiveModeOverlayProps> = ({
     onClose();
   };
 
-  // Start Realtime Session via WebRTC
-  const initRealtimeSession = async () => {
+  // Start Realtime Session via WebRTC with robust audio constraints
+  const initRealtimeSession = async (overrideVoice?: string) => {
     try {
       setSessionState((prev) => ({ ...prev, status: 'connecting', error: null }));
 
@@ -160,7 +149,7 @@ export const LiveModeOverlay: React.FC<LiveModeOverlayProps> = ({
         throw new Error('Authentication required to start Live Mode.');
       }
 
-      const activeVoice = sessionState.selectedVoice || (typeof window !== 'undefined' ? localStorage.getItem('trelvix_live_selected_voice') : null) || 'marin';
+      const activeVoice = overrideVoice || sessionState.selectedVoice || (typeof window !== 'undefined' ? localStorage.getItem('trelvix_live_selected_voice') : null) || 'marin';
       const activeLanguage = sessionState.selectedLanguage || (typeof window !== 'undefined' ? localStorage.getItem('trelvix_live_selected_language') : null) || 'auto';
 
       console.log(`[Live Mode] Initializing Realtime Session with voice: ${activeVoice}, language: ${activeLanguage}`);
@@ -195,14 +184,24 @@ export const LiveModeOverlay: React.FC<LiveModeOverlayProps> = ({
         ...prev,
         sessionId: sessionData.session_id,
         liveSessionId,
+        selectedVoice: activeVoice,
       }));
 
-      // 2. Request local microphone access
-      const micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      // 2. Request local microphone access with hardware acoustic echo cancellation & noise suppression
+      const micStream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          echoCancellation: { ideal: true },
+          noiseSuppression: { ideal: true },
+          autoGainControl: { ideal: true },
+          channelCount: 1,
+        }
+      });
       micStreamRef.current = micStream;
 
       // 3. Setup RTCPeerConnection
-      const pc = new RTCPeerConnection();
+      const pc = new RTCPeerConnection({
+        iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
+      });
       pcRef.current = pc;
 
       // Add mic audio track
@@ -210,12 +209,19 @@ export const LiveModeOverlay: React.FC<LiveModeOverlayProps> = ({
       pc.addTrack(audioTrack);
 
       // Setup remote audio element
-      const remoteAudio = document.createElement('audio');
-      remoteAudio.autoplay = true;
-      remoteAudioElRef.current = remoteAudio;
+      let remoteAudio = remoteAudioElRef.current;
+      if (!remoteAudio) {
+        remoteAudio = document.createElement('audio');
+        remoteAudio.autoplay = true;
+        remoteAudio.setAttribute('playsinline', 'true');
+        remoteAudioElRef.current = remoteAudio;
+      }
 
       pc.ontrack = (e) => {
-        remoteAudio.srcObject = e.streams[0];
+        if (remoteAudio) {
+          remoteAudio.srcObject = e.streams[0];
+          remoteAudio.play().catch((err) => console.warn('[Live Audio] Remote audio play notice:', err));
+        }
         setSessionState((prev) => ({ ...prev, status: 'ai_speaking' }));
       };
 
@@ -407,8 +413,13 @@ export const LiveModeOverlay: React.FC<LiveModeOverlayProps> = ({
   const handleRealtimeEvent = (event: any) => {
     switch (event.type) {
       case 'input_audio_buffer.speech_started':
-        if (dcRef.current && dcRef.current.readyState === 'open') {
-          dcRef.current.send(JSON.stringify({ type: 'response.cancel' }));
+        // Only cancel in-flight response if AI was actively speaking/generating
+        if (sessionState.status === 'ai_speaking' && dcRef.current && dcRef.current.readyState === 'open') {
+          try {
+            dcRef.current.send(JSON.stringify({ type: 'response.cancel' }));
+          } catch (e) {
+            // ignore if no active response
+          }
         }
         setSessionState((prev) => ({ ...prev, status: 'user_speaking' }));
         break;
