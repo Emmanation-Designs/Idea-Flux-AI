@@ -70,6 +70,7 @@ import { supabase } from './lib/supabase';
 import { applyWatermark } from './utils/watermark';
 import { downloadFile, openExternalLink } from './utils/nativeCompat';
 import { navigateToVideoStudio } from './utils/videoStudio';
+import { playLiveOpenSound } from './utils/liveAudioSounds';
 
 import type { Message, ConversationType, Profile, Project } from './types';
 import { projectService } from './lib/projectService';
@@ -3073,7 +3074,10 @@ export default function App() {
                   activeTag={activeTag}
                   setActiveTag={setActiveTag}
                   handleInputChange={handleInputChange}
-                  onStartLiveMode={() => setShowLiveMode(true)}
+                  onStartLiveMode={() => {
+                    playLiveOpenSound();
+                    setShowLiveMode(true);
+                  }}
                 />
               ) : (
                 <div className="max-w-3xl mx-auto w-full px-4 py-8 md:py-12 space-y-10 pb-36">
@@ -3493,7 +3497,10 @@ export default function App() {
                     ) : (
                       <button 
                         type="button"
-                        onClick={() => setShowLiveMode(true)}
+                        onClick={() => {
+                          playLiveOpenSound();
+                          setShowLiveMode(true);
+                        }}
                         className="w-9 h-9 sm:w-10 sm:h-10 rounded-full flex items-center justify-center transform active:scale-95 shrink-0 transition-all duration-200 bg-[#19C37D] hover:bg-[#15a86b] text-white shadow-md shadow-emerald-500/20 cursor-pointer"
                         title="Start Live Mode"
                       >

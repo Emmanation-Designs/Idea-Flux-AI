@@ -7,6 +7,7 @@ import { LiveMicPermissionModal } from './LiveMicPermissionModal';
 import { LiveSessionState } from '../types/live';
 import { Message } from '../types';
 import { toast } from 'sonner';
+import { playLiveOpenSound, playLiveCloseSound } from '../utils/liveAudioSounds';
 
 interface LiveModeOverlayProps {
   isOpen: boolean;
@@ -106,9 +107,11 @@ export const LiveModeOverlay: React.FC<LiveModeOverlayProps> = ({
     }
   };
 
-  // Check microphone consent on open
+  // Check microphone consent and play chime on open
   useEffect(() => {
     if (!isOpen) return;
+
+    playLiveOpenSound();
 
     const hasConsented = localStorage.getItem('trelvix_live_mic_consent_v1');
     if (!hasConsented) {
@@ -584,6 +587,7 @@ export const LiveModeOverlay: React.FC<LiveModeOverlayProps> = ({
   };
 
   const handleExit = () => {
+    playLiveCloseSound();
     cleanupRealtimeSession();
     onClose();
   };
