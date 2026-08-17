@@ -250,6 +250,7 @@ export default function App() {
   const [conversations, setConversations] = useState<any[]>([]);
   const [currentConversation, setCurrentConversation] = useState<any | null>(null);
   const hasLoadedInitialConversation = useRef<boolean>(false);
+  const liveSessionSavedConvMapRef = useRef<Map<string, string>>(new Map()); // liveSessionId -> conversationId
   const [selectedModelId, setSelectedModelId] = useState<string>(() => {
     return localStorage.getItem('selected_model_default') || 'thinking';
   });
@@ -3529,33 +3530,83 @@ export default function App() {
         <LiveModeOverlay
           isOpen={showLiveMode}
           onClose={() => setShowLiveMode(false)}
-          onNewMessages={async (newMsgs) => {
-            if (!newMsgs || newMsgs.length === 0) return;
+          onSaveLiveSession={async (liveMsgs, liveSessionId, metadata = {}) => {
+            if (!liveMsgs || liveMsgs.length === 0 || !user) return;
 
-            const existingIds = new Set(messages.map(m => m.id));
-            const freshMsgs = newMsgs.filter(m => !existingIds.has(m.id));
-            if (freshMsgs.length === 0) return;
+            // 1. Check idempotency: if this live session was already saved into a conversation, update it
+            const existingConvId = liveSessionSavedConvMapRef.current.get(liveSessionId);
+            if (existingConvId) {
+              console.log(`[Live Mode Persistence] Updating existing conversation for liveSessionId: ${liveSessionId}`);
+              await updateConversationMessages(existingConvId, liveMsgs);
+              setConversations(prev => prev.map(c => c.id === existingConvId ? { ...c, messages: liveMsgs, updated_at: new Date().toISOString() } : c));
+              setCurrentConversation(prev => (prev && prev.id === existingConvId) ? { ...prev, messages: liveMsgs, updated_at: new Date().toISOString() } : prev);
+              setMessages(liveMsgs);
+              setActiveView('chat');
+              return;
+            }
 
-            const updatedMessages = [...messages, ...freshMsgs];
-            setMessages(updatedMessages);
-            setActiveView('chat');
+            // 2. If user already had an active conversation open before starting Live Mode, append to it
+            if (currentConversation && currentConversation.id && messages.length > 0) {
+              console.log(`[Live Mode Persistence] Appending live session messages to current conversation ${currentConversation.id}`);
+              const existingMsgIds = new Set(messages.map(m => m.id));
+              const freshMsgs = liveMsgs.filter(m => !existingMsgIds.has(m.id));
+              const mergedMessages = [...messages, ...freshMsgs];
 
-            let conv = currentConversation;
-            if (!conv && user) {
-              const firstUserMsg = freshMsgs.find(m => m.role === 'user');
-              const rawTitle = firstUserMsg?.content?.trim() || 'Voice Conversation';
-              const title = rawTitle.length > 40 ? rawTitle.slice(0, 37) + '...' : rawTitle;
+              await updateConversationMessages(currentConversation.id, mergedMessages);
+              liveSessionSavedConvMapRef.current.set(liveSessionId, currentConversation.id);
+              
+              setConversations(prev => prev.map(c => c.id === currentConversation.id ? { ...c, messages: mergedMessages, updated_at: new Date().toISOString() } : c));
+              setCurrentConversation(prev => prev ? { ...prev, messages: mergedMessages, updated_at: new Date().toISOString() } : null);
+              setMessages(mergedMessages);
+              setActiveView('chat');
+              return;
+            }
 
-              const newConv = await startConversation('general', title, rawTitle, {}, false);
-              if (newConv) {
-                conv = newConv;
-                await updateConversationMessages(newConv.id, updatedMessages);
-                setConversations(prev => prev.map(c => c.id === newConv.id ? { ...c, messages: updatedMessages, updated_at: new Date().toISOString() } : c));
+            // 3. Otherwise create a brand new conversation in history with an informative title
+            const firstUserMsg = liveMsgs.find(m => m.role === 'user');
+            const rawTitle = firstUserMsg?.content?.trim() || 'Voice Conversation';
+            const title = rawTitle.length > 42 ? rawTitle.slice(0, 39) + '...' : rawTitle;
+
+            const newConversation: any = {
+              user_id: user.id,
+              title: title,
+              type: 'general',
+              messages: liveMsgs,
+              metadata: {
+                source: 'live_mode',
+                live_session_id: liveSessionId,
+                ...metadata,
+              },
+              created_at: new Date().toISOString(),
+              updated_at: new Date().toISOString(),
+              project_id: selectedProjectId || null,
+            };
+
+            try {
+              const { data: savedConv, error } = await supabase
+                .from('conversations')
+                .insert(newConversation)
+                .select()
+                .single();
+
+              if (error) {
+                console.error('[Live Mode Persistence] Error saving new conversation to Supabase:', error);
+                return;
               }
-            } else if (conv) {
-              await updateConversationMessages(conv.id, updatedMessages);
-              setCurrentConversation(prev => prev ? { ...prev, messages: updatedMessages, updated_at: new Date().toISOString() } : null);
-              setConversations(prev => prev.map(c => c.id === conv.id ? { ...c, messages: updatedMessages, updated_at: new Date().toISOString() } : c));
+
+              if (savedConv) {
+                liveSessionSavedConvMapRef.current.set(liveSessionId, savedConv.id);
+                setCurrentConversation(savedConv);
+                setMessages(liveMsgs);
+                setConversations(prev => [savedConv, ...prev.filter(c => c.id !== savedConv.id)]);
+                setActiveView('chat');
+                if (typeof window !== 'undefined' && window.history) {
+                  window.history.pushState({ conversationId: savedConv.id }, document.title, `/c/${savedConv.id}`);
+                }
+                console.log(`[Live Mode Persistence] Successfully saved live session ${liveSessionId} to conversation ${savedConv.id}`);
+              }
+            } catch (err) {
+              console.error('[Live Mode Persistence] Unexpected error saving live conversation:', err);
             }
           }}
           getAuthToken={async () => {

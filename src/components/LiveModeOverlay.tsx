@@ -12,7 +12,11 @@ import { playLiveOpenSound, playLiveCloseSound } from '../utils/liveAudioSounds'
 interface LiveModeOverlayProps {
   isOpen: boolean;
   onClose: () => void;
-  onNewMessages: (messages: Message[]) => void;
+  onSaveLiveSession: (
+    messages: Message[],
+    liveSessionId: string,
+    metadata?: Record<string, any>
+  ) => Promise<void>;
   getAuthToken: () => Promise<string | null>;
   userPlan?: string;
 }
@@ -20,7 +24,7 @@ interface LiveModeOverlayProps {
 export const LiveModeOverlay: React.FC<LiveModeOverlayProps> = ({
   isOpen,
   onClose,
-  onNewMessages,
+  onSaveLiveSession,
   getAuthToken,
 }) => {
   const [sessionState, setSessionState] = useState<LiveSessionState>(() => ({
@@ -40,10 +44,19 @@ export const LiveModeOverlay: React.FC<LiveModeOverlayProps> = ({
   const [showMicPermission, setShowMicPermission] = useState(false);
   const [textInput, setTextInput] = useState('');
   const [isTypingExpanded, setIsTypingExpanded] = useState(false);
+  const [isStopping, setIsStopping] = useState(false);
 
-  // Transcripts recorded during the session
-  const [liveTranscript, setLiveTranscript] = useState<{ role: 'user' | 'assistant'; text: string }[]>([]);
-  const transcriptItemsRef = useRef<{ role: 'user' | 'assistant'; text: string }[]>([]);
+  // High-fidelity turns tracking (guarantees chronological order & no lost/duplicate turns)
+  const turnsMapRef = useRef<Map<string, { id: string; role: 'user' | 'assistant'; text: string; timestamp: string; isComplete: boolean }>>(new Map());
+  const orderedTurnIdsRef = useRef<string[]>([]);
+  const [, setLiveTranscript] = useState<{ role: 'user' | 'assistant'; text: string }[]>([]);
+
+  // State flags & session references
+  const liveSessionIdRef = useRef<string | null>(null);
+  const isStoppingRef = useRef<boolean>(false);
+  const hasSavedRef = useRef<boolean>(false);
+  const activeResponseIdRef = useRef<string | null>(null);
+  const activeAssistantItemIdRef = useRef<string | null>(null);
 
   // WebRTC & Audio Refs
   const pcRef = useRef<RTCPeerConnection | null>(null);
@@ -55,17 +68,67 @@ export const LiveModeOverlay: React.FC<LiveModeOverlayProps> = ({
   const secondsTimerRef = useRef<NodeJS.Timeout | null>(null);
   const handledCallIdsRef = useRef<Set<string>>(new Set());
 
-  // Helper to reliably append transcript records
-  const appendTranscript = (role: 'user' | 'assistant', text: string) => {
-    const clean = text?.trim();
-    if (!clean) return;
-    const items = transcriptItemsRef.current;
-    if (items.length > 0 && items[items.length - 1].role === role && items[items.length - 1].text === clean) {
-      return;
+  // Helper to reliably register or update a turn in exact chronological order
+  const registerOrUpdateTurn = (
+    turnId: string,
+    role: 'user' | 'assistant',
+    text: string,
+    isComplete: boolean = false,
+    isDelta: boolean = false
+  ) => {
+    if (!turnId) return;
+    const cleanText = text || '';
+
+    const existing = turnsMapRef.current.get(turnId);
+    if (existing) {
+      if (isDelta) {
+        existing.text = (existing.text || '') + cleanText;
+      } else if (cleanText.trim()) {
+        existing.text = cleanText.trim();
+      }
+      existing.isComplete = isComplete || existing.isComplete;
+    } else {
+      if (!cleanText.trim() && !isDelta) return;
+      turnsMapRef.current.set(turnId, {
+        id: turnId,
+        role,
+        text: cleanText.trim(),
+        timestamp: new Date().toISOString(),
+        isComplete,
+      });
+      if (!orderedTurnIdsRef.current.includes(turnId)) {
+        orderedTurnIdsRef.current.push(turnId);
+      }
     }
-    const updated = [...items, { role, text: clean }];
-    transcriptItemsRef.current = updated;
-    setLiveTranscript(updated);
+
+    // Refresh UI transcript state
+    const ordered = orderedTurnIdsRef.current
+      .map(id => turnsMapRef.current.get(id))
+      .filter(t => t && t.text.trim().length > 0) as { id: string; role: 'user' | 'assistant'; text: string }[];
+    
+    setLiveTranscript(ordered.map(t => ({ role: t.role, text: t.text })));
+  };
+
+  // Helper to extract formatted Message[] array in strict chronological order
+  const getFormattedMessages = (): Message[] => {
+    const messages: Message[] = [];
+    for (const id of orderedTurnIdsRef.current) {
+      const turn = turnsMapRef.current.get(id);
+      if (turn && turn.text && turn.text.trim().length > 0) {
+        const msgId = turn.id.startsWith('msg_') || turn.id.startsWith('item_') || turn.id.startsWith('live_')
+          ? turn.id
+          : `live_msg_${turn.id}`;
+
+        messages.push({
+          id: msgId,
+          role: turn.role,
+          content: turn.text.trim(),
+          created_at: turn.timestamp || new Date().toISOString(),
+          model: 'trelvix-live',
+        });
+      }
+    }
+    return messages;
   };
 
   // Handle voice selection with persistence and immediate live session reconnect
@@ -179,6 +242,8 @@ export const LiveModeOverlay: React.FC<LiveModeOverlayProps> = ({
       if (!ephemeralKey) {
         throw new Error('Server returned invalid session token.');
       }
+
+      liveSessionIdRef.current = liveSessionId;
 
       setSessionState((prev) => ({
         ...prev,
@@ -435,6 +500,19 @@ export const LiveModeOverlay: React.FC<LiveModeOverlayProps> = ({
         setSessionState((prev) => ({ ...prev, status: 'thinking' }));
         break;
 
+      case 'response.created':
+        if (event.response?.id) {
+          activeResponseIdRef.current = event.response.id;
+        }
+        break;
+
+      case 'response.output_item.added':
+        if (event.item?.id && event.item?.role === 'assistant') {
+          activeAssistantItemIdRef.current = event.item.id;
+          registerOrUpdateTurn(event.item.id, 'assistant', '', false, true);
+        }
+        break;
+
       case 'response.audio.delta':
         setSessionState((prev) => ({ ...prev, status: 'ai_speaking', aiVolume: 0.7 }));
         break;
@@ -443,34 +521,59 @@ export const LiveModeOverlay: React.FC<LiveModeOverlayProps> = ({
         setSessionState((prev) => ({ ...prev, status: 'listening', aiVolume: 0 }));
         break;
 
-      case 'response.audio_transcript.done':
-        if (event.transcript) {
-          appendTranscript('assistant', event.transcript);
+      case 'response.audio_transcript.delta': {
+        const targetId = event.item_id || activeAssistantItemIdRef.current || `resp_turn_${activeResponseIdRef.current || 'active'}`;
+        if (event.delta) {
+          registerOrUpdateTurn(targetId, 'assistant', event.delta, false, true);
         }
         break;
+      }
 
-      case 'response.text.done':
+      case 'response.audio_transcript.done': {
+        const targetId = event.item_id || activeAssistantItemIdRef.current || `resp_turn_${activeResponseIdRef.current || 'active'}`;
+        if (event.transcript) {
+          registerOrUpdateTurn(targetId, 'assistant', event.transcript, true, false);
+        }
+        break;
+      }
+
+      case 'response.text.delta': {
+        const targetId = event.item_id || activeAssistantItemIdRef.current || `resp_turn_${activeResponseIdRef.current || 'active'}`;
+        if (event.delta) {
+          registerOrUpdateTurn(targetId, 'assistant', event.delta, false, true);
+        }
+        break;
+      }
+
+      case 'response.text.done': {
+        const targetId = event.item_id || activeAssistantItemIdRef.current || `resp_turn_${activeResponseIdRef.current || 'active'}`;
         if (event.text) {
-          appendTranscript('assistant', event.text);
+          registerOrUpdateTurn(targetId, 'assistant', event.text, true, false);
         }
         break;
+      }
 
-      case 'conversation.item.input_audio_transcription.completed':
-        if (event.transcript) {
-          appendTranscript('user', event.transcript);
+      case 'conversation.item.input_audio_transcription.completed': {
+        if (event.item_id && event.transcript) {
+          registerOrUpdateTurn(event.item_id, 'user', event.transcript, true, false);
         }
         break;
+      }
 
-      case 'conversation.item.created':
-        if (event.item?.role === 'user') {
+      case 'conversation.item.created': {
+        if (event.item?.id && event.item?.role === 'user') {
           const userText = event.item.content?.find((c: any) => c.type === 'input_text')?.text ||
                            event.item.content?.find((c: any) => c.type === 'text')?.text ||
                            event.item.content?.find((c: any) => c.type === 'input_audio')?.transcript;
           if (userText) {
-            appendTranscript('user', userText);
+            registerOrUpdateTurn(event.item.id, 'user', userText, true, false);
+          } else {
+            // Register turn so ordering is preserved while audio transcript is generated by Whisper
+            registerOrUpdateTurn(event.item.id, 'user', '', false, true);
           }
         }
         break;
+      }
 
       // Handle function calling / tool execution events from OpenAI Realtime
       case 'response.function_call_arguments.done':
@@ -479,26 +582,37 @@ export const LiveModeOverlay: React.FC<LiveModeOverlayProps> = ({
         }
         break;
 
-      case 'response.output_item.done':
+      case 'response.output_item.done': {
         if (event.item?.type === 'function_call') {
           handleFunctionCall(event.item.call_id, event.item.name, event.item.arguments || '{}');
         } else if (event.item?.type === 'message' && event.item?.role === 'assistant') {
-          const textPart = event.item.content?.find((c: any) => c.type === 'text')?.text || event.item.content?.find((c: any) => c.type === 'audio')?.transcript;
-          if (textPart) {
-            appendTranscript('assistant', textPart);
+          const textPart = event.item.content?.find((c: any) => c.type === 'text')?.text ||
+                           event.item.content?.find((c: any) => c.type === 'audio')?.transcript;
+          if (textPart && event.item.id) {
+            registerOrUpdateTurn(event.item.id, 'assistant', textPart, true, false);
           }
         }
         break;
+      }
 
-      case 'response.done':
+      case 'response.done': {
         if (event.response?.output) {
           for (const item of event.response.output) {
             if (item.type === 'function_call') {
               handleFunctionCall(item.call_id, item.name, item.arguments || '{}');
+            } else if (item.role === 'assistant' && item.id) {
+              const textPart = item.content?.find((c: any) => c.type === 'text')?.text ||
+                               item.content?.find((c: any) => c.type === 'audio')?.transcript;
+              if (textPart) {
+                registerOrUpdateTurn(item.id, 'assistant', textPart, true, false);
+              }
             }
           }
         }
+        activeResponseIdRef.current = null;
+        activeAssistantItemIdRef.current = null;
         break;
+      }
 
       default:
         break;
@@ -551,7 +665,8 @@ export const LiveModeOverlay: React.FC<LiveModeOverlayProps> = ({
     setTextInput('');
     setIsTypingExpanded(false);
 
-    appendTranscript('user', messageText);
+    const userTurnId = `user_type_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
+    registerOrUpdateTurn(userTurnId, 'user', messageText, true, false);
 
     dcRef.current.send(
       JSON.stringify({
@@ -573,35 +688,8 @@ export const LiveModeOverlay: React.FC<LiveModeOverlayProps> = ({
     setSessionState((prev) => ({ ...prev, status: 'thinking' }));
   };
 
-  // Safely flush and save all recorded transcripts into the main chat history
-  const flushAndSaveMessages = () => {
-    const recordedItems = transcriptItemsRef.current;
-    if (!recordedItems || recordedItems.length === 0) return;
-
-    const formattedMessages: Message[] = recordedItems.map((item, idx) => ({
-      id: `live_${Date.now()}_${idx}_${Math.random().toString(36).substring(2, 6)}`,
-      role: item.role,
-      content: item.text,
-      created_at: new Date().toISOString(),
-      model: 'trelvix-live',
-    }));
-
-    // Trigger save to chat history
-    try {
-      onNewMessages(formattedMessages);
-    } catch (err) {
-      console.warn('[Live Mode] Error calling onNewMessages:', err);
-    }
-
-    transcriptItemsRef.current = [];
-    setLiveTranscript([]);
-  };
-
-  // Safely cleanup Realtime session and settle usage
+  // Safely cleanup Realtime session audio & network resources
   const cleanupRealtimeSession = async () => {
-    // 1. Immediately flush messages before closing connections
-    flushAndSaveMessages();
-
     if (heartbeatTimerRef.current) clearInterval(heartbeatTimerRef.current);
     if (secondsTimerRef.current) clearInterval(secondsTimerRef.current);
 
@@ -625,7 +713,8 @@ export const LiveModeOverlay: React.FC<LiveModeOverlayProps> = ({
       audioContextRef.current = null;
     }
 
-    if (sessionState.liveSessionId) {
+    const currentLiveSessionId = liveSessionIdRef.current || sessionState.liveSessionId;
+    if (currentLiveSessionId) {
       try {
         const token = await getAuthToken();
         if (token) {
@@ -636,7 +725,7 @@ export const LiveModeOverlay: React.FC<LiveModeOverlayProps> = ({
               'Content-Type': 'application/json',
             },
             body: JSON.stringify({
-              live_session_id: sessionState.liveSessionId,
+              live_session_id: currentLiveSessionId,
               duration_seconds: sessionState.activeSeconds,
             }),
           });
@@ -647,10 +736,59 @@ export const LiveModeOverlay: React.FC<LiveModeOverlayProps> = ({
     }
   };
 
-  const handleExit = () => {
+  // Shutdown sequence ensuring NO turn is lost
+  // 1. Stop mic input
+  // 2. Settle pending speech-to-text / response events (grace period)
+  // 3. Finalize complete transcript
+  // 4. Persist conversation
+  // 5. Cleanup resources and close overlay
+  const handleExit = async () => {
+    if (isStoppingRef.current) return;
+    isStoppingRef.current = true;
+    setIsStopping(true);
+
+    // 1. Stop mic capture immediately so no extra noise is ingested
+    if (micStreamRef.current) {
+      try {
+        micStreamRef.current.getAudioTracks().forEach((t) => { t.enabled = false; });
+      } catch (e) {}
+    }
+
+    // 2. Settling period: wait for pending Whisper / assistant streaming events
+    // If the system was in user_speaking, thinking, or ai_speaking, allow pending events to arrive
+    const needsSettling = sessionState.status === 'user_speaking' ||
+                          sessionState.status === 'thinking' ||
+                          sessionState.status === 'ai_speaking';
+    
+    const settleDurationMs = needsSettling ? 1100 : 500;
+    await new Promise((resolve) => setTimeout(resolve, settleDurationMs));
+
+    // 3. Finalize and persist formatted messages
+    if (!hasSavedRef.current) {
+      hasSavedRef.current = true;
+      const formattedMessages = getFormattedMessages();
+
+      if (formattedMessages.length > 0) {
+        const targetSessionId = liveSessionIdRef.current || sessionState.liveSessionId || `live_${Date.now()}`;
+        try {
+          await onSaveLiveSession(formattedMessages, targetSessionId, {
+            source: 'live_mode',
+            voice: sessionState.selectedVoice,
+            language: sessionState.selectedLanguage,
+            duration_seconds: sessionState.activeSeconds,
+            ended_at: new Date().toISOString(),
+          });
+        } catch (saveErr) {
+          console.error('[Live Mode] Error persisting live session messages:', saveErr);
+        }
+      }
+    }
+
+    // 4. Teardown audio and realtime session
     playLiveCloseSound();
-    flushAndSaveMessages();
-    cleanupRealtimeSession();
+    await cleanupRealtimeSession();
+
+    // 5. Close overlay
     onClose();
   };
 
