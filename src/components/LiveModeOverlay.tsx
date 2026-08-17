@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Mic, MicOff, SlidersHorizontal, X, Plus, Send } from 'lucide-react';
+import { Mic, MicOff, SlidersHorizontal, X, Plus, Send, Globe, Sparkles } from 'lucide-react';
 import { LiveVoiceOrb } from './LiveVoiceOrb';
 import { LiveVoiceSelector } from './LiveVoiceSelector';
 import { LiveMicPermissionModal } from './LiveMicPermissionModal';
@@ -42,6 +42,7 @@ export const LiveModeOverlay: React.FC<LiveModeOverlayProps> = ({
 
   // Transcripts recorded during the session
   const [liveTranscript, setLiveTranscript] = useState<{ role: 'user' | 'assistant'; text: string }[]>([]);
+  const transcriptItemsRef = useRef<{ role: 'user' | 'assistant'; text: string }[]>([]);
 
   // WebRTC & Audio Refs
   const pcRef = useRef<RTCPeerConnection | null>(null);
@@ -51,6 +52,20 @@ export const LiveModeOverlay: React.FC<LiveModeOverlayProps> = ({
   const remoteAudioElRef = useRef<HTMLAudioElement | null>(null);
   const heartbeatTimerRef = useRef<NodeJS.Timeout | null>(null);
   const secondsTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const handledCallIdsRef = useRef<Set<string>>(new Set());
+
+  // Helper to reliably append transcript records
+  const appendTranscript = (role: 'user' | 'assistant', text: string) => {
+    const clean = text?.trim();
+    if (!clean) return;
+    const items = transcriptItemsRef.current;
+    if (items.length > 0 && items[items.length - 1].role === role && items[items.length - 1].text === clean) {
+      return;
+    }
+    const updated = [...items, { role, text: clean }];
+    transcriptItemsRef.current = updated;
+    setLiveTranscript(updated);
+  };
 
   // Handle voice selection with persistence and dynamic WebRTC session update
   const handleSelectVoice = (voiceId: string) => {
@@ -293,6 +308,85 @@ export const LiveModeOverlay: React.FC<LiveModeOverlayProps> = ({
     }
   };
 
+  // Handle tool and function calls from OpenAI Realtime API
+  const handleFunctionCall = async (callId: string, functionName: string, argumentsString: string) => {
+    if (!callId || handledCallIdsRef.current.has(callId)) return;
+    handledCallIdsRef.current.add(callId);
+
+    console.log(`[Live Mode Tool] Received tool call "${functionName}" (call_id: ${callId}) args:`, argumentsString);
+
+    if (functionName === 'search_web') {
+      try {
+        setSessionState((prev) => ({ ...prev, status: 'searching' }));
+        let query = '';
+        try {
+          const parsed = JSON.parse(argumentsString);
+          query = parsed.query || '';
+        } catch {
+          query = argumentsString;
+        }
+
+        console.log(`[Live Web Search] Querying live Tavily search: "${query}"`);
+        const token = await getAuthToken();
+        const searchRes = await fetch('/api/realtime/search', {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${token}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ query }),
+        });
+
+        let searchOutput = "No search results found.";
+        if (searchRes.ok) {
+          const searchData = await searchRes.json();
+          searchOutput = searchData.formatted || searchData.answer || JSON.stringify(searchData.results);
+        } else {
+          const errData = await searchRes.json().catch(() => ({}));
+          console.warn('[Live Web Search] Search request failed:', errData);
+          searchOutput = `Search failed or unavailable. Proceed using best internal knowledge.`;
+        }
+
+        console.log(`[Live Web Search] Returning search results to WebRTC DataChannel (call_id: ${callId})`);
+
+        if (dcRef.current && dcRef.current.readyState === 'open') {
+          // Send function call output to OpenAI Realtime DataChannel
+          dcRef.current.send(JSON.stringify({
+            type: 'conversation.item.create',
+            item: {
+              type: 'function_call_output',
+              call_id: callId,
+              output: searchOutput,
+            },
+          }));
+
+          // Instruct model to generate spoken response using the fresh search data
+          dcRef.current.send(JSON.stringify({
+            type: 'response.create',
+          }));
+        }
+
+        setSessionState((prev) => ({ ...prev, status: 'thinking' }));
+      } catch (err) {
+        console.error('[Live Tool Error]:', err);
+        if (dcRef.current && dcRef.current.readyState === 'open') {
+          dcRef.current.send(JSON.stringify({
+            type: 'conversation.item.create',
+            item: {
+              type: 'function_call_output',
+              call_id: callId,
+              output: 'Error executing live search.',
+            },
+          }));
+          dcRef.current.send(JSON.stringify({
+            type: 'response.create',
+          }));
+        }
+        setSessionState((prev) => ({ ...prev, status: 'listening' }));
+      }
+    }
+  };
+
   // Handle incoming OpenAI Realtime DataChannel events
   const handleRealtimeEvent = (event: any) => {
     switch (event.type) {
@@ -317,13 +411,41 @@ export const LiveModeOverlay: React.FC<LiveModeOverlayProps> = ({
 
       case 'response.audio_transcript.done':
         if (event.transcript) {
-          setLiveTranscript((prev) => [...prev, { role: 'assistant', text: event.transcript }]);
+          appendTranscript('assistant', event.transcript);
         }
         break;
 
       case 'conversation.item.input_audio_transcription.completed':
         if (event.transcript) {
-          setLiveTranscript((prev) => [...prev, { role: 'user', text: event.transcript }]);
+          appendTranscript('user', event.transcript);
+        }
+        break;
+
+      // Handle function calling / tool execution events from OpenAI Realtime
+      case 'response.function_call_arguments.done':
+        if (event.call_id && event.name) {
+          handleFunctionCall(event.call_id, event.name, event.arguments || '{}');
+        }
+        break;
+
+      case 'response.output_item.done':
+        if (event.item?.type === 'function_call') {
+          handleFunctionCall(event.item.call_id, event.item.name, event.item.arguments || '{}');
+        } else if (event.item?.type === 'message' && event.item?.role === 'assistant') {
+          const textPart = event.item.content?.find((c: any) => c.type === 'text')?.text || event.item.content?.find((c: any) => c.type === 'audio')?.transcript;
+          if (textPart) {
+            appendTranscript('assistant', textPart);
+          }
+        }
+        break;
+
+      case 'response.done':
+        if (event.response?.output) {
+          for (const item of event.response.output) {
+            if (item.type === 'function_call') {
+              handleFunctionCall(item.call_id, item.name, item.arguments || '{}');
+            }
+          }
         }
         break;
 
@@ -378,7 +500,7 @@ export const LiveModeOverlay: React.FC<LiveModeOverlayProps> = ({
     setTextInput('');
     setIsTypingExpanded(false);
 
-    setLiveTranscript((prev) => [...prev, { role: 'user', text: messageText }]);
+    appendTranscript('user', messageText);
 
     dcRef.current.send(
       JSON.stringify({
@@ -446,15 +568,18 @@ export const LiveModeOverlay: React.FC<LiveModeOverlayProps> = ({
       }
     }
 
-    if (liveTranscript.length > 0) {
-      const formattedMessages: Message[] = liveTranscript.map((item, idx) => ({
-        id: `live_${Date.now()}_${idx}`,
+    const recordedItems = transcriptItemsRef.current;
+    if (recordedItems.length > 0) {
+      const formattedMessages: Message[] = recordedItems.map((item, idx) => ({
+        id: `live_${Date.now()}_${idx}_${Math.random().toString(36).substring(2, 6)}`,
         role: item.role,
         content: item.text,
         created_at: new Date().toISOString(),
         model: 'trelvix-live',
       }));
       onNewMessages(formattedMessages);
+      transcriptItemsRef.current = [];
+      setLiveTranscript([]);
     }
   };
 
@@ -502,13 +627,16 @@ export const LiveModeOverlay: React.FC<LiveModeOverlayProps> = ({
         </div>
 
         {/* Central Fluid Voice Orb (Matches Image 2) */}
-        <main className="relative flex-1 flex items-center justify-center p-6">
+        <main className="relative flex-1 flex flex-col items-center justify-center p-6 gap-3">
           <LiveVoiceOrb
             status={sessionState.status}
             userVolume={sessionState.userVolume}
             aiVolume={sessionState.aiVolume}
             size={270}
           />
+
+          {/* Clean Spacing below Orb */}
+          <div className="h-4" />
         </main>
 
         {/* Bottom Bar Pill (Matches Image 2 & 3) */}

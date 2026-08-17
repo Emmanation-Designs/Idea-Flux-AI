@@ -1,7 +1,7 @@
 import React, { useEffect, useRef } from 'react';
 
 interface LiveVoiceOrbProps {
-  status: 'idle' | 'connecting' | 'listening' | 'user_speaking' | 'thinking' | 'ai_speaking' | 'muted' | 'error';
+  status: 'idle' | 'connecting' | 'listening' | 'user_speaking' | 'thinking' | 'searching' | 'ai_speaking' | 'muted' | 'error';
   userVolume?: number; // 0..1
   aiVolume?: number;   // 0..1
   size?: number;
@@ -50,6 +50,10 @@ export const LiveVoiceOrb: React.FC<LiveVoiceOrbProps> = ({
         currentVol = 0.15;
         primaryColor = '#14b8a6';
         secondaryColor = '#0d9488';
+      } else if (status === 'searching') {
+        currentVol = 0.22 + Math.sin(phase * 3.0) * 0.08;
+        primaryColor = '#06b6d4';
+        secondaryColor = '#0284c7';
       } else if (status === 'muted') {
         currentVol = 0.02;
         primaryColor = '#64748b';

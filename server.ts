@@ -582,7 +582,7 @@ app.post("/api/realtime/session", async (req, res) => {
 
     const supabase = getSupabaseAdminClient();
     const subscription = await getSubscription(supabase, user.id);
-    const plan = (subscription?.plan || 'free').toUpperCase();
+    const plan = (subscription?.current_plan || 'free').toUpperCase();
 
     console.log(`[Live] authenticated: ${user.id}`);
     console.log(`[Live] plan=${plan}`);
@@ -629,14 +629,54 @@ app.post("/api/realtime/session", async (req, res) => {
     console.log(`[Live Voice]\nRequested voice: ${requestedVoice}\nResolved voice: ${cleanVoice}\nRealtime model: ${targetModel}`);
     console.log(`[Live] model=${targetModel}`);
 
-    // System prompt tailored with optional language preference
+    // System prompt tailored with identity, attribution, Tavily search tools, and memory context
     let languageInstruction = "";
     if (language && language !== 'auto' && language !== 'en') {
-      languageInstruction = ` Please speak and respond fluently in language code: ${language}.`;
+      languageInstruction = `\n- LANGUAGE DIRECTIVE: Please speak, listen, and respond fluently in language code: ${language}.`;
     }
-    const systemInstructions = `You are Trelvix AI, a highly intelligent, empathetic, clear, and articulate real-time conversational voice assistant. You respond naturally, concisely, and gracefully in conversation.${languageInstruction}`;
 
-    console.log("[Live] OpenAI realtime initialization started");
+    const userName = user.user_metadata?.name || user.user_metadata?.full_name || user.email?.split('@')[0] || 'User';
+
+    // Retrieve user memories for Live Mode context
+    let memoriesContext = "";
+    try {
+      const userMemories = await getServerUserMemories(supabase, user.id, false);
+      if (userMemories && userMemories.length > 0) {
+        const relevantMemories = selectRelevantMemories(userMemories, "profile preferences current projects goals identity", 8);
+        if (relevantMemories.length > 0) {
+          memoriesContext = formatMemoriesForSystemPrompt(relevantMemories);
+        }
+      }
+    } catch (memErr) {
+      console.warn("[Live Memory Warning] Failed to inject memories into realtime session:", memErr);
+    }
+
+    const systemInstructions = `You are Trelvix AI, a highly intelligent, empathetic, clear, articulate, and conversational real-time voice assistant.
+
+IDENTITY & DEVELOPER ATTRIBUTION RULES (CRITICAL):
+- Your name is Trelvix AI.
+- You were developed, created, and operated by Ingenium Virtual Assistant Limited (founded and developed by Emmanuel Nwaije).
+- When asked personal identity questions such as "who developed you", "who created you", "who made you", "who founded you", "who is your developer/creator", or "what is Trelvix AI", state proudly, accurately, and naturally:
+  "I am Trelvix AI, developed and operated by Ingenium Virtual Assistant Limited, founded by Emmanuel Nwaije. I am a next-generation AI companion built for content creators, professionals, and innovative thinkers."
+- NEVER state that you were created by OpenAI, Google, Anthropic, ChatGPT, or any other third-party company.
+- NEVER mention training cutoffs, knowledge cutoff dates, or generic corporate AI disclaimers.
+
+CORE VOICE PROTOCOL:
+- You are communicating via real-time voice audio. Keep responses natural, conversational, articulate, engaging, and concise.
+- Avoid reciting complex Markdown syntax, raw JSON, or raw web URLs, because your responses will be spoken aloud to the user.
+- If the user asks for explanations, solutions, or calculations, break them down clearly and conversationally in speech.
+
+REAL-TIME LIVE SEARCH (TAVILY):
+- You have native access to real-time live web search using the "search_web" tool powered by Tavily Search.
+- When the user asks questions about breaking news, current events, recent developments, live sports scores, current weather, stock/crypto prices, or any real-time factual inquiries, you MUST call the "search_web" tool to fetch fresh information.
+- Be smart, swift, and natural: when you need to perform a search, you may smoothly say a brief spoken phrase like "Give me a second, let me check that for you..." or "Let me look that up for you real quick..." or seamlessly retrieve and deliver the exact answer the user wants.
+- Synthesize the facts conversationally and deliver the answer directly and articulately.
+
+USER CONTEXT:
+- Active user: ${userName} (${user.email})
+${memoriesContext}${languageInstruction}`;
+
+    console.log("[Live] OpenAI realtime initialization started with tools, transcription, and identity");
 
     // 2. Request ephemeral client secret from OpenAI Realtime API (POST /v1/realtime/client_secrets)
     const response = await fetch("https://api.openai.com/v1/realtime/client_secrets", {
@@ -654,11 +694,32 @@ app.post("/api/realtime/session", async (req, res) => {
           type: "realtime",
           model: targetModel,
           instructions: systemInstructions,
+          input_audio_transcription: {
+            model: "whisper-1"
+          },
           audio: {
             output: {
               voice: cleanVoice
             }
-          }
+          },
+          tools: [
+            {
+              type: "function",
+              name: "search_web",
+              description: "Search the web in real-time for live, current facts, news, updates, weather, sports scores, market prices, or specific events using Tavily Search.",
+              parameters: {
+                type: "object",
+                properties: {
+                  query: {
+                    type: "string",
+                    description: "The search query to look up on the live web"
+                  }
+                },
+                required: ["query"]
+              }
+            }
+          ],
+          tool_choice: "auto"
         }
       })
     });
@@ -874,6 +935,137 @@ app.post("/api/realtime/end", async (req, res) => {
   } catch (error: any) {
     console.error("[Realtime End API Error]:", error);
     res.status(error.status || 500).json({ error: error.error || error.message || "End session failed" });
+  }
+});
+
+// 4. Live Voice Preview Audio Endpoint (0 AI Capacity consumed)
+app.get("/api/realtime/voice-preview", async (req, res) => {
+  try {
+    const rawVoice = ((req.query.voice as string) || '').toLowerCase().trim();
+    const VALID_OPENAI_REALTIME_VOICES = new Set([
+      'alloy', 'ash', 'ballad', 'coral', 'echo', 'sage', 'shimmer', 'verse', 'marin', 'cedar'
+    ]);
+
+    if (!rawVoice || !VALID_OPENAI_REALTIME_VOICES.has(rawVoice)) {
+      console.warn(`[Live Voice Preview] Invalid voice requested: ${rawVoice}`);
+      return res.status(400).json({
+        error: `Selected voice "${rawVoice}" is currently unavailable.`,
+        code: "UNSUPPORTED_VOICE",
+        supported_voices: Array.from(VALID_OPENAI_REALTIME_VOICES)
+      });
+    }
+
+    const fs = await import('fs');
+    const voiceFilePath = path.join(process.cwd(), 'public', 'voices', `${rawVoice}.wav`);
+    
+    if (!fs.existsSync(voiceFilePath)) {
+      console.warn(`[Live Voice Preview] Voice audio file not found on disk: ${voiceFilePath}`);
+      return res.status(404).json({ error: "Voice preview asset not found", code: "ASSET_NOT_FOUND" });
+    }
+
+    const fileStat = fs.statSync(voiceFilePath);
+    const audioBuffer = fs.readFileSync(voiceFilePath);
+
+    console.log(`[Live Voice Preview]\nvoice: ${rawVoice}\nendpoint: /api/realtime/voice-preview\nstatus: 200\ncontent-type: audio/wav\ncontent-length: ${fileStat.size}\naudio-format: wav-pcm-44.1khz`);
+
+    res.setHeader('Content-Type', 'audio/wav');
+    res.setHeader('Content-Length', fileStat.size.toString());
+    res.setHeader('Cache-Control', 'public, max-age=86400, immutable');
+    res.setHeader('Accept-Ranges', 'bytes');
+    return res.status(200).send(audioBuffer);
+  } catch (err: any) {
+    console.error("[Live Voice Preview Error]:", err);
+    return res.status(500).json({ error: "Internal error serving voice preview", code: "INTERNAL_ERROR" });
+  }
+});
+
+// Shared Tavily Web Search Engine
+async function executeTavilySearch(query: string) {
+  const tavilyKey = process.env.TAVILY_API_KEY;
+  console.log(`[Search Engine] Initiating live web search for: "${query}"`);
+  if (!tavilyKey) {
+    console.warn(`[Search Engine] TAVILY_API_KEY missing in process.env`);
+    return {
+      success: false,
+      answer: "Live web search is operating with internal data due to unconfigured search API key.",
+      results: [],
+      raw: `SEARCH_SYSTEM_STATUS: LIMITED_ACCESS.`
+    };
+  }
+
+  try {
+    const response = await fetch("https://api.tavily.com/search", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        api_key: tavilyKey,
+        query,
+        search_depth: "advanced",
+        include_answer: true,
+        max_results: 8
+      })
+    });
+
+    if (response.ok) {
+      const data = await response.json();
+      const results = (data.results || []).map((r: any) => ({
+        title: r.title || "Untitled Source",
+        url: r.url || "",
+        snippet: r.content || ""
+      }));
+      const answer = data.answer || "Real-time data successfully retrieved.";
+      const raw = `SOURCE_DATA:\n${JSON.stringify(results)}\nSUMMARY: ${answer}`;
+      console.log(`[Search Engine] Tavily retrieved ${results.length} results.`);
+      return {
+        success: true,
+        answer,
+        results,
+        raw
+      };
+    } else {
+      const errText = await response.text().catch(() => "");
+      console.error(`[Search Engine] Tavily API error: ${response.status}`, errText);
+      return {
+        success: false,
+        answer: "Could not fetch live search results at this moment.",
+        results: [],
+        raw: `SEARCH_SYSTEM_STATUS: LIMITED_ACCESS.`
+      };
+    }
+  } catch (err: any) {
+    console.error("[Search Engine] Search execution error:", err);
+    return {
+      success: false,
+      answer: "Error executing web search.",
+      results: [],
+      raw: `SEARCH_SYSTEM_OFFLINE.`
+    };
+  }
+}
+
+// 5. Live Mode Real-time Web Search Endpoint (Tavily Function Calling)
+app.post("/api/realtime/search", async (req, res) => {
+  try {
+    const user = await authenticateUser(req);
+    const { query } = req.body || {};
+
+    if (!query || typeof query !== 'string' || !query.trim()) {
+      return res.status(400).json({ error: "Search query string is required" });
+    }
+
+    console.log(`[Live Realtime Search] User:${user.id} query="${query.trim()}"`);
+    const searchData = await executeTavilySearch(query.trim());
+
+    return res.json({
+      success: true,
+      query: query.trim(),
+      answer: searchData.answer,
+      results: searchData.results,
+      formatted: `LIVE_SEARCH_DATA for query "${query.trim()}":\nSummary: ${searchData.answer}\nDetails:\n${searchData.results.map((r, i) => `[${i+1}] ${r.title}: ${r.snippet}`).join('\n')}`
+    });
+  } catch (error: any) {
+    console.error("[Realtime Search API Error]:", error);
+    return res.status(error.status || 500).json({ error: error.error || error.message || "Search failed" });
   }
 });
 
@@ -2695,58 +2887,8 @@ async function handleGenerate(req: express.Request, res: express.Response) {
 
     // Helper for Tavily Search
     const searchWeb = async (query: string) => {
-      const tavilyKey = process.env.TAVILY_API_KEY;
-      
-      console.log(`[Search] Initiating Global Search for: ${query}`);
-      if (tavilyKey) {
-        console.log(`[Search] Using Tavily Key: ${tavilyKey.substring(0, 4)}...`);
-      } else {
-        console.error(`[Search] ERROR: No TAVILY_API_KEY found in process.env`);
-      }
-      
-      try {
-        // 1. Primary engine: Tavily (if key available)
-        if (tavilyKey) {
-          console.log(`[Search] Calling Tavily API for query: "${query}"`);
-          const response = await fetch("https://api.tavily.com/search", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              api_key: tavilyKey,
-              query,
-              search_depth: "advanced",
-              include_answer: true,
-              max_results: 8
-            })
-          });
-          
-          if (response.ok) {
-            const data = await response.json();
-            console.log(`[Search] Tavily response received. Results count: ${data.results?.length || 0}`);
-            if (data.results && data.results.length > 0) {
-              const results = data.results.map((r: any) => ({
-                title: r.title,
-                url: r.url,
-                snippet: r.content
-              }));
-              return `SOURCE_DATA:\n${JSON.stringify(results)}\nSUMMARY: ${data.answer || "Real-time data retrieved."}`;
-            } else {
-              console.warn(`[Search] Tavily returned no results for query: "${query}"`);
-            }
-          } else {
-            const errorText = await response.text();
-            console.error(`[Search] Tavily API failed: ${response.status} ${response.statusText}`, errorText);
-          }
-        }
-
-        // 2. Fallback Engine: Rapid Information Lookup
-        console.warn("[Search] Primary search failed or unavailable, using fallback lookup.");
-        return `SEARCH_SYSTEM_STATUS: LIMITED_ACCESS. The AI is currently operating with pre-trained data only for this turn due to search connectivity issues. If the query requires ultra-precise real-time metrics (like live stock prices at this exact second), provide the best available estimate and note the limitation.`;
-
-      } catch (err) {
-        console.error("[Search] Critical Search Error:", err);
-        return "SEARCH_SYSTEM_OFFLINE. Connectivity logic failed to resolve. Proceed with internal data and model capabilities.";
-      }
+      const searchData = await executeTavilySearch(query);
+      return searchData.raw;
     };
 
 
@@ -3084,7 +3226,7 @@ To make it look like an edit or variation of the input image:
 
 
 
-    const attributionRules = `Your name is Trelvix AI. Developed by Ingenium Virtual Assistant Limited. You are powered by a custom, high-intelligence engine.`;
+    const attributionRules = `Your name is Trelvix AI. Developed, created, and operated by Ingenium Virtual Assistant Limited (founded and developed by Emmanuel Nwaije). You are powered by a custom, high-intelligence engine. When asked who developed you, created you, made you, or founded you, always state clearly that you were developed and operated by Ingenium Virtual Assistant Limited, founded by Emmanuel Nwaije. NEVER claim you were created by OpenAI, Google, Anthropic, ChatGPT, or other third parties.`;
     
     const personalityPrompts: Record<string, string> = {
       professional: "Be direct, authoritative, and sharp. No fluff.",

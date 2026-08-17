@@ -20,7 +20,7 @@ export const SUPPORTED_LIVE_VOICES: LiveVoice[] = [
 ];
 
 export interface LiveSessionState {
-  status: 'idle' | 'connecting' | 'listening' | 'user_speaking' | 'thinking' | 'ai_speaking' | 'muted' | 'error';
+  status: 'idle' | 'connecting' | 'listening' | 'user_speaking' | 'thinking' | 'searching' | 'ai_speaking' | 'muted' | 'error';
   sessionId: string | null;
   liveSessionId: string | null;
   error: string | null;

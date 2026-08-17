@@ -3522,8 +3522,33 @@ export default function App() {
         <LiveModeOverlay
           isOpen={showLiveMode}
           onClose={() => setShowLiveMode(false)}
-          onNewMessages={(newMsgs) => {
-            setMessages((prev) => [...prev, ...newMsgs]);
+          onNewMessages={async (newMsgs) => {
+            if (!newMsgs || newMsgs.length === 0) return;
+
+            const existingIds = new Set(messages.map(m => m.id));
+            const freshMsgs = newMsgs.filter(m => !existingIds.has(m.id));
+            if (freshMsgs.length === 0) return;
+
+            const updatedMessages = [...messages, ...freshMsgs];
+            setMessages(updatedMessages);
+            setActiveView('chat');
+
+            let conv = currentConversation;
+            if (!conv && user) {
+              const firstUserMsg = freshMsgs.find(m => m.role === 'user');
+              const rawTitle = firstUserMsg?.content?.trim() || 'Voice Conversation';
+              const title = rawTitle.length > 40 ? rawTitle.slice(0, 37) + '...' : rawTitle;
+
+              const newConv = await startConversation('general', title, rawTitle, {}, false);
+              if (newConv) {
+                conv = newConv;
+                await updateConversationMessages(newConv.id, updatedMessages);
+                setConversations(prev => prev.map(c => c.id === newConv.id ? { ...c, messages: updatedMessages, updated_at: new Date().toISOString() } : c));
+              }
+            } else if (conv) {
+              await updateConversationMessages(conv.id, updatedMessages);
+              setConversations(prev => prev.map(c => c.id === conv.id ? { ...c, messages: updatedMessages, updated_at: new Date().toISOString() } : c));
+            }
           }}
           getAuthToken={async () => {
             const { data: { session } } = await supabase.auth.getSession();

@@ -45,6 +45,10 @@ export const LiveVoiceSelector: React.FC<LiveVoiceSelectorProps> = ({
   const [isPlayingPreview, setIsPlayingPreview] = useState(false);
 
   const previewAudioRef = useRef<HTMLAudioElement | null>(null);
+  const audioContextRef = useRef<AudioContext | null>(null);
+  const audioSourceNodeRef = useRef<AudioBufferSourceNode | null>(null);
+  const currentObjectUrlRef = useRef<string | null>(null);
+  const abortControllerRef = useRef<AbortController | null>(null);
   const previewTokenRef = useRef<number>(0);
 
   // Stop audio playback when modal unmounts or closes
@@ -55,51 +59,175 @@ export const LiveVoiceSelector: React.FC<LiveVoiceSelectorProps> = ({
   }, [isOpen]);
 
   const stopCurrentPreview = () => {
+    // Abort pending fetch
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+      abortControllerRef.current = null;
+    }
+
+    // Stop HTMLAudioElement
     if (previewAudioRef.current) {
       previewAudioRef.current.pause();
-      previewAudioRef.current.currentTime = 0;
+      previewAudioRef.current.src = '';
+      previewAudioRef.current.load();
       previewAudioRef.current = null;
     }
+
+    // Stop Web Audio API source node
+    if (audioSourceNodeRef.current) {
+      try {
+        audioSourceNodeRef.current.stop();
+      } catch (e) {
+        // already stopped
+      }
+      audioSourceNodeRef.current = null;
+    }
+
+    // Revoke previous Blob Object URL to prevent memory leaks
+    if (currentObjectUrlRef.current) {
+      try {
+        URL.revokeObjectURL(currentObjectUrlRef.current);
+      } catch (e) {
+        // ignore
+      }
+      currentObjectUrlRef.current = null;
+    }
+
     setIsPlayingPreview(false);
   };
 
-  const playVoicePreview = (voice: LiveVoice) => {
+  const playVoicePreview = async (voice: LiveVoice) => {
     stopCurrentPreview();
 
     const thisToken = ++previewTokenRef.current;
+    const controller = new AbortController();
+    abortControllerRef.current = controller;
     setIsPlayingPreview(true);
 
     try {
-      const audio = new Audio(`/voices/${voice.id}.wav`);
+      const endpoint = `/api/realtime/voice-preview?voice=${encodeURIComponent(voice.id)}`;
+      const res = await fetch(endpoint, {
+        signal: controller.signal,
+        headers: {
+          'Accept': 'audio/wav, audio/*;q=0.9, */*;q=0.8'
+        }
+      });
+
+      if (previewTokenRef.current !== thisToken) return;
+
+      const contentType = res.headers.get('content-type') || 'unknown';
+      const contentLength = res.headers.get('content-length') || 'unknown';
+
+      console.log(`[Live Voice Preview]\nvoice: ${voice.id}\nendpoint: ${endpoint}\nstatus: ${res.status}\ncontent-type: ${contentType}\ncontent-length: ${contentLength}\naudio-format: ${contentType}`);
+
+      if (!res.ok) {
+        let errJson: any = {};
+        try {
+          errJson = await res.json();
+        } catch (e) {
+          // ignore
+        }
+        console.warn(`[Live Voice Preview] Server error for voice ${voice.id}:`, errJson.error || res.statusText);
+        setIsPlayingPreview(false);
+        return;
+      }
+
+      // Read binary audio as Blob
+      const audioBlob = await res.blob();
+      if (previewTokenRef.current !== thisToken) return;
+
+      if (audioBlob.size === 0) {
+        console.warn(`[Live Voice Preview] Received empty audio blob for voice ${voice.id}`);
+        setIsPlayingPreview(false);
+        return;
+      }
+
+      // Create a clean, verified Object URL
+      const objectUrl = URL.createObjectURL(audioBlob);
+      currentObjectUrlRef.current = objectUrl;
+
+      // Method A: HTMLAudioElement with immediate playback
+      const audio = new Audio();
       previewAudioRef.current = audio;
+      audio.preload = 'auto';
+      audio.src = objectUrl;
 
       audio.onended = () => {
         if (previewTokenRef.current === thisToken) {
           setIsPlayingPreview(false);
-          previewAudioRef.current = null;
+          stopCurrentPreview();
         }
       };
 
-      audio.onerror = (e) => {
-        console.warn(`[Live Voice Preview] Audio load error for ${voice.id}:`, e);
-        if (previewTokenRef.current === thisToken) {
-          setIsPlayingPreview(false);
-          previewAudioRef.current = null;
+      audio.onerror = async (e) => {
+        console.warn(`[Live Voice Preview] HTMLAudioElement load error for ${voice.id}, attempting Web Audio API fallback:`, e);
+        if (previewTokenRef.current !== thisToken) return;
+
+        // Fallback: Web Audio API AudioContext decodeAudioData
+        try {
+          const arrayBuffer = await audioBlob.arrayBuffer();
+          if (previewTokenRef.current !== thisToken) return;
+
+          const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
+          if (!AudioContextClass) {
+            setIsPlayingPreview(false);
+            return;
+          }
+
+          if (!audioContextRef.current || audioContextRef.current.state === 'closed') {
+            audioContextRef.current = new AudioContextClass();
+          }
+          if (audioContextRef.current.state === 'suspended') {
+            await audioContextRef.current.resume();
+          }
+
+          const decodedBuffer = await audioContextRef.current.decodeAudioData(arrayBuffer);
+          if (previewTokenRef.current !== thisToken) return;
+
+          const source = audioContextRef.current.createBufferSource();
+          audioSourceNodeRef.current = source;
+          source.buffer = decodedBuffer;
+          source.connect(audioContextRef.current.destination);
+
+          source.onended = () => {
+            if (previewTokenRef.current === thisToken) {
+              setIsPlayingPreview(false);
+              audioSourceNodeRef.current = null;
+            }
+          };
+
+          source.start(0);
+        } catch (decodeErr) {
+          console.warn(`[Live Voice Preview] Web Audio API decode failed for ${voice.id}:`, decodeErr);
+          if (previewTokenRef.current === thisToken) {
+            setIsPlayingPreview(false);
+          }
         }
       };
 
+      // Play audio
       const playPromise = audio.play();
       if (playPromise !== undefined) {
-        playPromise.catch((err) => {
-          console.warn(`[Live Voice Preview] Playback prevented:`, err);
+        playPromise.catch((err: any) => {
+          if (err?.name === 'NotAllowedError') {
+            console.warn(`[Live Voice Preview] Autoplay policy prevented playback. User interaction required.`);
+          } else {
+            console.warn(`[Live Voice Preview] Playback prevented:`, err);
+          }
           if (previewTokenRef.current === thisToken) {
             setIsPlayingPreview(false);
           }
         });
       }
-    } catch (err) {
+    } catch (err: any) {
+      if (err?.name === 'AbortError') {
+        // Stale fetch aborted cleanly
+        return;
+      }
       console.warn('[Live Voice Preview] Exception:', err);
-      setIsPlayingPreview(false);
+      if (previewTokenRef.current === thisToken) {
+        setIsPlayingPreview(false);
+      }
     }
   };
 
