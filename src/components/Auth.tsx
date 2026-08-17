@@ -34,8 +34,8 @@ export const Auth = ({ onAuthSuccess, isDarkMode }: { onAuthSuccess: () => void;
   // Package configuration for automated App return
   const [customPackageId, setCustomPackageId] = useState(() => {
     return typeof localStorage !== 'undefined' 
-      ? localStorage.getItem('trelvix_apk_package_id') || 'io.kodular.emmanuelnwaije21.trelvix_ai'
-      : 'io.kodular.emmanuelnwaije21.trelvix_ai';
+      ? localStorage.getItem('trelvix_apk_package_id') || 'com.ingenium.trelvix_ai'
+      : 'com.ingenium.trelvix_ai';
   });
 
   // Detect Android WebView/WebViewer or APK runtime environments
@@ -211,7 +211,7 @@ export const Auth = ({ onAuthSuccess, isDarkMode }: { onAuthSuccess: () => void;
               value={customPackageId}
               onChange={(e) => setCustomPackageId(e.target.value)}
               className="w-full bg-zinc-100 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-805 text-zinc-900 dark:text-white rounded-xl px-3 py-2 text-xs font-mono focus:ring-1 focus:ring-emerald-500 outline-none"
-              placeholder="e.g. io.kodular.emmanuelnwaije21.trelvix_ai"
+              placeholder="e.g. com.ingenium.trelvix_ai"
             />
             <p className="text-[10px] text-zinc-400 dark:text-zinc-500 mt-1.5 leading-normal">
               Change this if your custom built Kodular App is using a different package scheme.

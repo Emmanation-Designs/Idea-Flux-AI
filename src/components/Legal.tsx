@@ -93,11 +93,24 @@ export const LegalModal = ({
               <div className="p-5 bg-zinc-50 dark:bg-zinc-950 border border-zinc-200/80 dark:border-zinc-800 rounded-2xl space-y-3">
                 <div className="flex items-center gap-2 text-zinc-900 dark:text-white font-extrabold text-base">
                   <Building2 className="w-4 h-4 text-emerald-500" />
-                  <span>Corporate Entity</span>
+                  <span>Corporate Entity & Leadership</span>
                 </div>
-                <p className="font-semibold text-emerald-600 dark:text-emerald-400">Ingenium Virtual Assistant Limited</p>
-                <p className="opacity-80 text-xs">Registered in the United Kingdom</p>
-                <p className="opacity-80 text-xs">Specialized in creative artificial intelligence & virtual assistance services</p>
+                <div>
+                  <p className="font-semibold text-emerald-600 dark:text-emerald-400">Ingenium Virtual Assistant Limited</p>
+                  <p className="text-xs text-zinc-600 dark:text-zinc-400 mt-0.5"><span className="font-semibold">Founder:</span> Innocent Ezike</p>
+                </div>
+                <p className="opacity-80 text-xs">Specialized in creative artificial intelligence & comprehensive virtual assistance services.</p>
+                
+                <div className="pt-2 border-t border-zinc-200/60 dark:border-zinc-800/80 space-y-2">
+                  <h4 className="text-xs font-bold text-zinc-900 dark:text-white">Core Services</h4>
+                  <ul className="text-xs space-y-1 text-zinc-600 dark:text-zinc-400 list-disc list-inside">
+                    <li><span className="font-medium text-zinc-800 dark:text-zinc-200">Virtual & Executive Assistance:</span> Calendar, inbox, client communications & administrative operations.</li>
+                    <li><span className="font-medium text-zinc-800 dark:text-zinc-200">Creative & Content Solutions:</span> Copywriting, scriptwriting, social media, and brand strategy.</li>
+                    <li><span className="font-medium text-zinc-800 dark:text-zinc-200">AI & Automation Products:</span> Intelligent AI tools (including Trelvix AI) and workflow automation.</li>
+                    <li><span className="font-medium text-zinc-800 dark:text-zinc-200">Business Operations:</span> Project management, lead generation, and e-commerce support.</li>
+                  </ul>
+                </div>
+
                 <div className="pt-2 border-t border-zinc-200/60 dark:border-zinc-800/80">
                   <a 
                     href="https://www.ingeniumvirtualassistant.com" 

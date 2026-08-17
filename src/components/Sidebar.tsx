@@ -123,14 +123,14 @@ export const Sidebar = ({
     }
   };
 
-  const userName = profile?.name || profile?.email?.split('@')[0] || 'Emmanuel Nwaije';
+  const userName = profile?.name || profile?.email?.split('@')[0] || 'User';
   const userInitials = userName
     .split(' ')
     .filter(Boolean)
     .map(n => n[0])
     .join('')
     .substring(0, 2)
-    .toUpperCase() || 'EN';
+    .toUpperCase() || 'U';
   const userPlan = profile?.plan ? (profile.plan.charAt(0).toUpperCase() + profile.plan.slice(1)) : 'Free';
 
   // Filter projects by workspace

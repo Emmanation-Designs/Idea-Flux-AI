@@ -85,12 +85,9 @@ Ensure you have the following tables in your Supabase database:
 ## Company Information
 
 - **Company Name**: Ingenium Virtual Assistant Limited
+- **Founder**: Innocent Ezike
 - **Website**: [Ingeniumvirtualassistant.com](https://www.ingeniumvirtualassistant.com)
 - **Owner**: Ingenium Virtual Assistant Limited
-
-## Credits
-
-Built by **Emmanuel Nwaije** ([EmmanationDesigns.com](https://EmmanationDesigns.com))
 
 ---
 
