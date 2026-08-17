@@ -20,7 +20,11 @@ export async function getServerUserMemories(supabaseAdmin: any, userId: string, 
 
     const { data, error } = await query;
     if (error) {
-      console.warn('[ServerMemoryService] Error fetching memories:', error.message);
+      if (error.code === '42P01' || error.message?.includes('schema cache') || error.message?.includes('does not exist')) {
+        // Table not yet migrated in Supabase project - return empty array cleanly
+        return [];
+      }
+      console.warn('[ServerMemoryService] Notice fetching memories:', error.message);
       return [];
     }
     return (data || []) as UserMemory[];

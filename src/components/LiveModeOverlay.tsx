@@ -231,13 +231,20 @@ export const LiveModeOverlay: React.FC<LiveModeOverlayProps> = ({
 
       dc.onopen = () => {
         setSessionState((prev) => ({ ...prev, status: 'listening' }));
-        // Enable input audio transcription over DataChannel session.update
+        // Configure input audio transcription and server VAD turn detection over DataChannel
         try {
           dc.send(JSON.stringify({
             type: 'session.update',
             session: {
               input_audio_transcription: {
                 model: 'whisper-1'
+              },
+              turn_detection: {
+                type: 'server_vad',
+                threshold: 0.65,
+                prefix_padding_ms: 300,
+                silence_duration_ms: 650,
+                create_response: true
               }
             }
           }));
@@ -442,9 +449,26 @@ export const LiveModeOverlay: React.FC<LiveModeOverlayProps> = ({
         }
         break;
 
+      case 'response.text.done':
+        if (event.text) {
+          appendTranscript('assistant', event.text);
+        }
+        break;
+
       case 'conversation.item.input_audio_transcription.completed':
         if (event.transcript) {
           appendTranscript('user', event.transcript);
+        }
+        break;
+
+      case 'conversation.item.created':
+        if (event.item?.role === 'user') {
+          const userText = event.item.content?.find((c: any) => c.type === 'input_text')?.text ||
+                           event.item.content?.find((c: any) => c.type === 'text')?.text ||
+                           event.item.content?.find((c: any) => c.type === 'input_audio')?.transcript;
+          if (userText) {
+            appendTranscript('user', userText);
+          }
         }
         break;
 
@@ -549,28 +573,55 @@ export const LiveModeOverlay: React.FC<LiveModeOverlayProps> = ({
     setSessionState((prev) => ({ ...prev, status: 'thinking' }));
   };
 
+  // Safely flush and save all recorded transcripts into the main chat history
+  const flushAndSaveMessages = () => {
+    const recordedItems = transcriptItemsRef.current;
+    if (!recordedItems || recordedItems.length === 0) return;
+
+    const formattedMessages: Message[] = recordedItems.map((item, idx) => ({
+      id: `live_${Date.now()}_${idx}_${Math.random().toString(36).substring(2, 6)}`,
+      role: item.role,
+      content: item.text,
+      created_at: new Date().toISOString(),
+      model: 'trelvix-live',
+    }));
+
+    // Trigger save to chat history
+    try {
+      onNewMessages(formattedMessages);
+    } catch (err) {
+      console.warn('[Live Mode] Error calling onNewMessages:', err);
+    }
+
+    transcriptItemsRef.current = [];
+    setLiveTranscript([]);
+  };
+
   // Safely cleanup Realtime session and settle usage
   const cleanupRealtimeSession = async () => {
+    // 1. Immediately flush messages before closing connections
+    flushAndSaveMessages();
+
     if (heartbeatTimerRef.current) clearInterval(heartbeatTimerRef.current);
     if (secondsTimerRef.current) clearInterval(secondsTimerRef.current);
 
     if (dcRef.current) {
-      dcRef.current.close();
+      try { dcRef.current.close(); } catch (e) {}
       dcRef.current = null;
     }
 
     if (pcRef.current) {
-      pcRef.current.close();
+      try { pcRef.current.close(); } catch (e) {}
       pcRef.current = null;
     }
 
     if (micStreamRef.current) {
-      micStreamRef.current.getTracks().forEach((t) => t.stop());
+      try { micStreamRef.current.getTracks().forEach((t) => t.stop()); } catch (e) {}
       micStreamRef.current = null;
     }
 
     if (audioContextRef.current) {
-      audioContextRef.current.close();
+      try { audioContextRef.current.close(); } catch (e) {}
       audioContextRef.current = null;
     }
 
@@ -594,24 +645,11 @@ export const LiveModeOverlay: React.FC<LiveModeOverlayProps> = ({
         console.warn('[Live Mode End Error]:', e);
       }
     }
-
-    const recordedItems = transcriptItemsRef.current;
-    if (recordedItems.length > 0) {
-      const formattedMessages: Message[] = recordedItems.map((item, idx) => ({
-        id: `live_${Date.now()}_${idx}_${Math.random().toString(36).substring(2, 6)}`,
-        role: item.role,
-        content: item.text,
-        created_at: new Date().toISOString(),
-        model: 'trelvix-live',
-      }));
-      onNewMessages(formattedMessages);
-      transcriptItemsRef.current = [];
-      setLiveTranscript([]);
-    }
   };
 
   const handleExit = () => {
     playLiveCloseSound();
+    flushAndSaveMessages();
     cleanupRealtimeSession();
     onClose();
   };

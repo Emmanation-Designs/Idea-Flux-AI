@@ -3554,6 +3554,7 @@ export default function App() {
               }
             } else if (conv) {
               await updateConversationMessages(conv.id, updatedMessages);
+              setCurrentConversation(prev => prev ? { ...prev, messages: updatedMessages, updated_at: new Date().toISOString() } : null);
               setConversations(prev => prev.map(c => c.id === conv.id ? { ...c, messages: updatedMessages, updated_at: new Date().toISOString() } : c));
             }
           }}
