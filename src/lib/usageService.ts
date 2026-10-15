@@ -204,22 +204,20 @@ export async function getUserUsage(supabaseClient: any, userId: string): Promise
       updateFields.last_capacity_reset = now.toISOString();
       needsUpdate = true;
 
-      // Authoritative server-side daily reset for profiles legacy counters
-      (async () => {
-        try {
-          await supabaseClient
-            .from('profiles')
-            .update({
-              messages_used_today: 0,
-              analysis_used_today: 0,
-              images_used_today: 0,
-              last_usage_reset: now.toISOString()
-            })
-            .eq('id', userId);
-        } catch (profResetErr: any) {
-          console.warn(`[UsageService] Notice resetting profiles daily counters for ${userId}:`, profResetErr?.message || profResetErr);
-        }
-      })().catch(() => {});
+      // Authoritative server-side daily reset for profiles legacy counters (properly awaited)
+      try {
+        await supabaseClient
+          .from('profiles')
+          .update({
+            messages_used_today: 0,
+            analysis_used_today: 0,
+            images_used_today: 0,
+            last_usage_reset: now.toISOString()
+          })
+          .eq('id', userId);
+      } catch (profResetErr: any) {
+        console.warn(`[UsageService] Notice resetting profiles daily counters for ${userId}:`, profResetErr?.message || profResetErr);
+      }
     }
 
     // 2. Monthly reset (30 days since last reset for TTS)
@@ -573,27 +571,168 @@ export async function consumeCapacity(supabaseClient: any, userId: string, cost:
 }
 
 /**
- * Safely refunds / rolls back AI Capacity for a user (e.g. on provider initialization failures).
+ * Atomically reserves capacity for a user if within limits.
+ * Prevents race conditions from concurrent requests.
+ */
+export async function reserveCapacity(
+  supabaseClient: any,
+  userId: string,
+  feature: string,
+  incrementAmount: number = 1,
+  options?: { quality?: string }
+): Promise<{ allowed: boolean; reason?: string; code?: string; cost: number }> {
+  const cost = feature === 'tts' ? incrementAmount : getFeatureCost(feature);
+  const limitResult = await checkLimit(supabaseClient, userId, feature, incrementAmount, options);
+  if (!limitResult.allowed) {
+    return {
+      allowed: false,
+      reason: limitResult.reason,
+      code: limitResult.code,
+      cost: 0
+    };
+  }
+
+  // Atomically consume the capacity upfront to block concurrent overages
+  if (feature === 'tts') {
+    await incrementUsage(supabaseClient, userId, 'tts', incrementAmount);
+  } else {
+    await consumeCapacity(supabaseClient, userId, cost);
+  }
+
+  return { allowed: true, cost };
+}
+
+/**
+ * Records successful completion of a feature whose capacity was already reserved.
+ * Updates legacy tracking counters without double-counting capacity.
+ */
+export async function recordUsageSuccess(
+  supabaseClient: any,
+  userId: string,
+  feature: string,
+  amount: number = 1
+): Promise<void> {
+  if (feature === 'tts') {
+    // TTS character count was already reserved in reserveCapacity
+    return;
+  }
+
+  // Increment historical fields for backward compatibility
+  try {
+    let legacyField = '';
+    if (feature === 'chat_simple' || feature === 'chat_reasoning' || feature === 'chat') {
+      legacyField = 'chat_today';
+    } else {
+      legacyField = `${feature}_today`;
+    }
+
+    await supabaseClient.rpc('increment_usage_field', {
+      user_uuid: userId,
+      field_name: legacyField,
+      increment_by: 1
+    });
+  } catch (compatErr: any) {
+    console.warn(`[UsageService] Failed to increment legacy historical field:`, compatErr?.message || compatErr);
+  }
+
+  // Authoritative server-side synchronization for legacy profiles counters
+  try {
+    let profileField: string | null = null;
+    if (feature === 'chat_simple' || feature === 'chat_reasoning' || feature === 'chat' || feature === 'chat_maximum') {
+      profileField = 'messages_used_today';
+    } else if (feature === 'image_generation') {
+      profileField = 'images_used_today';
+    } else if (feature === 'image_analysis' || feature === 'ocr' || feature === 'document_ai' || feature === 'pdf' || feature === 'image_edit') {
+      profileField = 'analysis_used_today';
+    }
+
+    if (profileField) {
+      const { data: currentProf } = await supabaseClient
+        .from('profiles')
+        .select(profileField)
+        .eq('id', userId)
+        .maybeSingle();
+
+      if (currentProf) {
+        const currentCount = currentProf[profileField] || 0;
+        await supabaseClient
+          .from('profiles')
+          .update({ [profileField]: currentCount + amount })
+          .eq('id', userId);
+      }
+    }
+  } catch (profIncErr: any) {
+    console.warn(`[UsageService] Failed to increment profiles legacy field for ${userId}:`, profIncErr?.message || profIncErr);
+  }
+}
+
+/**
+ * Safely refunds / rolls back AI Capacity for a user (e.g. on provider errors or aborted requests).
  */
 export async function refundCapacity(supabaseClient: any, userId: string, cost: number): Promise<void> {
   if (cost <= 0) return;
   try {
-    const { data: current, error: getErr } = await supabaseClient
-      .from('user_usage_tracking')
-      .select('daily_ai_capacity_used')
-      .eq('user_id', userId)
-      .single();
+    const { error } = await supabaseClient.rpc('increment_usage_field', {
+      user_uuid: userId,
+      field_name: 'daily_ai_capacity_used',
+      increment_by: -cost
+    });
 
-    if (!getErr && current) {
-      const currentVal = current.daily_ai_capacity_used || 0;
-      const newVal = Math.max(0, currentVal - cost);
-      await supabaseClient
+    if (error) {
+      // Fallback read-update if RPC rejected negative number
+      const { data: current, error: getErr } = await supabaseClient
         .from('user_usage_tracking')
-        .update({ daily_ai_capacity_used: newVal })
-        .eq('user_id', userId);
+        .select('daily_ai_capacity_used')
+        .eq('user_id', userId)
+        .single();
+
+      if (!getErr && current) {
+        const currentVal = current.daily_ai_capacity_used || 0;
+        const newVal = Math.max(0, currentVal - cost);
+        await supabaseClient
+          .from('user_usage_tracking')
+          .update({ daily_ai_capacity_used: newVal })
+          .eq('user_id', userId);
+      }
     }
   } catch (err: any) {
     console.warn(`[UsageService] Failed to refund capacity for ${userId}:`, err?.message || err);
+  }
+}
+
+/**
+ * Safely refunds TTS characters if speech generation failed after reservation.
+ */
+export async function refundTtsUsage(
+  supabaseClient: any,
+  userId: string,
+  characterCount: number
+): Promise<void> {
+  if (characterCount <= 0) return;
+  try {
+    const { error } = await supabaseClient.rpc('increment_usage_field', {
+      user_uuid: userId,
+      field_name: 'tts_characters_used_monthly',
+      increment_by: -characterCount
+    });
+
+    if (error) {
+      const { data: current } = await supabaseClient
+        .from('user_usage_tracking')
+        .select('tts_characters_used_monthly')
+        .eq('user_id', userId)
+        .maybeSingle();
+
+      if (current) {
+        const newVal = Math.max(0, (current.tts_characters_used_monthly || 0) - characterCount);
+        await supabaseClient
+          .from('user_usage_tracking')
+          .update({ tts_characters_used_monthly: newVal })
+          .eq('user_id', userId);
+      }
+    }
+  } catch (err: any) {
+    console.warn(`[UsageService] Failed to refund TTS usage for ${userId}:`, err?.message || err);
   }
 }
 

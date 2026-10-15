@@ -12,7 +12,7 @@ import { getVideoProvider } from "./src/ai/videoProviders.js";
 
 // Import Vite types only for type checking
 import type { ViteDevServer } from "vite";
-import { checkLimit, incrementUsage, getUserUsage, getPlanLimits, getRemainingCapacity, consumeCapacity, refundCapacity, CAPACITY_WARNING_THRESHOLD } from "./src/lib/usageService.js";
+import { checkLimit, incrementUsage, getUserUsage, getPlanLimits, getRemainingCapacity, consumeCapacity, refundCapacity, reserveCapacity, recordUsageSuccess, refundTtsUsage, CAPACITY_WARNING_THRESHOLD } from "./src/lib/usageService.js";
 import { getSubscription, updateSubscription } from "./src/lib/subscriptionService.js";
 import { getPaymentAdapter } from "./src/lib/paymentService.js";
 import { getPlan, getPaymentConfiguration } from "./src/subscription/catalog.js";
@@ -1670,25 +1670,21 @@ app.post("/api/tools/text-to-speech", async (req, res) => {
   const characterCount = text.length;
 
   // 1. Check Subscriptions and Plan Limits using the Centralized Limit Engine
-  let allowed = true;
-  let reason = "";
-
+  let ttsReservation: { allowed: boolean; reason?: string; code?: string; cost: number };
   try {
-    const limitResult = await checkLimit(supabase, user.id, 'tts', characterCount);
-    allowed = limitResult.allowed;
-    reason = limitResult.reason || "";
+    ttsReservation = await reserveCapacity(supabase, user.id, 'tts', characterCount);
   } catch (err: any) {
-    console.error(`[TTS][Request: ${requestId}] Central limit check failed:`, err.message);
-    allowed = false;
-    reason = "Failed to verify character usage limit.";
+    console.error(`[TTS][Request: ${requestId}] Central limit check and reservation failed:`, err.message);
+    return res.status(500).json({ error: "Failed to verify character usage limit." });
   }
 
-  if (!allowed) {
-    console.warn(`[TTS][Request: ${requestId}] Limit validation rejected request. Reason: ${reason}`);
-    return res.status(403).json({ error: reason || "Monthly character limit reached." });
+  if (!ttsReservation.allowed) {
+    console.warn(`[TTS][Request: ${requestId}] Limit validation rejected request. Reason: ${ttsReservation.reason}`);
+    return res.status(403).json({ error: ttsReservation.reason || "Monthly character limit reached." });
   }
 
-  console.log(`[TTS][Request: ${requestId}] Limits Validated`);
+  let ttsCommitted = false;
+  console.log(`[TTS][Request: ${requestId}] Limits Validated and ${characterCount} characters reserved`);
 
   // Resolve human-readable voice name dynamically in backend if possible
   let voiceName = targetVoiceId;
@@ -1774,6 +1770,11 @@ app.post("/api/tools/text-to-speech", async (req, res) => {
     const errorMsg = providerErr?.message || "Speech synthesis failed.";
     console.error(`[TTS][Request: ${requestId}] [Generation Failed] Provider Error:`, errorMsg);
 
+    // Refund reserved character quota so failed synthesis is not charged
+    if (!ttsCommitted) {
+      await refundTtsUsage(supabase, user.id, characterCount);
+    }
+
     // Update state to failed in DB so it doesn't get stuck in pending
     if (generationId) {
       try {
@@ -1806,6 +1807,7 @@ app.post("/api/tools/text-to-speech", async (req, res) => {
   }
 
   // 5. Attempt Database Completion Update (Non-destructive: we return audio anyway even if this fails)
+  ttsCommitted = true;
   const completedAt = new Date().toISOString();
   const totalDurationMs = Date.now() - startTime;
 
@@ -1844,12 +1846,9 @@ app.post("/api/tools/text-to-speech", async (req, res) => {
     } else {
       console.log(`[TTS][Request: ${requestId}] Database Updated Successfully`);
 
-      // Update monthly character quota consumed on profile and centralized tracking
+      // Character count was already reserved in user_usage_tracking upfront.
+      // Now sync legacy profiles.tts_characters_used in sync for complete safety.
       try {
-        await incrementUsage(supabase, user.id, 'tts', characterCount);
-        console.log(`[TTS][Request: ${requestId}] Incremented centralized tts characters used by ${characterCount}`);
-        
-        // Keep legacy profiles.tts_characters_used in sync for complete safety
         const { data: currentProfile } = await supabase
           .from("profiles")
           .select("tts_characters_used")
@@ -1861,7 +1860,7 @@ app.post("/api/tools/text-to-speech", async (req, res) => {
           .update({ tts_characters_used: updatedUsed })
           .eq("id", user.id);
       } catch (quotaErr: any) {
-        console.warn(`[TTS][Request: ${requestId}] Quota update exception:`, quotaErr?.message || quotaErr);
+        console.warn(`[TTS][Request: ${requestId}] Legacy quota update exception:`, quotaErr?.message || quotaErr);
       }
     }
   } catch (dbUpdateException: any) {
@@ -1975,28 +1974,24 @@ const handleVideoGeneration = async (req: express.Request, res: express.Response
   const featureKey = isSuperCreative ? 'video_generation_super_creative' : 'video_generation_creative';
 
   // 1. Check Subscriptions and Plan Limits using Centralized Limit Engine
-  let allowed = true;
-  let reason = "";
-  let errorCode = "";
+  let videoReservation: { allowed: boolean; reason?: string; code?: string; cost: number };
 
   try {
-    const limitResult = await checkLimit(supabase, user.id, featureKey, 1, { quality: resolvedQuality });
-    allowed = limitResult.allowed;
-    reason = limitResult.reason || "";
-    errorCode = limitResult.code || "";
+    videoReservation = await reserveCapacity(supabase, user.id, featureKey, 1, { quality: resolvedQuality });
   } catch (err: any) {
-    console.error(`[VideoStudio][Request: ${requestId}] Limit check exception:`, err.message);
-    allowed = false;
-    reason = "Failed to verify daily AI capacity limit.";
+    console.error(`[VideoStudio][Request: ${requestId}] Limit reservation exception:`, err.message);
+    return res.status(500).json({ error: "Failed to verify daily AI capacity limit." });
   }
 
-  if (!allowed) {
-    console.warn(`[VideoStudio][Request: ${requestId}] Limit check rejected: ${reason}`);
+  if (!videoReservation.allowed) {
+    console.warn(`[VideoStudio][Request: ${requestId}] Limit check rejected: ${videoReservation.reason}`);
     return res.status(403).json({ 
-      error: reason || "Daily AI capacity exhausted. Please upgrade your plan.",
-      code: errorCode || "CAPACITY_EXHAUSTED"
+      error: videoReservation.reason || "Daily AI capacity exhausted. Please upgrade your plan.",
+      code: videoReservation.code || "CAPACITY_EXHAUSTED"
     });
   }
+
+  let videoCommitted = false;
 
   try {
     // 2. Obtain Video Provider (OpenAI Sora)
@@ -2018,8 +2013,9 @@ const handleVideoGeneration = async (req: express.Request, res: express.Response
     });
     const generationTimeMs = Date.now() - startTime;
 
-    // 3. Deduct AI Capacity via incrementUsage
-    await incrementUsage(supabase, user.id, featureKey, 1);
+    // 3. Mark success and update legacy fields without double charging capacity
+    videoCommitted = true;
+    await recordUsageSuccess(supabase, user.id, featureKey, 1);
     const remainingCapacity = await getRemainingCapacity(supabase, user.id);
 
     // 4. Record generation in database (video_generations) with complete fields
@@ -2094,6 +2090,13 @@ const handleVideoGeneration = async (req: express.Request, res: express.Response
     });
   } catch (genErr: any) {
     console.error(`[VideoStudio][Request: ${requestId}] Generation error:`, genErr);
+    if (!videoCommitted && videoReservation?.cost) {
+      try {
+        await refundCapacity(supabase, user.id, videoReservation.cost);
+      } catch (refErr) {
+        console.warn("[VideoStudio] Failed to refund capacity on error:", refErr);
+      }
+    }
     const status = genErr?.status && typeof genErr.status === 'number' && genErr.status >= 400 && genErr.status < 600 ? genErr.status : 500;
     return res.status(status).json({
       error: genErr?.message || "An error occurred while generating the video.",
@@ -2691,7 +2694,7 @@ function formatMessagesForGemini(openAiMessages: any[]) {
   return { contents, systemInstruction };
 }
 
-async function handleGenerate(req: express.Request, res: express.Response) {
+export async function handleGenerate(req: express.Request, res: express.Response) {
   let { type, prompt, messages = [], ready_to_copy = false, personality = "creative", model = "gpt-5-nano", autoMode = true, prevModelId, webSearch = false } = req.body;
 
   let activeTagBackend: string | null = null;
@@ -2750,6 +2753,11 @@ async function handleGenerate(req: express.Request, res: express.Response) {
 
   console.log(`[Generate] Model: ${model}, Type: ${type}, Personality: ${personality}, Prompt length: ${prompt?.length || 0}`);
 
+  let userId: string | null = null;
+  let supabase: any = null;
+  let reservation: { allowed: boolean; reason?: string; code?: string; cost: number } | null = null;
+  let capacityCommitted = false;
+
   try {
     const apiKey = process.env.OPENAI_API_KEY;
     if (!apiKey) {
@@ -2796,22 +2804,19 @@ async function handleGenerate(req: express.Request, res: express.Response) {
     // Explicitly detect if the user wants to compile a document, CV, layout, text sheet or report
     const isDocRequest = docExclusionFilter.test(lastMessageContent);
 
-    // --- Centralized Limit Verification Protocol ---
-    let userId = req.body.userId;
-    if (!userId && req.headers.authorization) {
-      try {
-        const authenticatedUser = await authenticateUser(req);
-        userId = authenticatedUser.id;
-      } catch (err) {
-        console.warn("[Generate] Failed to authenticate user from header:", err);
-      }
+    // --- Centralized Authentication & Limit Verification Protocol ---
+    let authenticatedUser: any = null;
+    try {
+      authenticatedUser = await authenticateUser(req);
+    } catch (authErr: any) {
+      console.warn("[Generate] Authentication required:", authErr?.error || authErr);
+      return res.status(authErr?.status || 401).json({ 
+        error: authErr?.error || "Unauthorized: Missing or invalid session token." 
+      });
     }
 
-    if (!userId) {
-      return res.status(401).json({ error: "Unauthorized: Missing user authentication context." });
-    }
-
-    const supabase = getSupabaseAdminClient();
+    userId = authenticatedUser.id;
+    supabase = getSupabaseAdminClient();
 
     // Automatically validate and synchronize subscription (STEP 9)
     try {
@@ -2866,18 +2871,20 @@ async function handleGenerate(req: express.Request, res: express.Response) {
       }
     }
 
-    console.log(`[Limit Engine] Checking usage limit for user:${userId} on feature:${feature}`);
+    console.log(`[Limit Engine] Checking and reserving capacity for user:${userId} on feature:${feature}`);
     try {
-      const limitResult = await checkLimit(supabase, userId, feature, 1);
-      if (!limitResult.allowed) {
-        console.warn(`[Limit Engine] Limit check REJECTED for user:${userId} on feature:${feature}. Reason: ${limitResult.reason}`);
-        return res.status(429).json({ error: limitResult.reason, limitReached: true });
+      reservation = await reserveCapacity(supabase, userId, feature, 1);
+      if (!reservation.allowed) {
+        console.warn(`[Limit Engine] Limit check REJECTED for user:${userId} on feature:${feature}. Reason: ${reservation.reason}`);
+        return res.status(429).json({ error: reservation.reason, limitReached: true });
       }
-      console.log(`[Limit Engine] Limit check PASSED for user:${userId} on feature:${feature}`);
+      console.log(`[Limit Engine] Capacity reserved (${reservation.cost} units) for user:${userId} on feature:${feature}`);
     } catch (limitErr: any) {
-      console.error("[Limit Engine] Error in limit verification pipeline:", limitErr.message);
-      // Fallback: allow to prevent downtime if table is missing during setup
+      console.error("[Limit Engine] Error in limit reservation pipeline:", limitErr?.message || limitErr);
+      return res.status(500).json({ error: "Failed to verify and reserve AI capacity." });
     }
+
+    capacityCommitted = false;
 
     const searchRequired = (webSearch || activeTagBackend === "@WebSearch" || needsWebSearch(lastMessageContent)) && !isImageIntent;
 
@@ -3159,12 +3166,12 @@ To make it look like an edit or variation of the input image:
         // The client's background auto-migration scanner will lazily heal/migrate compile history safely.
         console.log(`[Image] Img generated via ${modelUsed} responding immediately with direct CDN URL to maximize throughput speed.`);
 
-        if (req.body.conversationId && req.body.userId) {
+        if (req.body.conversationId) {
           (async () => {
             try {
               const supabase = getSupabaseAdminClient();
               const { data: imageData, error: imgError } = await supabase.from('images').insert({
-                  user_id: req.body.userId,
+                  user_id: userId,
                   prompt: promptText,
                   image_url: base64Image
                 }).select().single();
@@ -3182,7 +3189,7 @@ To make it look like an edit or variation of the input image:
               await appendReplyToConversation(
                 req.body.conversationId,
                 assistantMessage,
-                req.body.userId,
+                userId,
                 type || 'image',
                 messages,
                 req.body.is_temporary
@@ -3193,12 +3200,13 @@ To make it look like an edit or variation of the input image:
           })().catch(console.error);
         }
 
-        // Increment usage count atomically
+        // Capacity was already reserved upfront; record legacy usage counters without double-counting
+        capacityCommitted = true;
         try {
-          await incrementUsage(supabase, userId, feature, 1);
-          console.log(`[Limit Engine] Atomic usage increment complete for user:${userId} on feature:${feature}`);
+          await recordUsageSuccess(supabase, userId, feature, 1);
+          console.log(`[Limit Engine] Usage success recorded for user:${userId} on feature:${feature}`);
         } catch (incErr: any) {
-          console.error(`[Limit Engine] Failed to increment usage for user:${userId}:`, incErr.message);
+          console.error(`[Limit Engine] Failed to record usage for user:${userId}:`, incErr?.message || incErr);
         }
 
         clearInterval(keepAliveInterval);
@@ -3214,6 +3222,13 @@ To make it look like an edit or variation of the input image:
       } catch (err: any) {
         clearInterval(keepAliveInterval);
         console.error("[Image Generation] Error in pipeline:", err);
+        if (!capacityCommitted && reservation?.cost) {
+          try {
+            await refundCapacity(supabase, userId, reservation.cost);
+          } catch (refErr) {
+            console.warn("[Image Generation] Failed to refund reserved capacity:", refErr);
+          }
+        }
         if (!res.writableEnded) {
           res.write(JSON.stringify({ error: err.message || "Failed to generate image" }));
           res.end();
@@ -3441,12 +3456,13 @@ Because you are integrated with our custom frontend compiler, YOU CAN and MUST c
         
         console.log(`[Generate] Grounded stream completed successfully`);
 
-        // Increment usage count atomically
+        // Capacity was already reserved upfront; record legacy usage counters without double-counting
+        capacityCommitted = true;
         try {
-          await incrementUsage(supabase, userId, feature, 1);
-          console.log(`[Limit Engine] Atomic usage increment complete for user:${userId} on feature:${feature}`);
+          await recordUsageSuccess(supabase, userId, feature, 1);
+          console.log(`[Limit Engine] Usage success recorded for user:${userId} on feature:${feature}`);
         } catch (incErr: any) {
-          console.error(`[Limit Engine] Failed to increment usage for user:${userId}:`, incErr.message);
+          console.error(`[Limit Engine] Failed to record usage for user:${userId}:`, incErr?.message || incErr);
         }
 
         res.end();
@@ -3462,7 +3478,7 @@ Because you are integrated with our custom frontend compiler, YOU CAN and MUST c
           appendReplyToConversation(
             req.body.conversationId,
             assistantMessage,
-            req.body.userId,
+            userId,
             type || 'chat',
             messages,
             req.body.is_temporary
@@ -3486,12 +3502,26 @@ Because you are integrated with our custom frontend compiler, YOU CAN and MUST c
 
     if (!queueResult.success) {
       console.warn(`[Generate] Job rejected/failed by queue: ${queueResult.error}`);
+      if (!capacityCommitted && reservation?.cost && supabase && userId) {
+        try {
+          await refundCapacity(supabase, userId, reservation.cost);
+        } catch (refErr) {
+          console.warn("[Generate] Failed to refund capacity on queue rejection:", refErr);
+        }
+      }
       if (!res.headersSent) {
         return res.status(429).json({ error: queueResult.error });
       }
     }
   } catch (error: any) {
     console.error("[Generate] Internal Error:", error);
+    if (!capacityCommitted && reservation?.cost && supabase && userId) {
+      try {
+        await refundCapacity(supabase, userId, reservation.cost);
+      } catch (refErr) {
+        console.warn("[Generate] Failed to refund capacity on generation error:", refErr);
+      }
+    }
     
     // Attempt to return a clean JSON error if possible
     if (!res.headersSent) {
