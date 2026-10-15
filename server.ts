@@ -42,28 +42,21 @@ function getSupabaseAdminClient(): any {
 
   const rawUrl = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || "https://wxezfzhhzlauggufecmm.supabase.co";
   const supabaseUrl = rawUrl.trim();
-  let supabaseKey = (process.env.SUPABASE_SERVICE_ROLE_KEY || "").trim();
+  const supabaseKey = (process.env.SUPABASE_SERVICE_ROLE_KEY || "").trim();
 
-  // Validate Service Role Key or fallback to Anon Key
+  // Validate Service Role Key: Must be present, non-placeholder, not a URL, and a valid 3-part JWT
   let isValidJWT = false;
-  if (supabaseKey && !supabaseKey.includes("your_supabase")) {
+  if (supabaseKey && !supabaseKey.includes("your_supabase") && !supabaseKey.startsWith("http")) {
     const parts = supabaseKey.split(".");
     isValidJWT = parts.length === 3 && supabaseKey.startsWith("eyJ");
   }
 
   if (!isValidJWT) {
-    const rawAnon = process.env.SUPABASE_ANON_KEY || process.env.VITE_SUPABASE_ANON_KEY || "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Ind4ZXpmemhoemxhdWdndWZlY21tIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQyNTQxMjcsImV4cCI6MjA4OTgzMDEyN30.2nsDSFhOtm1Xs3RuZNDo74jGbBwd05E7lPP-FN5cd1Q";
-    const anonKey = rawAnon.trim();
-    if (anonKey && anonKey.startsWith("eyJ") && anonKey.split(".").length === 3) {
-      console.warn("[Supabase] SUPABASE_SERVICE_ROLE_KEY missing or invalid. Falling back to SUPABASE_ANON_KEY.");
-      supabaseKey = anonKey;
-    } else {
-      console.error("[Supabase] CRITICAL: Neither SUPABASE_SERVICE_ROLE_KEY nor SUPABASE_ANON_KEY is a valid JWT!");
-      throw new Error("Supabase API key is invalid or missing in server configuration.");
-    }
+    console.error("[Supabase] CRITICAL: SUPABASE_SERVICE_ROLE_KEY is missing or invalid in server environment. Privileged operations cannot execute with an anonymous key.");
+    throw new Error("SUPABASE_SERVICE_ROLE_KEY is missing or invalid in server configuration. Privileged backend operations require a valid service-role key.");
   }
 
-  console.log(`[Supabase] Initializing client with URL: ${supabaseUrl}`);
+  console.log(`[Supabase] Initializing admin client with URL: ${supabaseUrl}`);
   supabaseClientInstance = createClient<any>(supabaseUrl, supabaseKey);
   return supabaseClientInstance;
 }

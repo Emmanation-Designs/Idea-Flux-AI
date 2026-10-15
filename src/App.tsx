@@ -312,6 +312,9 @@ export default function App() {
           limitReached: data.limitReached,
           resetTime: data.usage?.last_capacity_reset || data.usage?.last_daily_reset
         });
+        if (data.profile && Object.keys(data.profile).length > 0) {
+          setProfile(prev => prev ? { ...prev, ...data.profile } : data.profile);
+        }
       }
     } catch (err) {
       console.error("[Capacity Check] Failed to fetch usage/capacity details:", err);
@@ -1038,27 +1041,64 @@ export default function App() {
   const updateProfile = async (updates: Partial<Profile>) => {
     if (!user) return;
     
-    // Only send valid columns as per DB schema
-    const validKeys = [
+    // Explicit whitelist of user-editable non-privileged profile columns.
+    // Privileged fields like is_admin, role, plan, current_plan, subscription fields,
+    // and usage counters must NEVER be updated directly from the client.
+    const ALLOWED_CLIENT_PROFILE_KEYS = [
       'name', 
       'avatar_url',
-      'plan', 
       'personality',
-      'subscription_expires_at', 
-      'messages_used_today', 
-      'analysis_used_today', 
-      'images_used_today', 
-      'last_usage_reset'
+      'billing_email',
+      'billing_country',
+      'billing_currency',
+      'country_code',
+      'memory_enabled'
     ];
+
+    const FORBIDDEN_PRIVILEGED_KEYS = new Set([
+      'is_admin',
+      'role',
+      'plan',
+      'current_plan',
+      'subscription_tier',
+      'subscription_expires_at',
+      'subscription_status',
+      'subscription_provider',
+      'subscription_start',
+      'subscription_end',
+      'billing_cycle',
+      'stripe_customer_id',
+      'paypal_subscription_id',
+      'lemon_squeezy_subscription_id',
+      'messages_used_today',
+      'analysis_used_today',
+      'images_used_today',
+      'last_usage_reset',
+      'tts_characters_used',
+      'tts_reset_date',
+      'daily_ai_capacity_used',
+      'last_capacity_reset',
+      'last_daily_reset',
+      'last_monthly_reset',
+      'tts_characters_used_monthly',
+      'rewarded_bonus'
+    ]);
     
     const filteredUpdates: any = {};
     Object.keys(updates).forEach(key => {
-      if (validKeys.includes(key)) {
+      if (ALLOWED_CLIENT_PROFILE_KEYS.includes(key) && !FORBIDDEN_PRIVILEGED_KEYS.has(key)) {
         filteredUpdates[key] = (updates as any)[key];
       }
     });
 
-    if (Object.keys(filteredUpdates).length === 0) return;
+    if (Object.keys(filteredUpdates).length === 0) {
+      // If only privileged or non-client-editable fields were provided (e.g. from subscription sync),
+      // re-fetch the authoritative server-stored profile without performing an untrusted client write.
+      if (user) {
+        await fetchProfile();
+      }
+      return profile;
+    }
 
     try {
       const { data, error } = await supabase
@@ -1069,7 +1109,14 @@ export default function App() {
         .single();
 
       if (error) throw error;
-      if (data) setProfile(data);
+      if (data) {
+        setProfile(prev => ({
+          ...prev,
+          ...data,
+          email: user.email,
+          billing_email: data.billing_email || user.email
+        }));
+      }
       return data;
     } catch (error) {
       console.error("Error updating profile:", error);
@@ -1086,59 +1133,40 @@ export default function App() {
       .eq('id', user.id)
       .single();
     
-    // Check for daily reset
     const now = new Date();
-    const today = now.toISOString().split('T')[0];
     
     if (error && error.code === 'PGRST116') {
       // Create profile if not exists
+      // Secure creation: strictly assign free plan, user role, no admin, 0 counters
       const newProfile = {
         id: user.id,
-        name: user.user_metadata?.full_name || null,
-        avatar_url: user.user_metadata?.avatar_url || null,
+        name: typeof user.user_metadata?.full_name === 'string' ? user.user_metadata.full_name.slice(0, 100) : null,
+        avatar_url: typeof user.user_metadata?.avatar_url === 'string' ? user.user_metadata.avatar_url : null,
+        personality: 'creative',
+        billing_email: user.email || null,
+        plan: 'free',
+        current_plan: 'free',
+        is_admin: false,
+        role: 'user',
         messages_used_today: 0,
         analysis_used_today: 0,
         images_used_today: 0,
         last_usage_reset: now.toISOString(),
-        plan: 'free',
         subscription_expires_at: null,
-        personality: 'creative'
+        subscription_status: 'active'
       };
-      const { data: created } = await supabase.from('profiles').insert(newProfile).select().single();
+      const { data: created, error: insertErr } = await supabase.from('profiles').insert(newProfile).select().single();
+      if (insertErr) {
+        console.error("Failed to insert initial profile:", insertErr);
+      }
       setProfile(created ? { ...created, email: user.email, billing_email: created.billing_email || user.email } : null);
     } else if (data) {
-      let lastReset = '';
-      try {
-        if (data.last_usage_reset) {
-          // Robustly handle string or Date objects
-          const dateStr = typeof data.last_usage_reset === 'string' 
-            ? data.last_usage_reset 
-            : (data.last_usage_reset instanceof Date ? data.last_usage_reset.toISOString() : String(data.last_usage_reset));
-          lastReset = dateStr.split('T')[0];
-        }
-      } catch (err) {
-        console.error("Error parsing last_usage_reset:", err);
-      }
-      
       const profileWithEmail = {
         ...data,
         email: user.email,
         billing_email: data.billing_email || user.email
       };
-
-      if (lastReset && lastReset !== today) {
-        // Reset counters for a new day
-        await updateProfile({
-          messages_used_today: 0,
-          analysis_used_today: 0,
-          images_used_today: 0,
-          last_usage_reset: now.toISOString()
-        });
-        setProfile(profileWithEmail);
-      } else {
-        // Standard profile fetch
-        setProfile(profileWithEmail);
-      }
+      setProfile(profileWithEmail);
     }
   };
 
@@ -1877,10 +1905,6 @@ export default function App() {
         
         await updateConversationMessages(conv.id, finalMessages);
         
-        if (profile) {
-          await updateProfile({ images_used_today: (profile?.images_used_today || 0) + 1 });
-        }
-        
         setIsLoading(false);
         setIsGeneratingImage(false);
         fetchCapacityStatus();
@@ -1916,11 +1940,6 @@ export default function App() {
       setStreamingMessage('');
 
       await updateConversationMessages(conv.id, finalMessages);
-      
-      if (profile) {
-        const usageField = currentAttachment ? 'analysis_used_today' : 'messages_used_today';
-        await updateProfile({ [usageField]: (profile?.[usageField as keyof Profile] as number || 0) + 1 });
-      }
 
       setIsLoading(false);
       fetchCapacityStatus();

@@ -12,10 +12,18 @@ export interface PayPalAdapterParams {
 }
 
 function getSupabaseAdminClient() {
-  const supabaseUrl = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || "https://wxezfzhhzlauggufecmm.supabase.co";
-  const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
-  if (!supabaseUrl || !supabaseServiceKey) {
-    throw new Error('Supabase configuration or service role key is missing in environment variables.');
+  const rawUrl = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || "https://wxezfzhhzlauggufecmm.supabase.co";
+  const supabaseUrl = rawUrl.trim();
+  const supabaseServiceKey = (process.env.SUPABASE_SERVICE_ROLE_KEY || "").trim();
+
+  let isValid = false;
+  if (supabaseServiceKey && !supabaseServiceKey.includes("your_supabase") && !supabaseServiceKey.startsWith("http")) {
+    const parts = supabaseServiceKey.split(".");
+    isValid = parts.length === 3 && supabaseServiceKey.startsWith("eyJ");
+  }
+
+  if (!supabaseUrl || !isValid) {
+    throw new Error('Supabase configuration or valid SUPABASE_SERVICE_ROLE_KEY is missing in environment variables.');
   }
   return createClient(supabaseUrl, supabaseServiceKey);
 }

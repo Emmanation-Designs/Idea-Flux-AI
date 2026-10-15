@@ -203,6 +203,23 @@ export async function getUserUsage(supabaseClient: any, userId: string): Promise
       updateFields.last_daily_reset = now.toISOString();
       updateFields.last_capacity_reset = now.toISOString();
       needsUpdate = true;
+
+      // Authoritative server-side daily reset for profiles legacy counters
+      (async () => {
+        try {
+          await supabaseClient
+            .from('profiles')
+            .update({
+              messages_used_today: 0,
+              analysis_used_today: 0,
+              images_used_today: 0,
+              last_usage_reset: now.toISOString()
+            })
+            .eq('id', userId);
+        } catch (profResetErr: any) {
+          console.warn(`[UsageService] Notice resetting profiles daily counters for ${userId}:`, profResetErr?.message || profResetErr);
+        }
+      })().catch(() => {});
     }
 
     // 2. Monthly reset (30 days since last reset for TTS)
@@ -473,6 +490,36 @@ export async function incrementUsage(
       });
     } catch (compatErr: any) {
       console.warn(`[UsageService] Failed to increment legacy historical field:`, compatErr.message);
+    }
+
+    // Authoritative server-side synchronization for legacy profiles counters
+    try {
+      let profileField: string | null = null;
+      if (feature === 'chat_simple' || feature === 'chat_reasoning' || feature === 'chat' || feature === 'chat_maximum') {
+        profileField = 'messages_used_today';
+      } else if (feature === 'image_generation') {
+        profileField = 'images_used_today';
+      } else if (feature === 'image_analysis' || feature === 'ocr' || feature === 'document_ai' || feature === 'pdf' || feature === 'image_edit') {
+        profileField = 'analysis_used_today';
+      }
+
+      if (profileField) {
+        const { data: currentProf } = await supabaseClient
+          .from('profiles')
+          .select(profileField)
+          .eq('id', userId)
+          .maybeSingle();
+
+        if (currentProf) {
+          const currentCount = currentProf[profileField] || 0;
+          await supabaseClient
+            .from('profiles')
+            .update({ [profileField]: currentCount + amount })
+            .eq('id', userId);
+        }
+      }
+    } catch (profIncErr: any) {
+      console.warn(`[UsageService] Failed to increment profiles legacy field for ${userId}:`, profIncErr?.message || profIncErr);
     }
   }
 }
