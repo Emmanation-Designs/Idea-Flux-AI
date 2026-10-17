@@ -60,7 +60,7 @@ BEGIN
     NEW.updated_at = NOW();
     RETURN NEW;
 END;
-$$ LANGUAGE plpgsql SECURITY DEFINER;
+$$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp;
 
 DROP TRIGGER IF EXISTS set_live_sessions_updated_at ON public.live_sessions;
 CREATE TRIGGER set_live_sessions_updated_at

@@ -1,17 +1,15 @@
 -- ============================================================================
 -- Trelvix AI - Security Hardening: Atomic Capacity Reservation & RLS Protection
--- Description:
---   1. Replaces unsafe dynamic SQL in increment_usage_field with strict allowlist,
---      fixed search_path, and input validation.
---   2. Introduces atomic reservation functions (reserve_ai_capacity, reserve_tts_usage)
---      that lock usage tracking rows FOR UPDATE to eliminate concurrency race conditions.
---   3. Introduces safe, idempotent refund mechanisms (refund_ai_capacity, refund_tts_usage)
---      with audit tracking in capacity_reservations.
---   4. Adds a database-level trigger on profiles to strictly block client-side
---      tampering with is_admin, role, subscription status, plan tiers, and usage counters.
---
 -- Target Environment: Supabase / PostgreSQL 14+
--- NOTE: Do NOT execute directly in this automated session. Review and apply separately.
+-- Safe Run Guarantee:
+--   - Fully non-destructive and idempotent.
+--   - Does NOT drop tables or delete existing user data.
+--   - Enforces fixed search_path = public, pg_temp on all SECURITY DEFINER functions.
+--   - Enforces strict caller authorization (service_role or authenticated matching owner).
+--   - Implements atomic row-locked capacity reservation and idempotent refunds.
+--   - Enforces database-level protection against client-side profile tampering.
+--
+-- NOTE: As instructed, review this SQL migration before applying to production.
 -- ============================================================================
 
 -- 1. Reservation & Idempotent Refund Tracking Table
@@ -37,7 +35,7 @@ DROP POLICY IF EXISTS "Users view own capacity reservations" ON public.capacity_
 CREATE POLICY "Users view own capacity reservations" ON public.capacity_reservations
     FOR SELECT TO authenticated USING (auth.uid() = user_id);
 
--- 2. Hardened increment_usage_field with strict allowlists & fixed search_path
+-- 2. Hardened increment_usage_field with strict allowlist & fixed search_path
 CREATE OR REPLACE FUNCTION public.increment_usage_field(
     user_uuid UUID,
     field_name TEXT,
@@ -50,9 +48,11 @@ BEGIN
         RAISE EXCEPTION 'increment_by must be greater than zero. Use dedicated refund RPCs for refunds.';
     END IF;
 
-    -- 2. Caller authorization: must be service_role or owner
-    IF auth.role() <> 'service_role' AND auth.uid() IS NOT NULL AND auth.uid() <> user_uuid THEN
-        RAISE EXCEPTION 'Unauthorized: Caller may only update own usage tracking.';
+    -- 2. Strict caller authorization: service_role or authenticated user matching user_uuid
+    IF (auth.jwt() ->> 'role') <> 'service_role' AND auth.role() <> 'service_role' THEN
+        IF auth.uid() IS NULL OR auth.uid() <> user_uuid THEN
+            RAISE EXCEPTION 'Unauthorized: Caller may only update own usage tracking.';
+        END IF;
     END IF;
 
     -- 3. Explicit strict column allowlist to eliminate SQL injection and arbitrary column modification
@@ -109,8 +109,11 @@ BEGIN
         RETURN jsonb_build_object('allowed', false, 'reason', 'Cost must be positive', 'code', 'INVALID_COST');
     END IF;
 
-    IF auth.role() <> 'service_role' AND auth.uid() IS NOT NULL AND auth.uid() <> p_user_id THEN
-        RETURN jsonb_build_object('allowed', false, 'reason', 'Unauthorized user ID', 'code', 'UNAUTHORIZED');
+    -- Strict authorization check: caller must be service_role or authenticated matching target user
+    IF (auth.jwt() ->> 'role') <> 'service_role' AND auth.role() <> 'service_role' THEN
+        IF auth.uid() IS NULL OR auth.uid() <> p_user_id THEN
+            RETURN jsonb_build_object('allowed', false, 'reason', 'Unauthorized: caller identity does not match target user', 'code', 'UNAUTHORIZED');
+        END IF;
     END IF;
 
     -- Ensure row exists and lock FOR UPDATE to eliminate concurrency race conditions
@@ -198,7 +201,7 @@ $$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp;
 REVOKE ALL ON FUNCTION public.reserve_ai_capacity(UUID, INT, TEXT, TEXT) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION public.reserve_ai_capacity(UUID, INT, TEXT, TEXT) TO service_role, authenticated;
 
--- 4. Atomic TTS Reservation RPC
+-- 4. Atomic TTS Reservation RPC (Checks limits & reserves in a single transaction)
 CREATE OR REPLACE FUNCTION public.reserve_tts_usage(
     p_user_id UUID,
     p_character_count INT,
@@ -217,8 +220,11 @@ BEGIN
         RETURN jsonb_build_object('allowed', false, 'reason', 'Character count must be positive', 'code', 'INVALID_COUNT');
     END IF;
 
-    IF auth.role() <> 'service_role' AND auth.uid() IS NOT NULL AND auth.uid() <> p_user_id THEN
-        RETURN jsonb_build_object('allowed', false, 'reason', 'Unauthorized user ID', 'code', 'UNAUTHORIZED');
+    -- Strict authorization check: caller must be service_role or authenticated matching target user
+    IF (auth.jwt() ->> 'role') <> 'service_role' AND auth.role() <> 'service_role' THEN
+        IF auth.uid() IS NULL OR auth.uid() <> p_user_id THEN
+            RETURN jsonb_build_object('allowed', false, 'reason', 'Unauthorized: caller identity does not match target user', 'code', 'UNAUTHORIZED');
+        END IF;
     END IF;
 
     INSERT INTO public.user_usage_tracking (user_id)
@@ -320,8 +326,11 @@ BEGIN
         RETURN jsonb_build_object('refunded', false, 'reason', 'Cost must be positive');
     END IF;
 
-    IF auth.role() <> 'service_role' AND auth.uid() IS NOT NULL AND auth.uid() <> p_user_id THEN
-        RETURN jsonb_build_object('refunded', false, 'reason', 'Unauthorized user ID');
+    -- Strict authorization check: caller must be service_role or authenticated matching target user
+    IF (auth.jwt() ->> 'role') <> 'service_role' AND auth.role() <> 'service_role' THEN
+        IF auth.uid() IS NULL OR auth.uid() <> p_user_id THEN
+            RETURN jsonb_build_object('refunded', false, 'reason', 'Unauthorized: caller identity does not match target user');
+        END IF;
     END IF;
 
     IF p_reservation_id IS NOT NULL THEN
@@ -367,8 +376,11 @@ BEGIN
         RETURN jsonb_build_object('refunded', false, 'reason', 'Character count must be positive');
     END IF;
 
-    IF auth.role() <> 'service_role' AND auth.uid() IS NOT NULL AND auth.uid() <> p_user_id THEN
-        RETURN jsonb_build_object('refunded', false, 'reason', 'Unauthorized user ID');
+    -- Strict authorization check: caller must be service_role or authenticated matching target user
+    IF (auth.jwt() ->> 'role') <> 'service_role' AND auth.role() <> 'service_role' THEN
+        IF auth.uid() IS NULL OR auth.uid() <> p_user_id THEN
+            RETURN jsonb_build_object('refunded', false, 'reason', 'Unauthorized: caller identity does not match target user');
+        END IF;
     END IF;
 
     IF p_reservation_id IS NOT NULL THEN
@@ -408,8 +420,11 @@ CREATE OR REPLACE FUNCTION public.record_usage_success(
 )
 RETURNS VOID AS $$
 BEGIN
-    IF auth.role() <> 'service_role' AND auth.uid() IS NOT NULL AND auth.uid() <> p_user_id THEN
-        RAISE EXCEPTION 'Unauthorized: Caller may only record own usage success.';
+    -- Strict authorization check: caller must be service_role or authenticated matching target user
+    IF (auth.jwt() ->> 'role') <> 'service_role' AND auth.role() <> 'service_role' THEN
+        IF auth.uid() IS NULL OR auth.uid() <> p_user_id THEN
+            RAISE EXCEPTION 'Unauthorized: Caller may only record own usage success.';
+        END IF;
     END IF;
 
     IF p_reservation_id IS NOT NULL THEN
@@ -437,7 +452,85 @@ $$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp;
 REVOKE ALL ON FUNCTION public.record_usage_success(UUID, TEXT, TEXT) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION public.record_usage_success(UUID, TEXT, TEXT) TO service_role, authenticated;
 
--- 8. Database-Side Trigger To Protect Privileged Profile Data from Direct Browser Modification
+-- 8. Hardened get_monthly_tts_usage with strict authorization and fixed search_path
+CREATE OR REPLACE FUNCTION public.get_monthly_tts_usage(user_uuid UUID)
+RETURNS TABLE (
+    characters_used INT,
+    monthly_allowance INT,
+    remaining_characters INT,
+    max_characters_per_generation INT,
+    reset_date TIMESTAMPTZ,
+    current_plan TEXT
+) AS $$
+DECLARE
+    v_plan TEXT;
+    v_characters_used INT;
+    v_last_monthly_reset TIMESTAMPTZ;
+    v_monthly_allowance INT;
+    v_max_char_per_gen INT;
+BEGIN
+    -- Strict caller authorization: service_role or authenticated user matching user_uuid
+    IF (auth.jwt() ->> 'role') <> 'service_role' AND auth.role() <> 'service_role' THEN
+        IF auth.uid() IS NULL OR auth.uid() <> user_uuid THEN
+            RAISE EXCEPTION 'Unauthorized: Caller may only view own TTS usage.';
+        END IF;
+    END IF;
+
+    -- Ensure usage tracking row exists
+    INSERT INTO public.user_usage_tracking (user_id)
+    VALUES (user_uuid)
+    ON CONFLICT (user_id) DO NOTHING;
+
+    -- 1. Identify user's active membership plan
+    SELECT COALESCE(current_plan, 'free') INTO v_plan
+    FROM public.profiles
+    WHERE id = user_uuid;
+    
+    IF v_plan IS NULL THEN
+        v_plan := 'free';
+    END IF;
+
+    -- 2. Retrieve limits
+    SELECT tts_monthly_limit, tts_max_chars
+    INTO v_monthly_allowance, v_max_char_per_gen
+    FROM public.plan_limits
+    WHERE plan_name = v_plan;
+
+    IF NOT FOUND THEN
+        v_monthly_allowance := 10000;
+        v_max_char_per_gen := 2000;
+    END IF;
+
+    -- 3. Retrieve and perform lazy reset of monthly usage if needed
+    SELECT tts_characters_used_monthly, last_monthly_reset
+    INTO v_characters_used, v_last_monthly_reset
+    FROM public.user_usage_tracking
+    WHERE user_id = user_uuid;
+
+    IF v_last_monthly_reset IS NULL OR NOW() >= v_last_monthly_reset + INTERVAL '1 month' THEN
+        UPDATE public.user_usage_tracking
+        SET tts_characters_used_monthly = 0,
+            last_monthly_reset = NOW()
+        WHERE user_id = user_uuid;
+        v_characters_used := 0;
+        v_last_monthly_reset := NOW();
+    END IF;
+
+    characters_used := v_characters_used;
+    monthly_allowance := v_monthly_allowance;
+    remaining_characters := GREATEST(0, v_monthly_allowance - v_characters_used);
+    max_characters_per_generation := v_max_char_per_gen;
+    reset_date := v_last_monthly_reset + INTERVAL '1 month';
+    current_plan := v_plan;
+
+    RETURN NEXT;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp;
+
+REVOKE ALL ON FUNCTION public.get_monthly_tts_usage(UUID) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.get_monthly_tts_usage(UUID) TO service_role, authenticated;
+
+-- 9. Database-Side Trigger To Protect Privileged Profile Data from Direct Browser Modification
 CREATE OR REPLACE FUNCTION public.protect_privileged_profile_fields()
 RETURNS TRIGGER AS $$
 BEGIN

@@ -146,6 +146,13 @@ DECLARE
     v_monthly_allowance INT;
     v_max_char_per_gen INT;
 BEGIN
+    -- Strict caller authorization: service_role or authenticated user matching user_uuid
+    IF (auth.jwt() ->> 'role') <> 'service_role' AND auth.role() <> 'service_role' THEN
+        IF auth.uid() IS NULL OR auth.uid() <> user_uuid THEN
+            RAISE EXCEPTION 'Unauthorized: Caller may only view own TTS usage.';
+        END IF;
+    END IF;
+
     -- Ensure usage tracking row exists
     INSERT INTO public.user_usage_tracking (user_id)
     VALUES (user_uuid)
@@ -195,7 +202,10 @@ BEGIN
 
     RETURN NEXT;
 END;
-$$ LANGUAGE plpgsql SECURITY DEFINER;
+$$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp;
+
+REVOKE ALL ON FUNCTION public.get_monthly_tts_usage(UUID) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.get_monthly_tts_usage(UUID) TO service_role, authenticated;
 
 -- 8. HARDENED ATOMIC USAGE & CAPACITY INFRASTRUCTURE
 -- A. Reservation & Idempotent Refund Tracking Table
@@ -234,9 +244,11 @@ BEGIN
         RAISE EXCEPTION 'increment_by must be greater than zero. Use dedicated refund RPCs for refunds.';
     END IF;
 
-    -- 2. Caller authorization: must be service_role or owner
-    IF auth.role() <> 'service_role' AND auth.uid() IS NOT NULL AND auth.uid() <> user_uuid THEN
-        RAISE EXCEPTION 'Unauthorized: Caller may only update own usage tracking.';
+    -- 2. Strict caller authorization: service_role or authenticated user matching user_uuid
+    IF (auth.jwt() ->> 'role') <> 'service_role' AND auth.role() <> 'service_role' THEN
+        IF auth.uid() IS NULL OR auth.uid() <> user_uuid THEN
+            RAISE EXCEPTION 'Unauthorized: Caller may only update own usage tracking.';
+        END IF;
     END IF;
 
     -- 3. Explicit strict column allowlist to eliminate SQL injection and arbitrary column modification
@@ -293,8 +305,11 @@ BEGIN
         RETURN jsonb_build_object('allowed', false, 'reason', 'Cost must be positive', 'code', 'INVALID_COST');
     END IF;
 
-    IF auth.role() <> 'service_role' AND auth.uid() IS NOT NULL AND auth.uid() <> p_user_id THEN
-        RETURN jsonb_build_object('allowed', false, 'reason', 'Unauthorized user ID', 'code', 'UNAUTHORIZED');
+    -- Strict authorization check: caller must be service_role or authenticated matching target user
+    IF (auth.jwt() ->> 'role') <> 'service_role' AND auth.role() <> 'service_role' THEN
+        IF auth.uid() IS NULL OR auth.uid() <> p_user_id THEN
+            RETURN jsonb_build_object('allowed', false, 'reason', 'Unauthorized: caller identity does not match target user', 'code', 'UNAUTHORIZED');
+        END IF;
     END IF;
 
     -- Ensure row exists and lock FOR UPDATE to eliminate concurrency race conditions
@@ -401,8 +416,11 @@ BEGIN
         RETURN jsonb_build_object('allowed', false, 'reason', 'Character count must be positive', 'code', 'INVALID_COUNT');
     END IF;
 
-    IF auth.role() <> 'service_role' AND auth.uid() IS NOT NULL AND auth.uid() <> p_user_id THEN
-        RETURN jsonb_build_object('allowed', false, 'reason', 'Unauthorized user ID', 'code', 'UNAUTHORIZED');
+    -- Strict authorization check: caller must be service_role or authenticated matching target user
+    IF (auth.jwt() ->> 'role') <> 'service_role' AND auth.role() <> 'service_role' THEN
+        IF auth.uid() IS NULL OR auth.uid() <> p_user_id THEN
+            RETURN jsonb_build_object('allowed', false, 'reason', 'Unauthorized: caller identity does not match target user', 'code', 'UNAUTHORIZED');
+        END IF;
     END IF;
 
     INSERT INTO public.user_usage_tracking (user_id)
@@ -504,8 +522,11 @@ BEGIN
         RETURN jsonb_build_object('refunded', false, 'reason', 'Cost must be positive');
     END IF;
 
-    IF auth.role() <> 'service_role' AND auth.uid() IS NOT NULL AND auth.uid() <> p_user_id THEN
-        RETURN jsonb_build_object('refunded', false, 'reason', 'Unauthorized user ID');
+    -- Strict authorization check: caller must be service_role or authenticated matching target user
+    IF (auth.jwt() ->> 'role') <> 'service_role' AND auth.role() <> 'service_role' THEN
+        IF auth.uid() IS NULL OR auth.uid() <> p_user_id THEN
+            RETURN jsonb_build_object('refunded', false, 'reason', 'Unauthorized: caller identity does not match target user');
+        END IF;
     END IF;
 
     IF p_reservation_id IS NOT NULL THEN
@@ -551,8 +572,11 @@ BEGIN
         RETURN jsonb_build_object('refunded', false, 'reason', 'Character count must be positive');
     END IF;
 
-    IF auth.role() <> 'service_role' AND auth.uid() IS NOT NULL AND auth.uid() <> p_user_id THEN
-        RETURN jsonb_build_object('refunded', false, 'reason', 'Unauthorized user ID');
+    -- Strict authorization check: caller must be service_role or authenticated matching target user
+    IF (auth.jwt() ->> 'role') <> 'service_role' AND auth.role() <> 'service_role' THEN
+        IF auth.uid() IS NULL OR auth.uid() <> p_user_id THEN
+            RETURN jsonb_build_object('refunded', false, 'reason', 'Unauthorized: caller identity does not match target user');
+        END IF;
     END IF;
 
     IF p_reservation_id IS NOT NULL THEN
@@ -592,8 +616,11 @@ CREATE OR REPLACE FUNCTION public.record_usage_success(
 )
 RETURNS VOID AS $$
 BEGIN
-    IF auth.role() <> 'service_role' AND auth.uid() IS NOT NULL AND auth.uid() <> p_user_id THEN
-        RAISE EXCEPTION 'Unauthorized: Caller may only record own usage success.';
+    -- Strict authorization check: caller must be service_role or authenticated matching target user
+    IF (auth.jwt() ->> 'role') <> 'service_role' AND auth.role() <> 'service_role' THEN
+        IF auth.uid() IS NULL OR auth.uid() <> p_user_id THEN
+            RAISE EXCEPTION 'Unauthorized: Caller may only record own usage success.';
+        END IF;
     END IF;
 
     IF p_reservation_id IS NOT NULL THEN
