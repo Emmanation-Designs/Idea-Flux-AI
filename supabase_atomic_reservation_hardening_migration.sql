@@ -183,9 +183,13 @@ BEGIN
     v_res_id := COALESCE(p_reservation_id, 'res_' || gen_random_uuid()::text);
 
     IF p_reservation_id IS NOT NULL THEN
+        PERFORM 1 FROM public.capacity_reservations WHERE reservation_id = v_res_id FOR UPDATE;
+        IF FOUND THEN
+            RETURN jsonb_build_object('allowed', false, 'reason', 'Duplicate reservation ID', 'code', 'DUPLICATE_RESERVATION');
+        END IF;
+
         INSERT INTO public.capacity_reservations (reservation_id, user_id, feature, cost, status)
-        VALUES (v_res_id, p_user_id, p_feature, p_cost, 'reserved')
-        ON CONFLICT (reservation_id) DO NOTHING;
+        VALUES (v_res_id, p_user_id, p_feature, p_cost, 'reserved');
     END IF;
 
     RETURN jsonb_build_object(
@@ -294,9 +298,13 @@ BEGIN
     v_res_id := COALESCE(p_reservation_id, 'res_tts_' || gen_random_uuid()::text);
 
     IF p_reservation_id IS NOT NULL THEN
+        PERFORM 1 FROM public.capacity_reservations WHERE reservation_id = v_res_id FOR UPDATE;
+        IF FOUND THEN
+            RETURN jsonb_build_object('allowed', false, 'reason', 'Duplicate reservation ID', 'code', 'DUPLICATE_RESERVATION');
+        END IF;
+
         INSERT INTO public.capacity_reservations (reservation_id, user_id, feature, cost, status)
-        VALUES (v_res_id, p_user_id, 'tts', p_character_count, 'reserved')
-        ON CONFLICT (reservation_id) DO NOTHING;
+        VALUES (v_res_id, p_user_id, 'tts', p_character_count, 'reserved');
     END IF;
 
     RETURN jsonb_build_object(
@@ -312,7 +320,7 @@ $$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp;
 REVOKE ALL ON FUNCTION public.reserve_tts_usage(UUID, INT, TEXT) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION public.reserve_tts_usage(UUID, INT, TEXT) TO service_role, authenticated;
 
--- 5. Idempotent AI Capacity Refund RPC
+-- 5. Strict Idempotent AI Capacity Refund RPC
 CREATE OR REPLACE FUNCTION public.refund_ai_capacity(
     p_user_id UUID,
     p_cost INT,
@@ -320,10 +328,14 @@ CREATE OR REPLACE FUNCTION public.refund_ai_capacity(
 )
 RETURNS JSONB AS $$
 DECLARE
-    v_res_status TEXT;
+    v_res RECORD;
 BEGIN
     IF p_cost <= 0 THEN
         RETURN jsonb_build_object('refunded', false, 'reason', 'Cost must be positive');
+    END IF;
+
+    IF p_reservation_id IS NULL OR TRIM(p_reservation_id) = '' THEN
+        RETURN jsonb_build_object('refunded', false, 'reason', 'Reservation ID is required for safe refunds');
     END IF;
 
     -- Strict authorization check: caller must be service_role or authenticated matching target user
@@ -333,22 +345,28 @@ BEGIN
         END IF;
     END IF;
 
-    IF p_reservation_id IS NOT NULL THEN
-        SELECT status INTO v_res_status
-        FROM public.capacity_reservations
-        WHERE reservation_id = p_reservation_id AND user_id = p_user_id
-        FOR UPDATE;
+    -- Lock and check reservation strictly
+    SELECT id, user_id, feature, cost, status
+    INTO v_res
+    FROM public.capacity_reservations
+    WHERE reservation_id = p_reservation_id AND user_id = p_user_id
+    FOR UPDATE;
 
-        IF FOUND THEN
-            IF v_res_status = 'refunded' THEN
-                RETURN jsonb_build_object('refunded', false, 'reason', 'Reservation already refunded');
-            END IF;
-
-            UPDATE public.capacity_reservations
-            SET status = 'refunded', updated_at = NOW()
-            WHERE reservation_id = p_reservation_id;
-        END IF;
+    IF NOT FOUND THEN
+        RETURN jsonb_build_object('refunded', false, 'reason', 'Reservation not found or does not belong to user');
     END IF;
+
+    IF v_res.status <> 'reserved' THEN
+        RETURN jsonb_build_object('refunded', false, 'reason', FORMAT('Cannot refund reservation in %s state', v_res.status));
+    END IF;
+
+    IF v_res.cost <> p_cost THEN
+        RETURN jsonb_build_object('refunded', false, 'reason', FORMAT('Reservation cost mismatch: requested %s, stored %s', p_cost, v_res.cost));
+    END IF;
+
+    UPDATE public.capacity_reservations
+    SET status = 'refunded', updated_at = NOW()
+    WHERE reservation_id = p_reservation_id;
 
     UPDATE public.user_usage_tracking
     SET daily_ai_capacity_used = GREATEST(0, daily_ai_capacity_used - p_cost),
@@ -362,7 +380,7 @@ $$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp;
 REVOKE ALL ON FUNCTION public.refund_ai_capacity(UUID, INT, TEXT) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION public.refund_ai_capacity(UUID, INT, TEXT) TO service_role, authenticated;
 
--- 6. Idempotent TTS Refund RPC
+-- 6. Strict Idempotent TTS Refund RPC
 CREATE OR REPLACE FUNCTION public.refund_tts_usage(
     p_user_id UUID,
     p_character_count INT,
@@ -370,10 +388,14 @@ CREATE OR REPLACE FUNCTION public.refund_tts_usage(
 )
 RETURNS JSONB AS $$
 DECLARE
-    v_res_status TEXT;
+    v_res RECORD;
 BEGIN
     IF p_character_count <= 0 THEN
         RETURN jsonb_build_object('refunded', false, 'reason', 'Character count must be positive');
+    END IF;
+
+    IF p_reservation_id IS NULL OR TRIM(p_reservation_id) = '' THEN
+        RETURN jsonb_build_object('refunded', false, 'reason', 'Reservation ID is required for safe refunds');
     END IF;
 
     -- Strict authorization check: caller must be service_role or authenticated matching target user
@@ -383,22 +405,28 @@ BEGIN
         END IF;
     END IF;
 
-    IF p_reservation_id IS NOT NULL THEN
-        SELECT status INTO v_res_status
-        FROM public.capacity_reservations
-        WHERE reservation_id = p_reservation_id AND user_id = p_user_id
-        FOR UPDATE;
+    -- Lock and check reservation strictly
+    SELECT id, user_id, feature, cost, status
+    INTO v_res
+    FROM public.capacity_reservations
+    WHERE reservation_id = p_reservation_id AND user_id = p_user_id
+    FOR UPDATE;
 
-        IF FOUND THEN
-            IF v_res_status = 'refunded' THEN
-                RETURN jsonb_build_object('refunded', false, 'reason', 'Reservation already refunded');
-            END IF;
-
-            UPDATE public.capacity_reservations
-            SET status = 'refunded', updated_at = NOW()
-            WHERE reservation_id = p_reservation_id;
-        END IF;
+    IF NOT FOUND THEN
+        RETURN jsonb_build_object('refunded', false, 'reason', 'Reservation not found or does not belong to user');
     END IF;
+
+    IF v_res.status <> 'reserved' THEN
+        RETURN jsonb_build_object('refunded', false, 'reason', FORMAT('Cannot refund TTS reservation in %s state', v_res.status));
+    END IF;
+
+    IF v_res.cost <> p_character_count THEN
+        RETURN jsonb_build_object('refunded', false, 'reason', FORMAT('TTS Reservation cost mismatch: requested %s, stored %s', p_character_count, v_res.cost));
+    END IF;
+
+    UPDATE public.capacity_reservations
+    SET status = 'refunded', updated_at = NOW()
+    WHERE reservation_id = p_reservation_id;
 
     UPDATE public.user_usage_tracking
     SET tts_characters_used_monthly = GREATEST(0, tts_characters_used_monthly - p_character_count),
@@ -412,13 +440,15 @@ $$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp;
 REVOKE ALL ON FUNCTION public.refund_tts_usage(UUID, INT, TEXT) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION public.refund_tts_usage(UUID, INT, TEXT) TO service_role, authenticated;
 
--- 7. Usage Success Recording RPC
+-- 7. Strict Usage Success Recording RPC
 CREATE OR REPLACE FUNCTION public.record_usage_success(
     p_user_id UUID,
     p_feature TEXT,
     p_reservation_id TEXT DEFAULT NULL
 )
 RETURNS VOID AS $$
+DECLARE
+    v_res RECORD;
 BEGIN
     -- Strict authorization check: caller must be service_role or authenticated matching target user
     IF (auth.jwt() ->> 'role') <> 'service_role' AND auth.role() <> 'service_role' THEN
@@ -428,9 +458,21 @@ BEGIN
     END IF;
 
     IF p_reservation_id IS NOT NULL THEN
-        UPDATE public.capacity_reservations
-        SET status = 'completed', updated_at = NOW()
-        WHERE reservation_id = p_reservation_id AND user_id = p_user_id;
+        SELECT id, user_id, status
+        INTO v_res
+        FROM public.capacity_reservations
+        WHERE reservation_id = p_reservation_id AND user_id = p_user_id
+        FOR UPDATE;
+
+        IF FOUND THEN
+            IF v_res.status <> 'reserved' THEN
+                RAISE EXCEPTION 'Reservation % cannot be completed from % state', p_reservation_id, v_res.status;
+            END IF;
+
+            UPDATE public.capacity_reservations
+            SET status = 'completed', updated_at = NOW()
+            WHERE reservation_id = p_reservation_id;
+        END IF;
     END IF;
 
     IF p_feature IN ('chat_simple', 'chat_reasoning', 'chat', 'chat_maximum') THEN
