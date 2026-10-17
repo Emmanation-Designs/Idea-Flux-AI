@@ -12,7 +12,7 @@ import { getVideoProvider } from "./src/ai/videoProviders.js";
 
 // Import Vite types only for type checking
 import type { ViteDevServer } from "vite";
-import { checkLimit, incrementUsage, getUserUsage, getPlanLimits, getRemainingCapacity, consumeCapacity, refundCapacity, reserveCapacity, recordUsageSuccess, refundTtsUsage, CAPACITY_WARNING_THRESHOLD } from "./src/lib/usageService.js";
+import { checkLimit, incrementUsage, getUserUsage, getPlanLimits, getRemainingCapacity, consumeCapacity, refundCapacity, reserveCapacity, recordUsageSuccess, refundTtsUsage, CAPACITY_WARNING_THRESHOLD, CapacityReservation } from "./src/lib/usageService.js";
 import { getSubscription, updateSubscription } from "./src/lib/subscriptionService.js";
 import { getPaymentAdapter } from "./src/lib/paymentService.js";
 import { getPlan, getPaymentConfiguration } from "./src/subscription/catalog.js";
@@ -582,23 +582,29 @@ app.post("/api/realtime/session", async (req, res) => {
 
     const minRequiredCapacity = 10; // 1 active minute check
 
-    // 1. Capacity authorization check
-    const limitCheck = await checkLimit(supabase, user.id, 'live_mode', minRequiredCapacity);
-    if (!limitCheck.allowed) {
-      console.log(`[Live] capacity authorization=DENY (current: ${limitCheck.current}, limit: ${limitCheck.limit})`);
+    // 1. Capacity reservation upfront to prevent concurrent race conditions
+    let liveReservation: any;
+    try {
+      liveReservation = await reserveCapacity(supabase, user.id, 'live_mode', minRequiredCapacity);
+    } catch (resErr: any) {
+      console.error("[Live] Failed to reserve capacity:", resErr?.message || resErr);
+      return res.status(500).json({ error: "Failed to verify and reserve AI capacity." });
+    }
+
+    if (!liveReservation.allowed) {
+      console.log(`[Live] capacity authorization=DENY (${liveReservation.reason})`);
       return res.status(403).json({
-        error: limitCheck.reason || "Insufficient AI Capacity for Live Mode.",
-        code: limitCheck.code || "CAPACITY_EXHAUSTED",
-        current: limitCheck.current,
-        limit: limitCheck.limit
+        error: liveReservation.reason || "Insufficient AI Capacity for Live Mode.",
+        code: liveReservation.code || "CAPACITY_EXHAUSTED"
       });
     }
 
-    console.log(`[Live] capacity authorization=ALLOW (current: ${limitCheck.current}, limit: ${limitCheck.limit})`);
+    console.log(`[Live] capacity authorization=ALLOW (reserved ${minRequiredCapacity} units, resId: ${liveReservation.reservationId})`);
 
     const apiKey = process.env.OPENAI_API_KEY;
     if (!apiKey) {
       console.error("[Live] OpenAI realtime initialization failed: OPENAI_API_KEY missing");
+      await refundCapacity(supabase, user.id, minRequiredCapacity, liveReservation.reservationId);
       return res.status(500).json({ error: "Server configuration error: OPENAI_API_KEY is not configured." });
     }
 
@@ -609,6 +615,7 @@ app.post("/api/realtime/session", async (req, res) => {
     const requestedVoice = (voice || 'marin').toLowerCase().trim();
     if (!VALID_OPENAI_REALTIME_VOICES.has(requestedVoice)) {
       console.warn(`[Live Voice] Rejected invalid/unsupported voice: ${requestedVoice}`);
+      await refundCapacity(supabase, user.id, minRequiredCapacity, liveReservation.reservationId);
       return res.status(400).json({
         error: `Selected voice "${requestedVoice}" is currently unavailable. Please choose another voice.`,
         code: "UNSUPPORTED_VOICE",
@@ -725,7 +732,7 @@ ${memoriesContext}${languageInstruction}`;
     if (!response.ok) {
       const errText = await response.text().catch(() => '');
       console.error(`[Live] OpenAI realtime initialization failed: HTTP ${response.status}`, errText);
-      // Provider initialization failed — NO capacity is permanently charged
+      await refundCapacity(supabase, user.id, minRequiredCapacity, liveReservation.reservationId);
       return res.status(502).json({ error: "Failed to initialize realtime session with AI provider." });
     }
 
@@ -738,20 +745,16 @@ ${memoriesContext}${languageInstruction}`;
 
     if (!clientSecretValue) {
       console.error("[Live] OpenAI realtime initialization failed: No ephemeral secret returned by provider");
+      await refundCapacity(supabase, user.id, minRequiredCapacity, liveReservation.reservationId);
       return res.status(502).json({ error: "AI provider returned invalid session credentials." });
     }
 
-    // 3. Finalize initial 10 capacity settlement ONLY after successful provider session initialization
-    let capacityCharged = false;
+    // 3. Register live session tracking in DB (Capacity was already reserved upfront)
     let liveSessionId = (typeof idempotency_key === 'string' && idempotency_key.length > 8)
       ? idempotency_key
       : crypto.randomUUID();
 
     try {
-      await consumeCapacity(supabase, user.id, minRequiredCapacity);
-      capacityCharged = true;
-
-      // Register live session tracking in DB
       const { data: dbSession } = await supabase
         .from("live_sessions")
         .insert({
@@ -773,14 +776,12 @@ ${memoriesContext}${languageInstruction}`;
         liveSessionId = dbSession.id;
       }
 
+      await recordUsageSuccess(supabase, user.id, 'live_mode', minRequiredCapacity, liveReservation.reservationId);
       console.log(`[Live] session ID: ${liveSessionId} (provider session: ${providerSessionId || 'none'})`);
-      console.log(`[Live] capacity settlement: session ${liveSessionId} charged ${minRequiredCapacity} (total: ${minRequiredCapacity})`);
+      console.log(`[Live] capacity settlement: session ${liveSessionId} registered with ${minRequiredCapacity} initial capacity`);
     } catch (settleErr) {
       console.error("[Live Mode Settlement Error]:", settleErr);
-      if (capacityCharged) {
-        // Safe rollback / refund if DB tracking setup encounters an error
-        await refundCapacity(supabase, user.id, minRequiredCapacity);
-      }
+      await refundCapacity(supabase, user.id, minRequiredCapacity, liveReservation.reservationId);
       return res.status(500).json({ error: "Failed to finalize live session tracking." });
     }
 
@@ -1261,10 +1262,40 @@ app.post("/api/memory/extract", async (req, res) => {
   }
 });
 
+function isSafeExternalUrl(rawUrl: string): boolean {
+  try {
+    const parsed = new URL(rawUrl);
+    if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') {
+      return false;
+    }
+    const hostname = parsed.hostname.toLowerCase();
+    if (
+      hostname === 'localhost' ||
+      hostname === '127.0.0.1' ||
+      hostname === '0.0.0.0' ||
+      hostname === '169.254.169.254' ||
+      hostname.endsWith('.internal') ||
+      hostname.endsWith('.local') ||
+      hostname.startsWith('10.') ||
+      hostname.startsWith('192.168.') ||
+      /^172\.(1[6-9]|2[0-9]|3[0-1])\./.test(hostname)
+    ) {
+      return false;
+    }
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 // API routes
 app.all("/api/proxy-image", async (req, res) => {
   const imageUrl = (req.method === "POST" ? req.body.url : (req.query.url || req.body.url)) as string;
-  if (!imageUrl) return res.status(400).send("URL is required");
+  if (!imageUrl || typeof imageUrl !== 'string') return res.status(400).send("URL is required");
+
+  if (!isSafeExternalUrl(imageUrl)) {
+    return res.status(400).send("Invalid or untrusted URL.");
+  }
 
   try {
     const response = await fetch(imageUrl, {
@@ -1670,7 +1701,7 @@ app.post("/api/tools/text-to-speech", async (req, res) => {
   const characterCount = text.length;
 
   // 1. Check Subscriptions and Plan Limits using the Centralized Limit Engine
-  let ttsReservation: { allowed: boolean; reason?: string; code?: string; cost: number };
+  let ttsReservation: CapacityReservation;
   try {
     ttsReservation = await reserveCapacity(supabase, user.id, 'tts', characterCount);
   } catch (err: any) {
@@ -1772,7 +1803,7 @@ app.post("/api/tools/text-to-speech", async (req, res) => {
 
     // Refund reserved character quota so failed synthesis is not charged
     if (!ttsCommitted) {
-      await refundTtsUsage(supabase, user.id, characterCount);
+      await refundTtsUsage(supabase, user.id, characterCount, ttsReservation?.reservationId);
     }
 
     // Update state to failed in DB so it doesn't get stuck in pending
@@ -1974,7 +2005,7 @@ const handleVideoGeneration = async (req: express.Request, res: express.Response
   const featureKey = isSuperCreative ? 'video_generation_super_creative' : 'video_generation_creative';
 
   // 1. Check Subscriptions and Plan Limits using Centralized Limit Engine
-  let videoReservation: { allowed: boolean; reason?: string; code?: string; cost: number };
+  let videoReservation: CapacityReservation;
 
   try {
     videoReservation = await reserveCapacity(supabase, user.id, featureKey, 1, { quality: resolvedQuality });
@@ -2015,7 +2046,7 @@ const handleVideoGeneration = async (req: express.Request, res: express.Response
 
     // 3. Mark success and update legacy fields without double charging capacity
     videoCommitted = true;
-    await recordUsageSuccess(supabase, user.id, featureKey, 1);
+    await recordUsageSuccess(supabase, user.id, featureKey, 1, videoReservation.reservationId);
     const remainingCapacity = await getRemainingCapacity(supabase, user.id);
 
     // 4. Record generation in database (video_generations) with complete fields
@@ -2092,7 +2123,7 @@ const handleVideoGeneration = async (req: express.Request, res: express.Response
     console.error(`[VideoStudio][Request: ${requestId}] Generation error:`, genErr);
     if (!videoCommitted && videoReservation?.cost) {
       try {
-        await refundCapacity(supabase, user.id, videoReservation.cost);
+        await refundCapacity(supabase, user.id, videoReservation.cost, videoReservation.reservationId);
       } catch (refErr) {
         console.warn("[VideoStudio] Failed to refund capacity on error:", refErr);
       }
@@ -2755,7 +2786,7 @@ export async function handleGenerate(req: express.Request, res: express.Response
 
   let userId: string | null = null;
   let supabase: any = null;
-  let reservation: { allowed: boolean; reason?: string; code?: string; cost: number } | null = null;
+  let reservation: CapacityReservation | null = null;
   let capacityCommitted = false;
 
   try {
@@ -3203,7 +3234,7 @@ To make it look like an edit or variation of the input image:
         // Capacity was already reserved upfront; record legacy usage counters without double-counting
         capacityCommitted = true;
         try {
-          await recordUsageSuccess(supabase, userId, feature, 1);
+          await recordUsageSuccess(supabase, userId, feature, 1, reservation.reservationId);
           console.log(`[Limit Engine] Usage success recorded for user:${userId} on feature:${feature}`);
         } catch (incErr: any) {
           console.error(`[Limit Engine] Failed to record usage for user:${userId}:`, incErr?.message || incErr);
@@ -3224,7 +3255,7 @@ To make it look like an edit or variation of the input image:
         console.error("[Image Generation] Error in pipeline:", err);
         if (!capacityCommitted && reservation?.cost) {
           try {
-            await refundCapacity(supabase, userId, reservation.cost);
+            await refundCapacity(supabase, userId, reservation.cost, reservation.reservationId);
           } catch (refErr) {
             console.warn("[Image Generation] Failed to refund reserved capacity:", refErr);
           }
@@ -3459,7 +3490,7 @@ Because you are integrated with our custom frontend compiler, YOU CAN and MUST c
         // Capacity was already reserved upfront; record legacy usage counters without double-counting
         capacityCommitted = true;
         try {
-          await recordUsageSuccess(supabase, userId, feature, 1);
+          await recordUsageSuccess(supabase, userId, feature, 1, reservation.reservationId);
           console.log(`[Limit Engine] Usage success recorded for user:${userId} on feature:${feature}`);
         } catch (incErr: any) {
           console.error(`[Limit Engine] Failed to record usage for user:${userId}:`, incErr?.message || incErr);
@@ -3504,7 +3535,7 @@ Because you are integrated with our custom frontend compiler, YOU CAN and MUST c
       console.warn(`[Generate] Job rejected/failed by queue: ${queueResult.error}`);
       if (!capacityCommitted && reservation?.cost && supabase && userId) {
         try {
-          await refundCapacity(supabase, userId, reservation.cost);
+          await refundCapacity(supabase, userId, reservation.cost, reservation.reservationId);
         } catch (refErr) {
           console.warn("[Generate] Failed to refund capacity on queue rejection:", refErr);
         }
@@ -3517,7 +3548,7 @@ Because you are integrated with our custom frontend compiler, YOU CAN and MUST c
     console.error("[Generate] Internal Error:", error);
     if (!capacityCommitted && reservation?.cost && supabase && userId) {
       try {
-        await refundCapacity(supabase, userId, reservation.cost);
+        await refundCapacity(supabase, userId, reservation.cost, reservation.reservationId);
       } catch (refErr) {
         console.warn("[Generate] Failed to refund capacity on generation error:", refErr);
       }

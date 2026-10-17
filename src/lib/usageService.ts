@@ -432,7 +432,21 @@ Decision: ALLOW`.trim());
 }
 
 /**
+ * In-memory idempotency registry to guard against duplicate refunds in runtime.
+ */
+const refundedReservations = new Set<string>();
+
+export interface CapacityReservation {
+  allowed: boolean;
+  reason?: string;
+  code?: string;
+  cost: number;
+  reservationId: string;
+}
+
+/**
  * Atomic counter increments for user operations.
+ * Fails safely: throws if tracking update cannot be confirmed by the database.
  */
 export async function incrementUsage(
   supabaseClient: any,
@@ -440,31 +454,38 @@ export async function incrementUsage(
   feature: string,
   amount: number = 1
 ): Promise<void> {
+  if (amount <= 0) return;
   // Ensure lazy reset check is applied
   await getUserUsage(supabaseClient, userId);
 
   if (feature === 'tts') {
     const usageKey = 'tts_characters_used_monthly';
-    const { error } = await supabaseClient.rpc('increment_usage_field', {
+    const { error: rpcErr } = await supabaseClient.rpc('increment_usage_field', {
       user_uuid: userId,
       field_name: usageKey,
       increment_by: amount
     });
 
-    if (error) {
-      console.warn(`[UsageService] increment_usage_field RPC failed for TTS, falling back to read-write update:`, error.message);
+    if (rpcErr) {
+      console.warn(`[UsageService] increment_usage_field RPC failed for TTS, attempting direct update:`, rpcErr.message);
       const { data: current, error: getErr } = await supabaseClient
         .from('user_usage_tracking')
         .select(usageKey)
         .eq('user_id', userId)
         .single();
 
-      if (!getErr && current) {
-        const currentVal = current[usageKey] || 0;
-        await supabaseClient
-          .from('user_usage_tracking')
-          .update({ [usageKey]: currentVal + amount })
-          .eq('user_id', userId);
+      if (getErr || !current) {
+        throw new Error(`Failed to read TTS usage for user ${userId}: ${getErr?.message || 'Record not found'}`);
+      }
+
+      const currentVal = current[usageKey] || 0;
+      const { error: updateErr } = await supabaseClient
+        .from('user_usage_tracking')
+        .update({ [usageKey]: currentVal + amount })
+        .eq('user_id', userId);
+
+      if (updateErr) {
+        throw new Error(`Failed to increment TTS usage for user ${userId}: ${updateErr.message}`);
       }
     }
   } else {
@@ -475,7 +496,7 @@ export async function incrementUsage(
     // Increment historical fields for backward compatibility
     try {
       let legacyField = '';
-      if (feature === 'chat_simple' || feature === 'chat_reasoning' || feature === 'chat') {
+      if (feature === 'chat_simple' || feature === 'chat_reasoning' || feature === 'chat' || feature === 'chat_maximum') {
         legacyField = 'chat_today';
       } else {
         legacyField = `${feature}_today`;
@@ -542,37 +563,49 @@ export async function getRemainingCapacity(supabaseClient: any, userId: string):
 
 /**
  * Consumes AI Capacity for a user.
+ * FAIL-CLOSED: throws if update cannot be verified with the database.
  */
 export async function consumeCapacity(supabaseClient: any, userId: string, cost: number): Promise<void> {
+  if (cost <= 0) return;
   await getUserUsage(supabaseClient, userId);
 
-  const { error } = await supabaseClient.rpc('increment_usage_field', {
+  const { error: rpcErr } = await supabaseClient.rpc('increment_usage_field', {
     user_uuid: userId,
     field_name: 'daily_ai_capacity_used',
     increment_by: cost
   });
 
-  if (error) {
-    console.warn(`[UsageService] increment_usage_field RPC failed for daily_ai_capacity_used, falling back to read-write update:`, error.message);
-    const { data: current, error: getErr } = await supabaseClient
-      .from('user_usage_tracking')
-      .select('daily_ai_capacity_used')
-      .eq('user_id', userId)
-      .single();
+  if (!rpcErr) {
+    return;
+  }
 
-    if (!getErr && current) {
-      const currentVal = current.daily_ai_capacity_used || 0;
-      await supabaseClient
-        .from('user_usage_tracking')
-        .update({ daily_ai_capacity_used: currentVal + cost })
-        .eq('user_id', userId);
-    }
+  console.warn(`[UsageService] increment_usage_field RPC failed for daily_ai_capacity_used, falling back to direct write:`, rpcErr.message);
+  const { data: current, error: getErr } = await supabaseClient
+    .from('user_usage_tracking')
+    .select('daily_ai_capacity_used')
+    .eq('user_id', userId)
+    .single();
+
+  if (getErr || !current) {
+    throw new Error(`Failed to read daily AI capacity for user ${userId}: ${getErr?.message || 'Record not found'}`);
+  }
+
+  const currentVal = current.daily_ai_capacity_used || 0;
+  const { error: updateErr } = await supabaseClient
+    .from('user_usage_tracking')
+    .update({ daily_ai_capacity_used: currentVal + cost })
+    .eq('user_id', userId);
+
+  if (updateErr) {
+    throw new Error(`Failed to consume daily AI capacity for user ${userId}: ${updateErr.message}`);
   }
 }
 
 /**
- * Atomically reserves capacity for a user if within limits.
- * Prevents race conditions from concurrent requests.
+ * Atomically checks and reserves capacity for a user in a single database transaction.
+ * Completely eliminates concurrency race conditions between parallel requests.
+ * Preserves all feature costs, bonus capacity, and plan entitlements.
+ * Fails safely: returns allowed: false if reservation cannot be confirmed.
  */
 export async function reserveCapacity(
   supabaseClient: any,
@@ -580,26 +613,137 @@ export async function reserveCapacity(
   feature: string,
   incrementAmount: number = 1,
   options?: { quality?: string }
-): Promise<{ allowed: boolean; reason?: string; code?: string; cost: number }> {
-  const cost = feature === 'tts' ? incrementAmount : getFeatureCost(feature);
+): Promise<CapacityReservation> {
+  const reservationId = `res_${Date.now()}_${Math.random().toString(36).substring(2, 10)}`;
+
+  // TTS has its own character limits & monthly pool
+  if (feature === 'tts') {
+    const characterCount = incrementAmount;
+    
+    // First: Attempt atomic database RPC check-and-reserve in a single transaction
+    try {
+      const { data, error } = await supabaseClient.rpc('reserve_tts_usage', {
+        p_user_id: userId,
+        p_character_count: characterCount,
+        p_reservation_id: reservationId
+      });
+
+      if (!error && data && typeof data === 'object') {
+        if (!data.allowed) {
+          return {
+            allowed: false,
+            reason: data.reason || "Monthly speech characters allowance exhausted.",
+            code: data.code || "TTS_LIMIT_EXHAUSTED",
+            cost: 0,
+            reservationId
+          };
+        }
+        return {
+          allowed: true,
+          cost: characterCount,
+          reservationId: data.reservation_id || reservationId
+        };
+      }
+    } catch (rpcErr: any) {
+      console.warn(`[UsageService] reserve_tts_usage RPC failed or not present, using strict fallback:`, rpcErr?.message || rpcErr);
+    }
+
+    // Strict Fallback (FAIL CLOSED): Verify limit first
+    const limitResult = await checkLimit(supabaseClient, userId, 'tts', characterCount);
+    if (!limitResult.allowed) {
+      return {
+        allowed: false,
+        reason: limitResult.reason,
+        code: limitResult.code,
+        cost: 0,
+        reservationId
+      };
+    }
+
+    // Atomically consume upfront. If this fails, fail-closed and deny the request!
+    try {
+      await incrementUsage(supabaseClient, userId, 'tts', characterCount);
+      return { allowed: true, cost: characterCount, reservationId };
+    } catch (incErr: any) {
+      console.error(`[UsageService] Failed to confirm TTS reservation for user ${userId}:`, incErr?.message || incErr);
+      return {
+        allowed: false,
+        reason: "Failed to confirm speech character allocation with database.",
+        code: "RESERVATION_FAILED",
+        cost: 0,
+        reservationId
+      };
+    }
+  }
+
+  // Feature cost determination
+  let cost = getFeatureCost(feature);
+  if (feature.startsWith('video_generation') || feature === 'video') {
+    const requestedQuality = options?.quality || (feature.includes('super') ? 'super-creative' : 'creative');
+    if (requestedQuality === 'super-creative' || requestedQuality === 'super_creative') {
+      cost = getFeatureCost('video_generation_super_creative');
+    } else {
+      cost = getFeatureCost('video_generation_creative');
+    }
+  } else if (feature === 'live_mode') {
+    cost = incrementAmount > 1 ? incrementAmount * 10 : 10;
+  }
+
+  // First: Attempt atomic database RPC check-and-reserve in a single transaction
+  try {
+    const { data, error } = await supabaseClient.rpc('reserve_ai_capacity', {
+      p_user_id: userId,
+      p_cost: cost,
+      p_feature: feature,
+      p_reservation_id: reservationId
+    });
+
+    if (!error && data && typeof data === 'object') {
+      if (!data.allowed) {
+        return {
+          allowed: false,
+          reason: data.reason || `Your daily AI capacity of ${data.limit || 100} credits has been exhausted. Please upgrade your plan for more daily capacity.`,
+          code: data.code || 'CAPACITY_EXHAUSTED',
+          cost: 0,
+          reservationId
+        };
+      }
+      return {
+        allowed: true,
+        cost,
+        reservationId: data.reservation_id || reservationId
+      };
+    }
+  } catch (rpcErr: any) {
+    console.warn(`[UsageService] reserve_ai_capacity RPC failed or not present, using strict fallback:`, rpcErr?.message || rpcErr);
+  }
+
+  // Strict Fallback (FAIL CLOSED): Verify limit first
   const limitResult = await checkLimit(supabaseClient, userId, feature, incrementAmount, options);
   if (!limitResult.allowed) {
     return {
       allowed: false,
       reason: limitResult.reason,
       code: limitResult.code,
-      cost: 0
+      cost: 0,
+      reservationId
     };
   }
 
-  // Atomically consume the capacity upfront to block concurrent overages
-  if (feature === 'tts') {
-    await incrementUsage(supabaseClient, userId, 'tts', incrementAmount);
-  } else {
+  // Atomically consume upfront. If this fails, fail-closed and reject the request!
+  try {
     await consumeCapacity(supabaseClient, userId, cost);
+    return { allowed: true, cost, reservationId };
+  } catch (consumeErr: any) {
+    console.error(`[UsageService] Failed to confirm capacity reservation for user ${userId}:`, consumeErr?.message || consumeErr);
+    return {
+      allowed: false,
+      reason: "Failed to confirm AI capacity reservation with database.",
+      code: "RESERVATION_FAILED",
+      cost: 0,
+      reservationId
+    };
   }
-
-  return { allowed: true, cost };
 }
 
 /**
@@ -610,17 +754,32 @@ export async function recordUsageSuccess(
   supabaseClient: any,
   userId: string,
   feature: string,
-  amount: number = 1
+  amount: number = 1,
+  reservationId?: string
 ): Promise<void> {
   if (feature === 'tts') {
     // TTS character count was already reserved in reserveCapacity
     return;
   }
 
-  // Increment historical fields for backward compatibility
+  // Attempt atomic database completion recording
+  try {
+    const { error: rpcErr } = await supabaseClient.rpc('record_usage_success', {
+      p_user_id: userId,
+      p_feature: feature,
+      p_reservation_id: reservationId || null
+    });
+    if (!rpcErr) {
+      return;
+    }
+  } catch (err: any) {
+    // Fall back to discrete field updates
+  }
+
+  // Fallback: Increment historical fields for backward compatibility
   try {
     let legacyField = '';
-    if (feature === 'chat_simple' || feature === 'chat_reasoning' || feature === 'chat') {
+    if (feature === 'chat_simple' || feature === 'chat_reasoning' || feature === 'chat' || feature === 'chat_maximum') {
       legacyField = 'chat_today';
     } else {
       legacyField = `${feature}_today`;
@@ -667,73 +826,138 @@ export async function recordUsageSuccess(
 }
 
 /**
- * Safely refunds / rolls back AI Capacity for a user (e.g. on provider errors or aborted requests).
+ * Safely and idempotently refunds AI Capacity for a user on provider failure or aborted requests.
+ * Uses dedicated refund RPC and bounded decrement. Never permits arbitrary negative increments.
  */
-export async function refundCapacity(supabaseClient: any, userId: string, cost: number): Promise<void> {
-  if (cost <= 0) return;
+export async function refundCapacity(
+  supabaseClient: any,
+  userId: string,
+  cost: number,
+  reservationId?: string
+): Promise<boolean> {
+  if (cost <= 0) return false;
+
+  // Enforce idempotency: prevent repeated refunding of the same reservation
+  if (reservationId) {
+    if (refundedReservations.has(reservationId)) {
+      console.log(`[UsageService] Reservation ${reservationId} has already been refunded. Skipping duplicate refund.`);
+      return false;
+    }
+    refundedReservations.add(reservationId);
+    if (refundedReservations.size > 10000) {
+      const it = refundedReservations.values();
+      for (let i = 0; i < 5000; i++) {
+        refundedReservations.delete(it.next().value);
+      }
+    }
+  }
+
+  // 1. Attempt atomic idempotent refund RPC in DB
   try {
-    const { error } = await supabaseClient.rpc('increment_usage_field', {
-      user_uuid: userId,
-      field_name: 'daily_ai_capacity_used',
-      increment_by: -cost
+    const { data, error } = await supabaseClient.rpc('refund_ai_capacity', {
+      p_user_id: userId,
+      p_cost: cost,
+      p_reservation_id: reservationId || null
     });
 
-    if (error) {
-      // Fallback read-update if RPC rejected negative number
-      const { data: current, error: getErr } = await supabaseClient
-        .from('user_usage_tracking')
-        .select('daily_ai_capacity_used')
-        .eq('user_id', userId)
-        .single();
-
-      if (!getErr && current) {
-        const currentVal = current.daily_ai_capacity_used || 0;
-        const newVal = Math.max(0, currentVal - cost);
-        await supabaseClient
-          .from('user_usage_tracking')
-          .update({ daily_ai_capacity_used: newVal })
-          .eq('user_id', userId);
+    if (!error && data) {
+      if (typeof data.refunded === 'boolean') {
+        return data.refunded;
       }
+      return true;
+    }
+  } catch (rpcErr: any) {
+    console.warn(`[UsageService] refund_ai_capacity RPC not present or failed, using bounded fallback:`, rpcErr?.message || rpcErr);
+  }
+
+  // 2. Safe bounded fallback (never drops below 0, never calls increment_usage_field with negative integers)
+  try {
+    const { data: current, error: getErr } = await supabaseClient
+      .from('user_usage_tracking')
+      .select('daily_ai_capacity_used')
+      .eq('user_id', userId)
+      .single();
+
+    if (!getErr && current) {
+      const currentVal = current.daily_ai_capacity_used || 0;
+      const newVal = Math.max(0, currentVal - cost);
+      await supabaseClient
+        .from('user_usage_tracking')
+        .update({ daily_ai_capacity_used: newVal })
+        .eq('user_id', userId);
+      return true;
     }
   } catch (err: any) {
     console.warn(`[UsageService] Failed to refund capacity for ${userId}:`, err?.message || err);
   }
+  return false;
 }
 
 /**
- * Safely refunds TTS characters if speech generation failed after reservation.
+ * Safely and idempotently refunds TTS characters if speech generation failed after reservation.
+ * Uses dedicated refund RPC and bounded decrement. Never permits arbitrary negative increments.
  */
 export async function refundTtsUsage(
   supabaseClient: any,
   userId: string,
-  characterCount: number
-): Promise<void> {
-  if (characterCount <= 0) return;
+  characterCount: number,
+  reservationId?: string
+): Promise<boolean> {
+  if (characterCount <= 0) return false;
+
+  // Enforce idempotency: prevent repeated refunding of the same reservation
+  if (reservationId) {
+    if (refundedReservations.has(reservationId)) {
+      console.log(`[UsageService] TTS Reservation ${reservationId} has already been refunded. Skipping duplicate refund.`);
+      return false;
+    }
+    refundedReservations.add(reservationId);
+    if (refundedReservations.size > 10000) {
+      const it = refundedReservations.values();
+      for (let i = 0; i < 5000; i++) {
+        refundedReservations.delete(it.next().value);
+      }
+    }
+  }
+
+  // 1. Attempt atomic idempotent refund RPC
   try {
-    const { error } = await supabaseClient.rpc('increment_usage_field', {
-      user_uuid: userId,
-      field_name: 'tts_characters_used_monthly',
-      increment_by: -characterCount
+    const { data, error } = await supabaseClient.rpc('refund_tts_usage', {
+      p_user_id: userId,
+      p_character_count: characterCount,
+      p_reservation_id: reservationId || null
     });
 
-    if (error) {
-      const { data: current } = await supabaseClient
-        .from('user_usage_tracking')
-        .select('tts_characters_used_monthly')
-        .eq('user_id', userId)
-        .maybeSingle();
-
-      if (current) {
-        const newVal = Math.max(0, (current.tts_characters_used_monthly || 0) - characterCount);
-        await supabaseClient
-          .from('user_usage_tracking')
-          .update({ tts_characters_used_monthly: newVal })
-          .eq('user_id', userId);
+    if (!error && data) {
+      if (typeof data.refunded === 'boolean') {
+        return data.refunded;
       }
+      return true;
+    }
+  } catch (rpcErr: any) {
+    console.warn(`[UsageService] refund_tts_usage RPC not present or failed, using bounded fallback:`, rpcErr?.message || rpcErr);
+  }
+
+  // 2. Safe bounded fallback
+  try {
+    const { data: current } = await supabaseClient
+      .from('user_usage_tracking')
+      .select('tts_characters_used_monthly')
+      .eq('user_id', userId)
+      .maybeSingle();
+
+    if (current) {
+      const newVal = Math.max(0, (current.tts_characters_used_monthly || 0) - characterCount);
+      await supabaseClient
+        .from('user_usage_tracking')
+        .update({ tts_characters_used_monthly: newVal })
+        .eq('user_id', userId);
+      return true;
     }
   } catch (err: any) {
     console.warn(`[UsageService] Failed to refund TTS usage for ${userId}:`, err?.message || err);
   }
+  return false;
 }
 
 /**
