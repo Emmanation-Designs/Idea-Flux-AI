@@ -1,6 +1,6 @@
 export type PlanId = 'free' | 'plus' | 'pro';
 export type Region = 'nigeria' | 'international';
-export type PaymentProviderType = 'paypal' | 'paystack' | 'wittypay' | 'stripe' | 'apple' | 'google';
+export type PaymentProviderType = 'paypal' | 'paystack' | 'wittypay' | 'apple' | 'google';
 export const DEFAULT_USD_TO_NGN_RATE = 1400;
 
 export interface PlanIdentity {

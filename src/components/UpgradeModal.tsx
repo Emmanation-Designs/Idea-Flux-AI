@@ -10,6 +10,7 @@ import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 import { toast } from 'sonner';
 import { getPlanPrice, getRegionalPlanPrice, DEFAULT_USD_TO_NGN_RATE, PlanId } from '../subscription/catalog';
+import { supabase } from '../lib/supabase';
 
 function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
@@ -26,6 +27,12 @@ export const UpgradeModal: React.FC<UpgradeModalProps> = ({ isOpen, onClose, rea
   const [billingPeriod, setBillingPeriod] = React.useState<'monthly' | 'yearly'>('monthly');
 
   const getLocalRegion = (): 'nigeria' | 'international' => {
+    if (
+      profile?.country_code?.toUpperCase() === 'NG' ||
+      profile?.billing_country?.toLowerCase() === 'nigeria'
+    ) {
+      return 'nigeria';
+    }
     try {
       const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
       if (tz && (tz.includes('Lagos') || tz.includes('Africa/Lagos') || tz.includes('Nigeria'))) {
@@ -41,14 +48,34 @@ export const UpgradeModal: React.FC<UpgradeModalProps> = ({ isOpen, onClose, rea
   React.useEffect(() => {
     if (!isOpen || region !== 'nigeria') return;
     let active = true;
-    fetch('/api/billing/exchange-rate')
-      .then((res) => (res.ok ? res.json() : null))
-      .then((data) => {
-        if (active && data?.usdToNgn > 0) {
-          setUsdToNgnRate(Number(data.usdToNgn));
+
+    const loadRate = async () => {
+      try {
+        const { data, error } = await supabase
+          .from('platform_settings')
+          .select('value')
+          .eq('key', 'billing_fx_rates')
+          .maybeSingle();
+
+        const dbRate = Number((data as any)?.value?.usd_to_ngn);
+        if (active && !error && Number.isFinite(dbRate) && dbRate > 0) {
+          setUsdToNgnRate(dbRate);
+          return;
         }
-      })
-      .catch(() => {});
+      } catch {}
+
+      try {
+        const res = await fetch('/api/billing/exchange-rate', { cache: 'no-store' });
+        if (res.ok) {
+          const apiData = await res.json();
+          if (active && Number(apiData?.usdToNgn) > 0) {
+            setUsdToNgnRate(Number(apiData.usdToNgn));
+          }
+        }
+      } catch {}
+    };
+
+    loadRate();
     return () => {
       active = false;
     };
@@ -83,9 +110,15 @@ export const UpgradeModal: React.FC<UpgradeModalProps> = ({ isOpen, onClose, rea
   const executeCheckout = async (planId: string, provider: 'paypal' | 'wittypay' | 'paystack') => {
     setIsSubscribing(planId);
     try {
+      const { data: { session } } = await supabase.auth.getSession();
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+      if (session?.access_token) {
+        headers['Authorization'] = `Bearer ${session.access_token}`;
+      }
+
       const response = await fetch('/api/payment/checkout', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers,
         body: JSON.stringify({
           plan: planId,
           interval: billingPeriod === 'monthly' ? 'month' : 'year',
@@ -492,35 +525,47 @@ export const UpgradeModal: React.FC<UpgradeModalProps> = ({ isOpen, onClose, rea
                 {/* WittyPay Card (Nigeria Only) */}
                 {region === 'nigeria' && (
                   <div 
-                    onClick={() => {
-                      toast.info("WittyPay NGN checkout is awaiting your WittyPay API endpoint/webhook spec. Use PayPal for now.");
-                    }}
-                    className="p-5 rounded-2xl border-2 border-dashed border-zinc-200 dark:border-zinc-800 bg-zinc-50/20 dark:bg-zinc-950/20 cursor-pointer opacity-85 hover:opacity-100 transition-all flex flex-col justify-between gap-4 group relative"
+                    onClick={() => executeCheckout(selectedPlanForUpgrade, 'wittypay')}
+                    className="p-5 rounded-2xl border-2 border-zinc-200 dark:border-zinc-800 hover:border-emerald-500 dark:hover:border-emerald-500 bg-zinc-50/50 dark:bg-zinc-950/40 hover:bg-emerald-500/5 cursor-pointer transition-all flex flex-col justify-between gap-4 group"
                   >
                     <div className="flex justify-between items-start">
                       <div className="flex items-center gap-3">
-                        <div className="w-10 h-10 rounded-xl bg-emerald-500/10 flex items-center justify-center">
+                        <div className="w-10 h-10 rounded-xl bg-emerald-500/10 flex items-center justify-center group-hover:bg-emerald-500/20 transition-colors">
                           <CreditCard className="w-5 h-5 text-emerald-500" />
                         </div>
                         <div>
-                          <h4 className="font-bold text-sm text-zinc-800 dark:text-zinc-200 flex items-center gap-1.5">
+                          <h4 className="font-bold text-sm text-zinc-900 dark:text-white flex items-center gap-1.5">
                             WittyPay
-                            <span className="text-[10px] font-black bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 px-1.5 py-0.5 rounded uppercase">Nigeria Only</span>
+                            <span className="text-[10px] font-bold text-emerald-600 dark:text-emerald-400 px-1.5 py-0.5 bg-emerald-500/10 rounded uppercase">Nigeria Only</span>
                           </h4>
                           <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-0.5">
-                            Pay in ₦ (Bank Transfer, PalmPay, Card) at ₦{usdToNgnRate.toLocaleString()}/$
+                            Pay in ₦ (Bank Transfer, PalmPay, USSD & Card)
                           </p>
                         </div>
                       </div>
-                      <span className="text-[10px] font-black uppercase bg-amber-500/15 text-amber-600 dark:text-amber-400 px-2.5 py-0.5 rounded-full border border-amber-500/20">
-                        Setup Pending
+                      <span className="text-[10px] font-black uppercase bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 px-2.5 py-0.5 rounded-full border border-emerald-500/20">
+                        Available
                       </span>
                     </div>
+
+                    <div className="space-y-2 text-xs text-zinc-600 dark:text-zinc-400 pl-1 py-1">
+                      <div className="flex items-center gap-2">
+                        <Check className="w-3.5 h-3.5 text-emerald-500 flex-shrink-0" />
+                        <span>Instant Nigerian bank transfer & PalmPay checkout</span>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <Check className="w-3.5 h-3.5 text-emerald-500 flex-shrink-0" />
+                        <span>No dollar card required — billed in Naira (₦{usdToNgnRate.toLocaleString()}/$)</span>
+                      </div>
+                    </div>
+
                     <button 
-                      disabled
-                      className="w-full py-2.5 bg-zinc-100 dark:bg-zinc-800 text-zinc-400 dark:text-zinc-500 rounded-xl text-xs font-bold uppercase tracking-wider transition-all flex items-center justify-center gap-2 cursor-not-allowed"
+                      onClick={(e) => { e.stopPropagation(); executeCheckout(selectedPlanForUpgrade, 'wittypay'); }}
+                      disabled={isSubscribing !== null}
+                      className="w-full py-2.5 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-60 text-white rounded-xl text-xs font-bold uppercase tracking-wider transition-all flex items-center justify-center gap-2 group-hover:scale-[1.01] shadow-md shadow-emerald-500/10 cursor-pointer"
                     >
-                      Awaiting WittyPay API Docs
+                      {isSubscribing === selectedPlanForUpgrade ? 'Connecting to WittyPay...' : 'Continue with WittyPay'}
+                      <ArrowUpRight className="w-3.5 h-3.5" />
                     </button>
                   </div>
                 )}

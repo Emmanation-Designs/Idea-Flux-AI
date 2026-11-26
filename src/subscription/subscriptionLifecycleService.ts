@@ -35,7 +35,7 @@ export async function activateSubscription(
   supabaseClient: any,
   userId: string,
   planId: 'plus' | 'pro',
-  provider: 'paypal' | 'paystack' | 'wittypay' | 'stripe' | 'apple' | 'google',
+  provider: 'paypal' | 'paystack' | 'wittypay' | 'apple' | 'google',
   region: 'nigeria' | 'international',
   interval: 'month' | 'year' = 'month'
 ): Promise<void> {
@@ -249,7 +249,7 @@ export async function changePlan(
   supabaseClient: any,
   userId: string,
   newPlanId: 'plus' | 'pro',
-  provider: 'paypal' | 'paystack' | 'wittypay' | 'stripe' | 'apple' | 'google',
+  provider: 'paypal' | 'paystack' | 'wittypay' | 'apple' | 'google',
   region: 'nigeria' | 'international',
   interval: 'month' | 'year' = 'month'
 ): Promise<void> {

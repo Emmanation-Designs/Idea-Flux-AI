@@ -141,11 +141,54 @@ export const Settings = (props: {
 
   React.useEffect(() => {
     const urlParams = new URLSearchParams(window.location.search);
-    if (urlParams.get('success') === 'true') {
+    const providerParam = urlParams.get('provider');
+    const refParam = urlParams.get('ref') || urlParams.get('reference') || urlParams.get('trxref');
+    const successParam = urlParams.get('success');
+
+    if (providerParam === 'wittypay' && refParam) {
+      let active = true;
+      (async () => {
+        try {
+          const { data: { session } } = await supabase.auth.getSession();
+          const token = session?.access_token;
+          if (!token) return;
+
+          const res = await fetch('/api/payment/wittypay/verify', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': `Bearer ${token}`
+            },
+            body: JSON.stringify({ reference: refParam })
+          });
+          const data = await res.json();
+          if (!active) return;
+
+          if (res.ok && data.verified) {
+            if (data.subscription) {
+              await onUpdateProfile(data.subscription);
+            }
+            toast.success('WittyPay payment verified! Your plan has been activated.');
+          } else {
+            toast.info(data.error || 'Payment verification is pending. Please click Sync in Billing if needed.');
+          }
+        } catch (err) {
+          console.error('[WittyPay Return Verify Error]:', err);
+          if (active) {
+            toast.error('Could not verify payment automatically. Please refresh or sync in Billing.');
+          }
+        } finally {
+          window.history.replaceState({}, '', window.location.pathname);
+        }
+      })();
+      return () => {
+        active = false;
+      };
+    }
+
+    if (successParam === 'true') {
       toast.success('Payment successful! Your plan has been activated.');
-      // Remove query param without refreshing
-      const newUrl = window.location.pathname;
-      window.history.replaceState({}, '', newUrl);
+      window.history.replaceState({}, '', window.location.pathname);
     }
   }, []);
 

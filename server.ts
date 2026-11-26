@@ -15,7 +15,9 @@ import type { ViteDevServer } from "vite";
 import { checkLimit, incrementUsage, getUserUsage, getPlanLimits, getRemainingCapacity, consumeCapacity, refundCapacity, reserveCapacity, recordUsageSuccess, refundTtsUsage, CAPACITY_WARNING_THRESHOLD, CapacityReservation } from "./src/lib/usageService.js";
 import { getSubscription, updateSubscription } from "./src/lib/subscriptionService.js";
 import { getPaymentAdapter } from "./src/lib/paymentService.js";
+import { WittyPayGatewayAdapter } from "./src/lib/wittypayAdapter.js";
 import { getPlan, getPaymentConfiguration, DEFAULT_USD_TO_NGN_RATE } from "./src/subscription/catalog.js";
+import { supabase as publicSupabase } from "./src/lib/supabase.js";
 import { 
   activateSubscription, 
   renewSubscription, 
@@ -71,27 +73,30 @@ async function authenticateUser(req: express.Request) {
   }
 
   const token = authHeader.split(" ")[1];
-  let supabase;
+  let adminSupabase: any = null;
   try {
-    supabase = getSupabaseAdminClient();
+    adminSupabase = getSupabaseAdminClient();
   } catch (err: any) {
-    console.error("[Supabase] Client initialization failed during authentication:", err);
-    throw { status: 500, error: "Database configuration error: Failed to initialize database client." };
+    console.warn("[Supabase] Service role key unavailable during auth check; using public Supabase Auth client.");
   }
 
+  const authClient = adminSupabase || publicSupabase;
+
   try {
-    const { data: userData, error: authError } = await supabase.auth.getUser(token);
+    const { data: userData, error: authError } = await authClient.auth.getUser(token);
     if (authError || !userData?.user) {
       console.warn("[Authentication] User validation failed with token");
       throw { status: 401, error: "Unauthorized: Invalid session token." };
     }
     const user = userData.user;
     
-    // Automatically validate and synchronize subscription (STEP 9)
-    try {
-      await validateSubscription(supabase, user.id);
-    } catch (syncErr: any) {
-      console.error(`[Subscription Validation Error] Failed to validate/sync subscription for user ${user.id}:`, syncErr.message || syncErr);
+    // Automatically validate and synchronize subscription when admin client is available
+    if (adminSupabase) {
+      try {
+        await validateSubscription(adminSupabase, user.id);
+      } catch (syncErr: any) {
+        console.error(`[Subscription Validation Error] Failed to validate/sync subscription for user ${user.id}:`, syncErr.message || syncErr);
+      }
     }
 
     return user;
@@ -107,7 +112,7 @@ const PORT = 3000;
 
 app.use(express.json({
   verify: (req: any, res, buf) => {
-    if (req.originalUrl.startsWith('/api/stripe/webhook') || req.originalUrl.startsWith('/api/payment/webhook')) {
+    if (req.originalUrl.startsWith('/api/payment/webhook')) {
       req.rawBody = buf;
     }
   }
@@ -1351,17 +1356,16 @@ app.get("/api/models", async (req, res) => {
 
 // --- Provider-Agnostic Payment Integration ---
 
-let cachedUsdToNgnRate: { value: number; expiresAt: number } | null = null;
-
 async function getUsdToNgnRate(): Promise<number> {
-  const now = Date.now();
-  if (cachedUsdToNgnRate && now < cachedUsdToNgnRate.expiresAt) {
-    return cachedUsdToNgnRate.value;
-  }
-
   try {
-    const supabase = getSupabaseAdminClient();
-    const { data, error } = await supabase
+    let client: any = publicSupabase;
+    try {
+      client = getSupabaseAdminClient();
+    } catch {
+      client = publicSupabase;
+    }
+
+    const { data, error } = await client
       .from('platform_settings')
       .select('value')
       .eq('key', 'billing_fx_rates')
@@ -1369,7 +1373,6 @@ async function getUsdToNgnRate(): Promise<number> {
 
     const parsedRate = Number(data?.value?.usd_to_ngn);
     if (!error && Number.isFinite(parsedRate) && parsedRate > 0) {
-      cachedUsdToNgnRate = { value: parsedRate, expiresAt: now + 30_000 };
       return parsedRate;
     }
   } catch (err) {
@@ -1381,9 +1384,85 @@ async function getUsdToNgnRate(): Promise<number> {
 
 // Public Billing FX Rate endpoint (reads admin-editable platform_settings, defaults to 1400)
 app.get("/api/billing/exchange-rate", async (req, res) => {
+  res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
   const usdToNgn = await getUsdToNgnRate();
   res.json({ usdToNgn });
 });
+
+async function activateIdempotentPayment(
+  supabase: any,
+  params: {
+    reference?: string;
+    userId: string;
+    planId: 'plus' | 'pro';
+    provider: 'paypal' | 'paystack' | 'wittypay' | 'apple' | 'google';
+    region: 'nigeria' | 'international';
+    interval: 'month' | 'year';
+    orderNo?: string;
+    paidAmount?: number;
+    payMethod?: string;
+  }
+): Promise<{ alreadyProcessed: boolean }> {
+  const { reference, userId, planId, provider, region, interval, orderNo, paidAmount, payMethod } = params;
+
+  if (reference) {
+    try {
+      const { data: existingTx, error: lookupErr } = await supabase
+        .from('payment_transactions')
+        .select('reference, status')
+        .eq('reference', reference)
+        .maybeSingle();
+
+      if (!lookupErr) {
+        if (existingTx?.status === 'completed') {
+          console.log(`[Payment Idempotency] Reference ${reference} already completed. Skipping duplicate activation.`);
+          return { alreadyProcessed: true };
+        }
+
+        if (existingTx) {
+          const { data: claimedRows, error: claimErr } = await supabase
+            .from('payment_transactions')
+            .update({
+              status: 'completed',
+              order_no: orderNo || null,
+              paid_amount: paidAmount ?? null,
+              pay_method: payMethod || null,
+              completed_at: new Date().toISOString()
+            })
+            .eq('reference', reference)
+            .neq('status', 'completed')
+            .select('reference');
+
+          if (!claimErr && (!claimedRows || claimedRows.length === 0)) {
+            console.log(`[Payment Idempotency] Reference ${reference} claimed concurrently. Skipping duplicate activation.`);
+            return { alreadyProcessed: true };
+          }
+        } else {
+          await supabase.from('payment_transactions').insert({
+            reference,
+            user_id: userId,
+            provider,
+            plan: planId,
+            interval,
+            region,
+            expected_amount: paidAmount ?? 0,
+            paid_amount: paidAmount ?? null,
+            currency: region === 'nigeria' && provider === 'wittypay' ? 'NGN' : 'USD',
+            status: 'completed',
+            order_no: orderNo || null,
+            pay_method: payMethod || null,
+            completed_at: new Date().toISOString()
+          });
+        }
+      }
+    } catch (txErr) {
+      console.warn('[Payment Idempotency] Transaction table check skipped:', txErr);
+    }
+  }
+
+  await activateSubscription(supabase, userId, planId, provider, region, interval);
+  return { alreadyProcessed: false };
+}
 
 // Generic Checkout Session route
 app.post("/api/payment/checkout", async (req, res) => {
@@ -1394,10 +1473,19 @@ app.post("/api/payment/checkout", async (req, res) => {
     if (!userId) return res.status(400).json({ error: 'User ID is required' });
     if (!plan || !interval) return res.status(400).json({ error: 'Plan and interval are required' });
 
-    const provider = requestedProvider || process.env.ACTIVE_PAYMENT_PROVIDER || 'stripe';
+    let authedEmail: string | undefined;
+    if (req.headers.authorization) {
+      const authedUser = await authenticateUser(req);
+      if (authedUser.id !== userId) {
+        return res.status(403).json({ error: 'Forbidden: User ID mismatch' });
+      }
+      authedEmail = authedUser.email;
+    }
+
+    const provider = requestedProvider || process.env.ACTIVE_PAYMENT_PROVIDER || 'paypal';
 
     // Provider validation (STEP 7)
-    const validProviders = ['stripe', 'paypal', 'paystack', 'wittypay', 'sandbox', 'apple', 'google'];
+    const validProviders = ['paypal', 'paystack', 'wittypay', 'sandbox', 'apple', 'google'];
     if (!validProviders.includes(provider.toLowerCase())) {
       return res.status(400).json({ error: `Invalid payment provider: ${provider}` });
     }
@@ -1452,30 +1540,75 @@ app.post("/api/payment/checkout", async (req, res) => {
       userId,
       origin,
       region: userRegion,
-      user: { id: userId },
+      user: { id: userId, email: authedEmail },
       usdToNgnRate
     });
 
     res.json({ url: result.url });
   } catch (error: any) {
     console.error('[Payment Checkout Error]:', error);
-    res.status(500).json({ 
-      error: error.message || 'An error occurred during checkout creation',
+    res.status(error.status || 500).json({ 
+      error: error.error || error.message || 'An error occurred during checkout creation',
       code: error.code || 'checkout_error'
+    });
+  }
+});
+
+// WittyPay Return-URL Server Verification (called after browser redirect back from WittyPay)
+app.post("/api/payment/wittypay/verify", async (req, res) => {
+  try {
+    const authedUser = await authenticateUser(req);
+    const reference = String(req.body?.reference || req.query?.ref || '').trim();
+    if (!reference) {
+      return res.status(400).json({ error: 'Transaction reference is required' });
+    }
+
+    const wittypay = new WittyPayGatewayAdapter();
+    const verified = await wittypay.verifyTransaction(reference);
+
+    if (verified.userId !== authedUser.id) {
+      return res.status(403).json({ error: 'Forbidden: Transaction does not belong to authenticated user' });
+    }
+
+    const supabase = getSupabaseAdminClient();
+    const { alreadyProcessed } = await activateIdempotentPayment(supabase, {
+      reference: verified.reference,
+      userId: verified.userId,
+      planId: verified.plan,
+      provider: 'wittypay',
+      region: 'nigeria',
+      interval: verified.interval,
+      orderNo: verified.orderNo,
+      paidAmount: verified.amount,
+      payMethod: verified.payMethod
+    });
+
+    const subscription = await getSubscription(supabase, authedUser.id);
+    res.json({
+      verified: true,
+      alreadyProcessed,
+      reference: verified.reference,
+      subscription
+    });
+  } catch (error: any) {
+    console.error('[WittyPay Verify Error]:', error);
+    res.status(error.status || 400).json({
+      verified: false,
+      error: error.error || error.message || 'Failed to verify WittyPay payment'
     });
   }
 });
 
 // Generic Webhook Processing route
 app.post("/api/payment/webhook", async (req: any, res) => {
-  const provider = req.query.provider || process.env.ACTIVE_PAYMENT_PROVIDER || 'stripe';
+  const provider = req.query.provider || process.env.ACTIVE_PAYMENT_PROVIDER || 'paypal';
   
   try {
     const adapter = getPaymentAdapter(provider);
     const result = await adapter.verifyWebhook(req.headers, req.rawBody);
 
     if (result) {
-      const { userId, plan, interval, provider: resolvedProvider, region: resolvedRegion, eventType } = result;
+      const { userId, plan, interval, provider: resolvedProvider, region: resolvedRegion, eventType, reference, orderNo, paidAmount, payMethod } = result;
       console.log(`[Payment Webhook] Webhook validated via ${resolvedProvider} (${eventType}) for user: ${userId}`);
 
       const supabase = getSupabaseAdminClient();
@@ -1489,14 +1622,17 @@ app.post("/api/payment/webhook", async (req: any, res) => {
         await renewSubscription(supabase, userId, (interval || 'month') as any);
       } else {
         const planId = plan ? (plan.toLowerCase() as any) : 'plus';
-        await activateSubscription(
-          supabase,
+        await activateIdempotentPayment(supabase, {
+          reference,
           userId,
           planId,
-          resolvedProvider as any,
-          targetRegion,
-          (interval || 'month') as any
-        );
+          provider: resolvedProvider as any,
+          region: targetRegion,
+          interval: (interval || 'month') as any,
+          orderNo,
+          paidAmount,
+          payMethod
+        });
       }
     } else {
       console.log(`[Payment Webhook] Event processed but did not require profile updates.`);
@@ -1507,16 +1643,6 @@ app.post("/api/payment/webhook", async (req: any, res) => {
     console.error(`[Payment Webhook Error] (${provider}): ${err.message}`);
     return res.status(400).send(`Webhook Error: ${err.message}`);
   }
-});
-
-// Backwards compatibility legacy wrappers
-app.post("/api/stripe/checkout", async (req, res) => {
-  req.body.provider = 'stripe';
-  res.redirect(307, '/api/payment/checkout');
-});
-
-app.post("/api/stripe/webhook", async (req, res) => {
-  res.redirect(307, '/api/payment/webhook?provider=stripe');
 });
 
 // --- ElevenLabs Text to Speech Integration ---

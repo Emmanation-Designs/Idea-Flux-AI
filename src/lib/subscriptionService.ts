@@ -1,7 +1,7 @@
 export interface SubscriptionDetails {
   current_plan: 'free' | 'plus' | 'pro';
   subscription_status: string;
-  subscription_provider: 'paypal' | 'paystack' | 'stripe' | 'apple' | 'google' | null;
+  subscription_provider: 'paypal' | 'paystack' | 'wittypay' | 'apple' | 'google' | null;
   subscription_start: string;
   subscription_end: string | null;
   country_code: string | null;
