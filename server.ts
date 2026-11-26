@@ -15,7 +15,7 @@ import type { ViteDevServer } from "vite";
 import { checkLimit, incrementUsage, getUserUsage, getPlanLimits, getRemainingCapacity, consumeCapacity, refundCapacity, reserveCapacity, recordUsageSuccess, refundTtsUsage, CAPACITY_WARNING_THRESHOLD, CapacityReservation } from "./src/lib/usageService.js";
 import { getSubscription, updateSubscription } from "./src/lib/subscriptionService.js";
 import { getPaymentAdapter } from "./src/lib/paymentService.js";
-import { getPlan, getPaymentConfiguration } from "./src/subscription/catalog.js";
+import { getPlan, getPaymentConfiguration, DEFAULT_USD_TO_NGN_RATE } from "./src/subscription/catalog.js";
 import { 
   activateSubscription, 
   renewSubscription, 
@@ -1351,6 +1351,40 @@ app.get("/api/models", async (req, res) => {
 
 // --- Provider-Agnostic Payment Integration ---
 
+let cachedUsdToNgnRate: { value: number; expiresAt: number } | null = null;
+
+async function getUsdToNgnRate(): Promise<number> {
+  const now = Date.now();
+  if (cachedUsdToNgnRate && now < cachedUsdToNgnRate.expiresAt) {
+    return cachedUsdToNgnRate.value;
+  }
+
+  try {
+    const supabase = getSupabaseAdminClient();
+    const { data, error } = await supabase
+      .from('platform_settings')
+      .select('value')
+      .eq('key', 'billing_fx_rates')
+      .maybeSingle();
+
+    const parsedRate = Number(data?.value?.usd_to_ngn);
+    if (!error && Number.isFinite(parsedRate) && parsedRate > 0) {
+      cachedUsdToNgnRate = { value: parsedRate, expiresAt: now + 30_000 };
+      return parsedRate;
+    }
+  } catch (err) {
+    console.warn('[Billing FX] Failed to read platform_settings, falling back to default rate:', err);
+  }
+
+  return DEFAULT_USD_TO_NGN_RATE;
+}
+
+// Public Billing FX Rate endpoint (reads admin-editable platform_settings, defaults to 1400)
+app.get("/api/billing/exchange-rate", async (req, res) => {
+  const usdToNgn = await getUsdToNgnRate();
+  res.json({ usdToNgn });
+});
+
 // Generic Checkout Session route
 app.post("/api/payment/checkout", async (req, res) => {
   try {
@@ -1363,7 +1397,7 @@ app.post("/api/payment/checkout", async (req, res) => {
     const provider = requestedProvider || process.env.ACTIVE_PAYMENT_PROVIDER || 'stripe';
 
     // Provider validation (STEP 7)
-    const validProviders = ['stripe', 'paypal', 'paystack', 'sandbox', 'apple', 'google'];
+    const validProviders = ['stripe', 'paypal', 'paystack', 'wittypay', 'sandbox', 'apple', 'google'];
     if (!validProviders.includes(provider.toLowerCase())) {
       return res.status(400).json({ error: `Invalid payment provider: ${provider}` });
     }
@@ -1391,6 +1425,10 @@ app.post("/api/payment/checkout", async (req, res) => {
       return res.status(400).json({ error: `Unknown region: ${region}` });
     }
 
+    if (provider.toLowerCase() === 'wittypay' && userRegion !== 'nigeria') {
+      return res.status(400).json({ error: 'WittyPay is only available for Nigerian users.' });
+    }
+
     // Payment configuration check for Paystack (STEP 5 & 7)
     if (provider.toLowerCase() === 'paystack') {
       const paymentConfig = getPaymentConfiguration(planId as any, provider.toLowerCase() as any, userRegion as any) as any;
@@ -1403,8 +1441,9 @@ app.post("/api/payment/checkout", async (req, res) => {
       }
     }
 
-    // Instantiates either Stripe, PayPal, or mock/sandbox provider adapter dynamically
+    // Instantiates either Stripe, PayPal, WittyPay, or mock/sandbox provider adapter dynamically
     const adapter = getPaymentAdapter(provider);
+    const usdToNgnRate = userRegion === 'nigeria' ? await getUsdToNgnRate() : DEFAULT_USD_TO_NGN_RATE;
 
     console.log(`[Payment Checkout] Creating session using provider: ${provider} for user: ${userId}`);
     const result = await adapter.createCheckoutSession({
@@ -1413,7 +1452,8 @@ app.post("/api/payment/checkout", async (req, res) => {
       userId,
       origin,
       region: userRegion,
-      user: { id: userId }
+      user: { id: userId },
+      usdToNgnRate
     });
 
     res.json({ url: result.url });
@@ -1435,10 +1475,11 @@ app.post("/api/payment/webhook", async (req: any, res) => {
     const result = await adapter.verifyWebhook(req.headers, req.rawBody);
 
     if (result) {
-      const { userId, plan, interval, provider: resolvedProvider, eventType } = result;
+      const { userId, plan, interval, provider: resolvedProvider, region: resolvedRegion, eventType } = result;
       console.log(`[Payment Webhook] Webhook validated via ${resolvedProvider} (${eventType}) for user: ${userId}`);
 
       const supabase = getSupabaseAdminClient();
+      const targetRegion = resolvedRegion || (resolvedProvider === 'wittypay' ? 'nigeria' : 'international');
 
       if (eventType === 'subscription.cancelled' || eventType === 'customer.subscription.deleted') {
         await cancelSubscription(supabase, userId);
@@ -1453,7 +1494,7 @@ app.post("/api/payment/webhook", async (req: any, res) => {
           userId,
           planId,
           resolvedProvider as any,
-          'international',
+          targetRegion,
           (interval || 'month') as any
         );
       }

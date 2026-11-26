@@ -31,7 +31,7 @@ import { twMerge } from 'tailwind-merge';
 import type { Profile } from '../types';
 import { toast } from 'sonner';
 import { openExternalLink } from '../utils/nativeCompat';
-import { getPlan, getPlanPrice, SUBSCRIPTION_CATALOG, PlanId } from '../subscription/catalog';
+import { getPlan, getPlanPrice, getRegionalPlanPrice, DEFAULT_USD_TO_NGN_RATE, SUBSCRIPTION_CATALOG, PlanId } from '../subscription/catalog';
 
 function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
@@ -47,8 +47,8 @@ interface ProviderConfig {
 }
 
 const PROVIDERS_CONFIG: ProviderConfig[] = [
-  { id: 'paypal', name: 'PayPal', badge: 'Connected', status: 'connected', description: 'Primary payment integration' },
-  { id: 'paystack', name: 'Paystack', badge: 'Coming Soon', status: 'coming-soon', description: 'African markets gateway' },
+  { id: 'paypal', name: 'PayPal', badge: 'Connected', status: 'connected', description: 'Primary international integration' },
+  { id: 'wittypay', name: 'WittyPay', badge: 'Nigeria Only', status: 'coming-soon', description: 'NGN bank transfer, PalmPay & cards' },
   { id: 'stripe', name: 'Stripe', badge: 'Coming Soon', status: 'coming-soon', description: 'Credit card processor' },
   { id: 'apple', name: 'Apple Pay', badge: 'Coming Soon', status: 'coming-soon', description: 'In-app purchases for iOS' },
   { id: 'google', name: 'Google Play', badge: 'Coming Soon', status: 'coming-soon', description: 'In-app purchases for Android' }
@@ -119,6 +119,23 @@ export const BillingCenter: React.FC<BillingCenterProps> = ({
   };
 
   const region = getLocalRegion();
+  const [usdToNgnRate, setUsdToNgnRate] = useState<number>(DEFAULT_USD_TO_NGN_RATE);
+
+  useEffect(() => {
+    if (region !== 'nigeria') return;
+    let active = true;
+    fetch('/api/billing/exchange-rate')
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        if (active && data?.usdToNgn > 0) {
+          setUsdToNgnRate(Number(data.usdToNgn));
+        }
+      })
+      .catch(() => {});
+    return () => {
+      active = false;
+    };
+  }, [region]);
 
   // Fetch live usage and limits
   const fetchUsageData = async (silent = false) => {
@@ -198,7 +215,7 @@ export const BillingCenter: React.FC<BillingCenterProps> = ({
     setPaymentModalOpen(true);
   };
 
-  const executeCheckout = async (planId: string, provider: 'paypal' | 'paystack') => {
+  const executeCheckout = async (planId: string, provider: 'paypal' | 'wittypay' | 'paystack') => {
     setIsSubscribing(planId);
     try {
       const response = await fetch('/api/payment/checkout', {
@@ -589,7 +606,7 @@ export const BillingCenter: React.FC<BillingCenterProps> = ({
         </div>
 
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-          {PROVIDERS_CONFIG.map((prov) => {
+          {PROVIDERS_CONFIG.filter((prov) => prov.id !== 'wittypay' || region === 'nigeria').map((prov) => {
             const isConnected = prov.status === 'connected';
             return (
               <div 
@@ -735,11 +752,11 @@ export const BillingCenter: React.FC<BillingCenterProps> = ({
                   <span className="text-zinc-400 font-extrabold uppercase tracking-wider">Plan Summary</span>
                 </div>
                 <div className="text-zinc-800 dark:text-zinc-200 uppercase">
-                  {selectedPlanForUpgrade} Plan — {getPlanPrice(selectedPlanForUpgrade as PlanId, region).currency === 'USD' ? '$' : '₦'}
-                  {billingPeriod === 'month' 
-                    ? getPlanPrice(selectedPlanForUpgrade as PlanId, region).price 
-                    : Math.round(getPlanPrice(selectedPlanForUpgrade as PlanId, region).price * 10 * 0.8 / 10)
-                  }/{billingPeriod === 'month' ? 'month' : 'year'}
+                  {(() => {
+                    const regional = getRegionalPlanPrice(selectedPlanForUpgrade as PlanId, region, usdToNgnRate);
+                    const amount = billingPeriod === 'month' ? regional.price : Math.round(regional.price * 12 * 0.9);
+                    return `${selectedPlanForUpgrade} Plan — ${regional.currency === 'USD' ? '$' : '₦'}${amount.toLocaleString()}/${billingPeriod === 'month' ? 'month' : 'year'}`;
+                  })()}
                 </div>
               </div>
 
@@ -797,37 +814,41 @@ export const BillingCenter: React.FC<BillingCenterProps> = ({
                   </div>
                 </div>
 
-                {/* Paystack Card */}
-                <div 
-                  onClick={() => {
-                    toast.info("Paystack integration is coming soon. For now, you can subscribe securely using PayPal.");
-                  }}
-                  className="p-5 rounded-2xl border-2 border-dashed border-zinc-200 dark:border-zinc-850 bg-zinc-50/20 dark:bg-zinc-950 cursor-pointer opacity-80 hover:opacity-100 transition-all flex flex-col justify-between gap-4 group relative"
-                >
-                  <div className="flex justify-between items-start">
-                    <div className="flex items-center gap-3">
-                      <div className="w-10 h-10 rounded-xl bg-zinc-100 dark:bg-zinc-800 flex items-center justify-center">
-                        <CreditCard className="w-5 h-5 text-zinc-400" />
-                      </div>
-                      <div>
-                        <h4 className="font-extrabold text-sm text-zinc-500 dark:text-zinc-400 flex items-center gap-1.5">
-                          Paystack
-                          <span className="text-[10px] font-black bg-zinc-100 dark:bg-zinc-800 text-zinc-500 px-1.5 py-0.5 rounded uppercase">Soon</span>
-                        </h4>
-                        <p className="text-xs text-zinc-400 mt-0.5">African payment support coming soon.</p>
-                      </div>
-                    </div>
-                    <span className="text-[10px] font-black uppercase bg-amber-500/15 text-amber-600 dark:text-amber-400 px-2.5 py-0.5 rounded-full border border-amber-500/20">
-                      Coming Soon
-                    </span>
-                  </div>
-                  <button 
-                    disabled
-                    className="w-full py-2.5 bg-zinc-100 dark:bg-zinc-800 text-zinc-400 dark:text-zinc-500 rounded-xl text-xs font-extrabold uppercase tracking-wider transition-all flex items-center justify-center gap-2 cursor-not-allowed"
+                {/* WittyPay Card (Nigeria Only) */}
+                {region === 'nigeria' && (
+                  <div 
+                    onClick={() => {
+                      toast.info("WittyPay NGN checkout is awaiting your WittyPay API endpoint/webhook spec. Use PayPal for now.");
+                    }}
+                    className="p-5 rounded-2xl border-2 border-dashed border-zinc-200 dark:border-zinc-850 bg-zinc-50/20 dark:bg-zinc-950 cursor-pointer opacity-85 hover:opacity-100 transition-all flex flex-col justify-between gap-4 group relative"
                   >
-                    Coming Soon
-                  </button>
-                </div>
+                    <div className="flex justify-between items-start">
+                      <div className="flex items-center gap-3">
+                        <div className="w-10 h-10 rounded-xl bg-emerald-500/10 flex items-center justify-center">
+                          <CreditCard className="w-5 h-5 text-emerald-500" />
+                        </div>
+                        <div>
+                          <h4 className="font-extrabold text-sm text-zinc-800 dark:text-zinc-200 flex items-center gap-1.5">
+                            WittyPay
+                            <span className="text-[10px] font-black bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 px-1.5 py-0.5 rounded uppercase">Nigeria Only</span>
+                          </h4>
+                          <p className="text-xs text-zinc-400 mt-0.5">
+                            Pay in ₦ (Bank Transfer, PalmPay, Card) at ₦{usdToNgnRate.toLocaleString()}/$
+                          </p>
+                        </div>
+                      </div>
+                      <span className="text-[10px] font-black uppercase bg-amber-500/15 text-amber-600 dark:text-amber-400 px-2.5 py-0.5 rounded-full border border-amber-500/20">
+                        Setup Pending
+                      </span>
+                    </div>
+                    <button 
+                      disabled
+                      className="w-full py-2.5 bg-zinc-100 dark:bg-zinc-800 text-zinc-400 dark:text-zinc-500 rounded-xl text-xs font-extrabold uppercase tracking-wider transition-all flex items-center justify-center gap-2 cursor-not-allowed"
+                    >
+                      Awaiting WittyPay API Docs
+                    </button>
+                  </div>
+                )}
               </div>
 
               <div className="text-[10px] text-zinc-400 text-center flex items-center justify-center gap-1.5">

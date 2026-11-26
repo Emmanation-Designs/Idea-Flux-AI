@@ -35,7 +35,7 @@ export async function activateSubscription(
   supabaseClient: any,
   userId: string,
   planId: 'plus' | 'pro',
-  provider: 'paypal' | 'paystack' | 'stripe' | 'apple' | 'google',
+  provider: 'paypal' | 'paystack' | 'wittypay' | 'stripe' | 'apple' | 'google',
   region: 'nigeria' | 'international',
   interval: 'month' | 'year' = 'month'
 ): Promise<void> {
@@ -56,6 +56,8 @@ Provider: ${providerUpper}
 Region: ${regionPretty}
 Expiry: ${expiresAt.toISOString()}`.trim());
 
+  const billingCurrency = region === 'nigeria' && provider === 'wittypay' ? 'NGN' : 'USD';
+
   // Database Update (STEP 5)
   const updateData = {
     current_plan: planId,
@@ -68,8 +70,8 @@ Expiry: ${expiresAt.toISOString()}`.trim());
     last_usage_reset: now.toISOString().split('T')[0], // legacy compatibility
     country_code: region === 'nigeria' ? 'NG' : 'US',
     billing_country: region === 'nigeria' ? 'Nigeria' : 'International',
-    currency: 'USD',
-    billing_currency: 'USD',
+    currency: billingCurrency,
+    billing_currency: billingCurrency,
     updated_at: now.toISOString()
   };
 
@@ -247,7 +249,7 @@ export async function changePlan(
   supabaseClient: any,
   userId: string,
   newPlanId: 'plus' | 'pro',
-  provider: 'paypal' | 'paystack' | 'stripe' | 'apple' | 'google',
+  provider: 'paypal' | 'paystack' | 'wittypay' | 'stripe' | 'apple' | 'google',
   region: 'nigeria' | 'international',
   interval: 'month' | 'year' = 'month'
 ): Promise<void> {

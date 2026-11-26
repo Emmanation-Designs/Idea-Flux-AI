@@ -1,6 +1,7 @@
 export type PlanId = 'free' | 'plus' | 'pro';
 export type Region = 'nigeria' | 'international';
-export type PaymentProviderType = 'paypal' | 'paystack' | 'stripe' | 'apple' | 'google';
+export type PaymentProviderType = 'paypal' | 'paystack' | 'wittypay' | 'stripe' | 'apple' | 'google';
+export const DEFAULT_USD_TO_NGN_RATE = 1400;
 
 export interface PlanIdentity {
   id: PlanId;
@@ -256,6 +257,40 @@ export function getPlan(planId: string): PlanCatalogEntry {
 export function getPlanPrice(planId: PlanId, region: Region): PricingDetail {
   const plan = getPlan(planId);
   return plan.pricing[region];
+}
+
+/**
+ * Converts a USD price to NGN using the configured fixed conversion rate.
+ */
+export function convertUsdToNgn(
+  usdAmount: number,
+  usdToNgnRate: number = DEFAULT_USD_TO_NGN_RATE
+): number {
+  const safeRate = Number.isFinite(usdToNgnRate) && usdToNgnRate > 0 ? usdToNgnRate : DEFAULT_USD_TO_NGN_RATE;
+  return Math.round(usdAmount * safeRate);
+}
+
+/**
+ * Returns regional display/checkout pricing (NGN for Nigeria using admin-configured rate, USD internationally).
+ */
+export function getRegionalPlanPrice(
+  planId: PlanId,
+  region: Region,
+  usdToNgnRate: number = DEFAULT_USD_TO_NGN_RATE
+): { currency: 'USD' | 'NGN'; price: number; usdEquivalent: number } {
+  const base = getPlanPrice(planId, region);
+  if (region === 'nigeria') {
+    return {
+      currency: 'NGN',
+      price: convertUsdToNgn(base.price, usdToNgnRate),
+      usdEquivalent: base.price,
+    };
+  }
+  return {
+    currency: 'USD',
+    price: base.price,
+    usdEquivalent: base.price,
+  };
 }
 
 /**

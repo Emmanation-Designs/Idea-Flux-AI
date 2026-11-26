@@ -2,7 +2,7 @@ import Stripe from 'stripe';
 import { PayPalPaymentAdapter } from './paypalAdapter.js';
 import { PlanId, Region } from '../subscription/catalog.js';
 
-export type PaymentProvider = 'stripe' | 'paypal' | 'paystack' | 'apple' | 'google';
+export type PaymentProvider = 'stripe' | 'paypal' | 'paystack' | 'wittypay' | 'apple' | 'google';
 
 export interface CheckoutSessionParams {
   plan: string;
@@ -11,6 +11,7 @@ export interface CheckoutSessionParams {
   origin: string;
   region?: string;
   user?: any;
+  usdToNgnRate?: number;
 }
 
 export interface CheckoutSessionResult {
@@ -22,6 +23,7 @@ export interface WebhookVerificationResult {
   plan?: string;
   interval?: 'month' | 'year';
   provider: PaymentProvider;
+  region?: Region;
   eventType: string;
 }
 
@@ -199,6 +201,31 @@ export class PayPalPaymentProviderAdapter implements PaymentProviderAdapter {
 }
 
 /**
+ * WittyPay Payment Adapter (Nigeria NGN checkout — requires WittyPay API endpoint/webhook spec)
+ */
+export class WittyPayPaymentAdapter implements PaymentProviderAdapter {
+  async createCheckoutSession(params: CheckoutSessionParams): Promise<CheckoutSessionResult> {
+    if ((params.region || 'international').toLowerCase() !== 'nigeria') {
+      throw new Error('WittyPay is only available for Nigerian users.');
+    }
+
+    const secretKey = process.env.WITTYPAY_SECRET_KEY;
+    const initUrl = process.env.WITTYPAY_INITIALIZE_URL;
+    if (!secretKey || !initUrl) {
+      throw new Error(
+        'WittyPay API endpoint configuration is incomplete (WITTYPAY_SECRET_KEY and WITTYPAY_INITIALIZE_URL are required).'
+      );
+    }
+
+    throw new Error('WittyPay endpoint payload/signature schema must be configured before live/sandbox checkout.');
+  }
+
+  async verifyWebhook(headers: Record<string, any>, rawBody: any): Promise<WebhookVerificationResult | null> {
+    throw new Error('WittyPay webhook signature verification is not yet configured.');
+  }
+}
+
+/**
  * Dynamic adapter lookup based on active payment provider configuration
  */
 export function getPaymentAdapter(provider?: string): PaymentProviderAdapter {
@@ -209,6 +236,8 @@ export function getPaymentAdapter(provider?: string): PaymentProviderAdapter {
       return new StripePaymentAdapter();
     case 'paypal':
       return new PayPalPaymentProviderAdapter();
+    case 'wittypay':
+      return new WittyPayPaymentAdapter();
     case 'sandbox':
     case 'paystack':
       return new SandboxPaymentAdapter();

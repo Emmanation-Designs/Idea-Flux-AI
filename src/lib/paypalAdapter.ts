@@ -158,12 +158,7 @@ export class PayPalPaymentAdapter {
     const planNamePretty = `${regionNamePretty} ${planId === 'plus' ? 'Plus' : 'Pro'}`;
     const baseUrl = this.getBaseUrl();
     
-    let price = 10.00;
-    if (planId === 'plus') {
-      price = region === 'nigeria' ? 8.00 : 10.00;
-    } else if (planId === 'pro') {
-      price = 30.00;
-    }
+    const price = getPlanPrice(planId, region).price || 10.00;
     
     console.log(`[PayPal] Creating Plan: ${planNamePretty}`);
     

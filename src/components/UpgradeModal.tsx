@@ -9,7 +9,7 @@ import { openExternalLink } from '../utils/nativeCompat';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 import { toast } from 'sonner';
-import { getPlanPrice, PlanId } from '../subscription/catalog';
+import { getPlanPrice, getRegionalPlanPrice, DEFAULT_USD_TO_NGN_RATE, PlanId } from '../subscription/catalog';
 
 function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
@@ -36,15 +36,35 @@ export const UpgradeModal: React.FC<UpgradeModalProps> = ({ isOpen, onClose, rea
   };
 
   const region = getLocalRegion();
+  const [usdToNgnRate, setUsdToNgnRate] = React.useState<number>(DEFAULT_USD_TO_NGN_RATE);
+
+  React.useEffect(() => {
+    if (!isOpen || region !== 'nigeria') return;
+    let active = true;
+    fetch('/api/billing/exchange-rate')
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        if (active && data?.usdToNgn > 0) {
+          setUsdToNgnRate(Number(data.usdToNgn));
+        }
+      })
+      .catch(() => {});
+    return () => {
+      active = false;
+    };
+  }, [isOpen, region]);
+
   const currentPlanId: PlanId = profile?.plan || 'free';
 
-  // Format dynamic regional prices
-  const currencySymbol = getPlanPrice('plus', region).currency === 'USD' ? '$' : '₦';
+  // Format dynamic regional prices (NGN for Nigeria using Admin FX rate, USD internationally)
+  const plusRegional = getRegionalPlanPrice('plus', region, usdToNgnRate);
+  const proRegional = getRegionalPlanPrice('pro', region, usdToNgnRate);
+  const currencySymbol = plusRegional.currency === 'USD' ? '$' : '₦';
 
-  const plusMonthly = getPlanPrice('plus', region).price;
+  const plusMonthly = plusRegional.price;
   const plusPrice = billingPeriod === 'monthly' ? plusMonthly : Math.round(plusMonthly * 12 * 0.9);
 
-  const proMonthly = getPlanPrice('pro', region).price;
+  const proMonthly = proRegional.price;
   const proPrice = billingPeriod === 'monthly' ? proMonthly : Math.round(proMonthly * 12 * 0.9);
 
   const [isSubscribing, setIsSubscribing] = React.useState<string | null>(null);
@@ -60,7 +80,7 @@ export const UpgradeModal: React.FC<UpgradeModalProps> = ({ isOpen, onClose, rea
     setPaymentModalOpen(true);
   };
 
-  const executeCheckout = async (planId: string, provider: 'paypal' | 'paystack') => {
+  const executeCheckout = async (planId: string, provider: 'paypal' | 'wittypay' | 'paystack') => {
     setIsSubscribing(planId);
     try {
       const response = await fetch('/api/payment/checkout', {
@@ -241,11 +261,16 @@ export const UpgradeModal: React.FC<UpgradeModalProps> = ({ isOpen, onClose, rea
                     <div className="py-2">
                       <div className="flex items-baseline gap-0.5">
                         <span className="text-[#19C37D] text-2xl font-bold self-start mt-1">{currencySymbol}</span>
-                        <span className="text-5xl md:text-6xl font-black text-white tracking-tight">{plusPrice}</span>
+                        <span className="text-4xl md:text-5xl font-black text-white tracking-tight">{plusPrice.toLocaleString()}</span>
                         <span className="text-xs font-semibold text-zinc-500 ml-1">{billingPeriod === 'monthly' ? '/ month' : '/ year'}</span>
                       </div>
                       <div className="text-[10px] text-zinc-500 uppercase tracking-wider mt-1.5 font-bold">
                         {billingPeriod === 'yearly' ? "Billed annually" : "Billed monthly"}
+                        {region === 'nigeria' && (
+                          <span className="ml-1.5 text-emerald-400/80">
+                            (≈ ${billingPeriod === 'monthly' ? plusRegional.usdEquivalent : Math.round(plusRegional.usdEquivalent * 12 * 0.9)} @ ₦{usdToNgnRate.toLocaleString()}/$)
+                          </span>
+                        )}
                       </div>
                     </div>
 
@@ -297,11 +322,16 @@ export const UpgradeModal: React.FC<UpgradeModalProps> = ({ isOpen, onClose, rea
                     <div className="py-2">
                       <div className="flex items-baseline gap-0.5">
                         <span className="text-purple-400 text-2xl font-bold self-start mt-1">{currencySymbol}</span>
-                        <span className="text-5xl md:text-6xl font-black text-white tracking-tight">{proPrice}</span>
+                        <span className="text-4xl md:text-5xl font-black text-white tracking-tight">{proPrice.toLocaleString()}</span>
                         <span className="text-xs font-semibold text-zinc-500 ml-1">{billingPeriod === 'monthly' ? '/ month' : '/ year'}</span>
                       </div>
                       <div className="text-[10px] text-zinc-500 uppercase tracking-wider mt-1.5 font-bold">
                         {billingPeriod === 'yearly' ? "Billed annually" : "Billed monthly"}
+                        {region === 'nigeria' && (
+                          <span className="ml-1.5 text-purple-300/80">
+                            (≈ ${billingPeriod === 'monthly' ? proRegional.usdEquivalent : Math.round(proRegional.usdEquivalent * 12 * 0.9)} @ ₦{usdToNgnRate.toLocaleString()}/$)
+                          </span>
+                        )}
                       </div>
                     </div>
 
@@ -400,8 +430,8 @@ export const UpgradeModal: React.FC<UpgradeModalProps> = ({ isOpen, onClose, rea
                   <span className="text-zinc-400 dark:text-zinc-500 uppercase tracking-wider">Plan Summary</span>
                 </div>
                 <div className="text-zinc-800 dark:text-zinc-200 uppercase">
-                  {selectedPlanForUpgrade} Plan — {getPlanPrice(selectedPlanForUpgrade as PlanId, region).currency === 'USD' ? '$' : '₦'}
-                  {selectedPlanForUpgrade === 'plus' ? plusPrice : proPrice}/{billingPeriod === 'monthly' ? 'month' : 'year'}
+                  {selectedPlanForUpgrade} Plan — {currencySymbol}
+                  {(selectedPlanForUpgrade === 'plus' ? plusPrice : proPrice).toLocaleString()}/{billingPeriod === 'monthly' ? 'month' : 'year'}
                 </div>
               </div>
 
@@ -459,37 +489,41 @@ export const UpgradeModal: React.FC<UpgradeModalProps> = ({ isOpen, onClose, rea
                   </div>
                 </div>
 
-                {/* Paystack Card */}
-                <div 
-                  onClick={() => {
-                    toast.info("Paystack integration is coming soon. For now, you can subscribe securely using PayPal.");
-                  }}
-                  className="p-5 rounded-2xl border-2 border-dashed border-zinc-200 dark:border-zinc-800 bg-zinc-50/20 dark:bg-zinc-950/20 cursor-pointer opacity-80 hover:opacity-100 transition-all flex flex-col justify-between gap-4 group relative"
-                >
-                  <div className="flex justify-between items-start">
-                    <div className="flex items-center gap-3">
-                      <div className="w-10 h-10 rounded-xl bg-zinc-100 dark:bg-zinc-800 flex items-center justify-center">
-                        <CreditCard className="w-5 h-5 text-zinc-400 dark:text-zinc-500" />
-                      </div>
-                      <div>
-                        <h4 className="font-bold text-sm text-zinc-500 dark:text-zinc-400 flex items-center gap-1.5">
-                          Paystack
-                          <span className="text-[10px] font-black bg-zinc-200 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-400 px-1.5 py-0.5 rounded uppercase">Soon</span>
-                        </h4>
-                        <p className="text-xs text-zinc-400 dark:text-zinc-500 mt-0.5">African payment support coming soon.</p>
-                      </div>
-                    </div>
-                    <span className="text-[10px] font-black uppercase bg-amber-500/15 text-amber-600 dark:text-amber-400 px-2.5 py-0.5 rounded-full border border-amber-500/20">
-                      Coming Soon
-                    </span>
-                  </div>
-                  <button 
-                    disabled
-                    className="w-full py-2.5 bg-zinc-100 dark:bg-zinc-800 text-zinc-400 dark:text-zinc-500 rounded-xl text-xs font-bold uppercase tracking-wider transition-all flex items-center justify-center gap-2 cursor-not-allowed"
+                {/* WittyPay Card (Nigeria Only) */}
+                {region === 'nigeria' && (
+                  <div 
+                    onClick={() => {
+                      toast.info("WittyPay NGN checkout is awaiting your WittyPay API endpoint/webhook spec. Use PayPal for now.");
+                    }}
+                    className="p-5 rounded-2xl border-2 border-dashed border-zinc-200 dark:border-zinc-800 bg-zinc-50/20 dark:bg-zinc-950/20 cursor-pointer opacity-85 hover:opacity-100 transition-all flex flex-col justify-between gap-4 group relative"
                   >
-                    Coming Soon
-                  </button>
-                </div>
+                    <div className="flex justify-between items-start">
+                      <div className="flex items-center gap-3">
+                        <div className="w-10 h-10 rounded-xl bg-emerald-500/10 flex items-center justify-center">
+                          <CreditCard className="w-5 h-5 text-emerald-500" />
+                        </div>
+                        <div>
+                          <h4 className="font-bold text-sm text-zinc-800 dark:text-zinc-200 flex items-center gap-1.5">
+                            WittyPay
+                            <span className="text-[10px] font-black bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 px-1.5 py-0.5 rounded uppercase">Nigeria Only</span>
+                          </h4>
+                          <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-0.5">
+                            Pay in ₦ (Bank Transfer, PalmPay, Card) at ₦{usdToNgnRate.toLocaleString()}/$
+                          </p>
+                        </div>
+                      </div>
+                      <span className="text-[10px] font-black uppercase bg-amber-500/15 text-amber-600 dark:text-amber-400 px-2.5 py-0.5 rounded-full border border-amber-500/20">
+                        Setup Pending
+                      </span>
+                    </div>
+                    <button 
+                      disabled
+                      className="w-full py-2.5 bg-zinc-100 dark:bg-zinc-800 text-zinc-400 dark:text-zinc-500 rounded-xl text-xs font-bold uppercase tracking-wider transition-all flex items-center justify-center gap-2 cursor-not-allowed"
+                    >
+                      Awaiting WittyPay API Docs
+                    </button>
+                  </div>
+                )}
               </div>
 
               <div className="text-[10px] text-zinc-400 dark:text-zinc-500 text-center flex items-center justify-center gap-1.5">
